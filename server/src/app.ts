@@ -1,0 +1,27 @@
+import cookieParser from 'cookie-parser';
+import cors from 'cors';
+import express from 'express';
+import helmet from 'helmet';
+import { pinoHttp } from 'pino-http';
+import { env } from './config/env.js';
+import { logger } from './config/logger.js';
+import { errorHandler } from './middleware/error-handler.js';
+import { approvalsRouter } from './modules/approvals/approvals.routes.js';
+import { authRouter } from './modules/auth/auth.routes.js';
+import { studentsRouter } from './modules/students/students.routes.js';
+import { coursesRouter } from './modules/courses/courses.routes.js';
+
+export const app = express();
+app.disable('x-powered-by');
+app.use(helmet());
+app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
+app.use(express.json({ limit: '32kb' }));
+app.use(cookieParser());
+app.use(pinoHttp({ logger }));
+app.get('/api/health', (_req, res) => res.json({ data: { status: 'ok' } }));
+app.use('/api/auth', authRouter);
+app.use('/api/students', studentsRouter);
+app.use('/api/instructor/registrations', approvalsRouter);
+app.use('/api/instructor/courses', coursesRouter);
+app.use((_req, res) => res.status(404).json({ error: { message: 'Route not found' } }));
+app.use(errorHandler);
