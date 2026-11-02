@@ -14,7 +14,10 @@ export function Shell() {
         </div>
       </header>
       <main className="page-wrap"><Outlet /></main>
-      <footer className="footer">Learn with clarity. Grow with confidence.</footer>
+      <footer className="footer">
+        <span>Learn with clarity. Grow with confidence.</span>
+        <Link to="/super-admin/login">Platform Admin</Link>
+      </footer>
     </div>
   );
 }

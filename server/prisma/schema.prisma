@@ -11,7 +11,23 @@ enum Role {
   STUDENT
   INSTRUCTOR
   STAFF
+  ORG_ADMIN
   SUPER_ADMIN
+}
+
+enum AccountStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
 }
 
 enum StudentStatus {
@@ -26,118 +42,282 @@ enum CourseStatus {
   PUBLISHED
 }
 
-model User {
-  id                  String            @id @default(cuid())
-  email               String            @unique
-  passwordHash        String
-  name                String
-  role                Role
-  isActive            Boolean           @default(true)
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-  studentProfile      StudentProfile?
-  sessions            Session[]
-  loginLogs           LoginLog[]
-  approvedProfiles    StudentProfile[]  @relation("ProfileApprover")
-  studentBatches      BatchStudent[]
-  instructorBatches   BatchInstructor[]
-  auditLogs           AuditLog[]        @relation("AuditActor")
-  courses             Course[]
-}
-
-model StudentProfile {
-  id               String        @id @default(cuid())
-  userId           String        @unique
-  studentId        String        @unique
-  status           StudentStatus @default(PENDING)
-  rejectionReason  String?
-  approvedById     String?
-  approvedAt       DateTime?
-  createdAt        DateTime      @default(now())
-  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  approvedBy       User?         @relation("ProfileApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+model Organization {
+  id                       String             @id @default(cuid())
+  name                     String
+  code                     String?            @unique
+  headName                 String
+  contactNumber            String
+  email                    String             @unique
+  address                  String
+  city                     String
+  state                    String
+  country                  String
+  registrationNumber       String?
+  website                  String?
+  status                   OrganizationStatus @default(PENDING)
+  rejectionReason          String?
+  pendingAdminPasswordHash String?
+  approvedById             String?
+  approvedAt               DateTime?
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+  approvedBy               User?              @relation("OrganizationApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  users                    User[]
+  studentProfiles          StudentProfile[]
+  staffProfiles            StaffProfile[]
+  accountApprovals         AccountApproval[]
+  sessions                 Session[]
+  loginLogs                LoginLog[]
+  auditLogs                AuditLog[]
+  batches                  Batch[]
+  courses                  Course[]
+  notes                    Note[]
+  noteViews                NoteView[]
+  expertSessions           ExpertSession[]
+  batchStudents            BatchStudent[]
+  batchInstructors         BatchInstructor[]
 
   @@index([status, createdAt])
 }
 
+model User {
+  id                    String            @id @default(cuid())
+  organizationId        String?
+  email                 String
+  passwordHash          String
+  name                  String
+  phone                 String?
+  role                  Role
+  status                AccountStatus     @default(PENDING)
+  rejectionReason       String?
+  mustChangePassword    Boolean           @default(false)
+  isActive              Boolean           @default(true)
+  approvedById          String?
+  approvedAt            DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  organization          Organization?     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  studentProfile        StudentProfile?
+  staffProfile          StaffProfile?
+  sessions              Session[]
+  loginLogs             LoginLog[]
+  approvedProfiles      StudentProfile[]  @relation("ProfileApprover")
+  accountApprovals      AccountApproval[] @relation("AccountApprover")
+  accountRegistration   AccountApproval?  @relation("AccountRegistration")
+  approvedAccounts      User[]            @relation("UserApprover")
+  approvedBy            User?             @relation("UserApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedOrganizations Organization[]    @relation("OrganizationApprover")
+  studentBatches        BatchStudent[]
+  instructorBatches     BatchInstructor[]
+  auditLogs             AuditLog[]        @relation("AuditActor")
+  courses               Course[]
+  notes                 Note[]            @relation("NoteAuthor")
+  noteViews             NoteView[]
+  hostedExpertSessions  ExpertSession[]   @relation("ExpertSessionHost")
+
+  @@unique([organizationId, email])
+  @@index([organizationId, role, status])
+}
+
+model StudentProfile {
+  id              String        @id @default(cuid())
+  organizationId  String
+  userId          String        @unique
+  studentId       String
+  status          StudentStatus @default(PENDING)
+  rejectionReason String?
+  approvedById    String?
+  approvedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy      User?         @relation("ProfileApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, studentId])
+  @@index([organizationId, status, createdAt])
+}
+
+model StaffProfile {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String       @unique
+  staffId        String
+  joiningDate    DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, staffId])
+  @@index([organizationId, joiningDate])
+}
+
+model AccountApproval {
+  id              String        @id @default(cuid())
+  organizationId  String
+  userId          String        @unique
+  status          StudentStatus @default(PENDING)
+  rejectionReason String?
+  approvedById    String?
+  approvedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User          @relation("AccountRegistration", fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy      User?         @relation("AccountApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status, createdAt])
+}
+
 model Batch {
-  id          String            @id @default(cuid())
-  name        String            @unique
-  createdAt   DateTime          @default(now())
-  students    BatchStudent[]
-  instructors BatchInstructor[]
+  id             String            @id @default(cuid())
+  organizationId String
+  name           String
+  createdAt      DateTime          @default(now())
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  students       BatchStudent[]
+  instructors    BatchInstructor[]
+  expertSessions ExpertSession[]
+
+  @@unique([organizationId, name])
 }
 
 model BatchStudent {
-  batchId   String
-  studentId String
-  assignedAt DateTime @default(now())
-  batch     Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  student   User  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  organizationId String
+  batchId        String
+  studentId      String
+  assignedAt     DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  batch          Batch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  student        User         @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  @@id([batchId, studentId])
-  @@index([studentId])
+  @@id([organizationId, batchId, studentId])
+  @@index([organizationId, studentId])
 }
 
 model BatchInstructor {
-  batchId      String
-  instructorId String
-  assignedAt   DateTime @default(now())
-  batch        Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  instructor   User  @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  organizationId String
+  batchId        String
+  instructorId   String
+  assignedAt     DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  batch          Batch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  instructor     User         @relation(fields: [instructorId], references: [id], onDelete: Cascade)
 
-  @@id([batchId, instructorId])
-  @@index([instructorId])
+  @@id([organizationId, batchId, instructorId])
+  @@index([organizationId, instructorId])
 }
 
 model Session {
-  id               String    @id @default(cuid())
+  id               String        @id @default(cuid())
+  organizationId   String?
   userId           String
   refreshTokenHash String
   ip               String?
   userAgent        String?
-  createdAt        DateTime  @default(now())
+  createdAt        DateTime      @default(now())
   expiresAt        DateTime
   revokedAt        DateTime?
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId, revokedAt, expiresAt])
+  @@index([organizationId, userId, revokedAt, expiresAt])
 }
 
 model LoginLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  ip        String?
-  userAgent String?
-  success   Boolean
-  createdAt DateTime @default(now())
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  id             String        @id @default(cuid())
+  organizationId String?
+  userId         String?
+  ip             String?
+  userAgent      String?
+  success        Boolean
+  createdAt      DateTime      @default(now())
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  @@index([userId, createdAt])
+  @@index([organizationId, userId, createdAt])
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  actorId    String
-  action     String
-  targetType String
-  targetId   String
-  metadata   Json     @default("{}")
-  createdAt  DateTime @default(now())
-  actor      User     @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  id             String        @id @default(cuid())
+  organizationId String?
+  actorId        String?
+  action         String
+  targetType     String
+  targetId       String
+  metadata       Json          @default("{}")
+  createdAt      DateTime      @default(now())
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          User?         @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
 
-  @@index([targetType, targetId, createdAt])
+  @@index([organizationId, targetType, targetId, createdAt])
 }
 
 model Course {
-  id           String       @id @default(cuid())
-  instructorId String
-  title        String
-  description  String?
-  status       CourseStatus @default(DRAFT)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  instructor   User         @relation(fields: [instructorId], references: [id], onDelete: Restrict)
+  id             String       @id @default(cuid())
+  organizationId String
+  instructorId   String
+  title          String
+  description    String?
+  status         CourseStatus @default(DRAFT)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  instructor     User         @relation(fields: [instructorId], references: [id], onDelete: Restrict)
 
-  @@index([instructorId, status, updatedAt])
+  @@index([organizationId, instructorId, status, updatedAt])
+}
+
+model Note {
+  id             String       @id @default(cuid())
+  organizationId String
+  authorId       String
+  title          String
+  subject        String
+  description    String
+  storageKey     String?
+  originalName   String?
+  mimeType       String?
+  published      Boolean      @default(false)
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  author         User         @relation("NoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  views          NoteView[]
+
+  @@index([organizationId, published, updatedAt])
+}
+
+model NoteView {
+  id             String       @id @default(cuid())
+  organizationId String
+  noteId         String
+  userId         String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  note           Note         @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, noteId, createdAt])
+  @@index([organizationId, userId, createdAt])
+}
+
+model ExpertSession {
+  id              String       @id @default(cuid())
+  organizationId  String
+  hostId          String
+  batchId         String?
+  title           String
+  description     String
+  startsAt        DateTime
+  durationMinutes Int
+  roomName        String       @unique
+  audienceType    String       @default("ALL")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  host            User         @relation("ExpertSessionHost", fields: [hostId], references: [id], onDelete: Restrict)
+  batch           Batch?       @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, startsAt])
 }

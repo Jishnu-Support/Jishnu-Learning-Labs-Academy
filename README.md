@@ -1,33 +1,39 @@
 # Jishnu Learning Labs
 
-Phase 1 and Phase 2 foundation for the Jishnu Learning Labs learning platform. It includes student registration and approval-gated authentication, instructor approval tools, instructor-owned course outlines, seeded local accounts, and basic role portals.
+Jishnu Learning Labs is a multi-organization learning platform. Each organization has isolated users and data. Checkpoint 1A delivers the tenant-aware database/authentication foundation, organization registration, and approval flows. Checkpoint 1B adds staff management, student/staff directories, and protected notes. Live classes, assessments, practice Q/A, payments, certificates, and reports are not part of 1B.
 
 ## Requirements
 
 - Node.js 24 and npm
 - Local PostgreSQL listening on port 5432
-- No Docker or Redis is used in Phase 1
+- Windows PowerShell
+- No Docker, Redis, or BullMQ
 
-## Create local databases
+## Local databases
 
-Using pgAdmin, connect to your local PostgreSQL server and create two databases: `jishnu_learning_labs` and `jishnu_learning_labs_test`. The test database must be separate and disposable. If PostgreSQL is not installed, stop here and request approval before installing system software.
+Create these databases in pgAdmin:
 
-## Configure environment
+- `jishnu_learning_labs` for development
+- `jishnu_learning_labs_test` for tests; keep it separate and disposable
 
-From PowerShell in this repository, copy the example files if local `.env` files do not already exist:
+Do not reset or manually edit either database. Prisma migrations manage schema changes. Migrations are forward-only and preserve existing data. The multi-tenant migration backfills existing tenant records into a legacy organization instead of deleting existing data.
+
+## Environment setup
+
+From PowerShell in the repository root:
 
 ```powershell
 if (-not (Test-Path .\server\.env)) { Copy-Item .\server\.env.example .\server\.env }
 if (-not (Test-Path .\client\.env)) { Copy-Item .\client\.env.example .\client\.env }
 ```
 
-Edit `server/.env` and replace the PostgreSQL username/password in both connection strings. Set `DATABASE_URL` to `jishnu_learning_labs` and `TEST_DATABASE_URL` to `jishnu_learning_labs_test`. Generate two different random JWT secrets (each at least 32 characters); PowerShell can generate each with:
+Edit `server/.env` with the local PostgreSQL connection strings. Set `DATABASE_URL` to `jishnu_learning_labs` and `TEST_DATABASE_URL` to `jishnu_learning_labs_test`. Keep both URLs and JWT secrets private. Generate two different JWT secrets (at least 32 characters) with:
 
 ```powershell
 node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
 ```
 
-Put the first result in `JWT_ACCESS_SECRET` and the second in `JWT_REFRESH_SECRET`. Keep `.env` files private; never commit them.
+Put each result in a different JWT secret variable. Set `REQUIRE_ORG_APPROVAL=false` for immediate activation (the default); set it to `true` only when organization registrations should wait for Super Admin approval. Set `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` for the seeded platform administrator. `SEED_PASSWORD` controls the other development accounts. `NOTE_STORAGE_DIR` defaults to `storage/notes` under the server working directory; configure an absolute private directory if needed. The example values are local development credentials only.
 
 ## Install, migrate, and seed
 
@@ -35,11 +41,13 @@ Put the first result in `JWT_ACCESS_SECRET` and the second in `JWT_REFRESH_SECRE
 Set-Location "D:\Learning labs"
 npm install
 npm run prisma:generate --workspace server
-npm run db:migrate --workspace server
+Set-Location .\server
+npx prisma migrate deploy
+Set-Location ..
 npm run db:seed --workspace server
 ```
 
-The seed command prints development-only login credentials. All seeded accounts use `SEED_PASSWORD` if set before seeding; otherwise the local-only default is `JishnuDevOnly!2026`. Do not use the default outside development.
+`migrate deploy` applies pending migrations without resetting or dropping application tables. If Prisma reports a migration error, stop and investigate; do not reset the database. The seed is idempotent and prints its development-only credentials and organization codes; it does not delete old records.
 
 ## Run locally
 
@@ -51,49 +59,110 @@ Terminal 1:
 npm run dev:server
 ```
 
-Expected: Pino reports that the API is listening on port 4000.
-
 Terminal 2:
 
 ```powershell
 npm run dev:client
 ```
 
-Expected: Vite reports `http://localhost:5173`. The API health check is `http://localhost:4000/api/health`.
+Open `http://localhost:5173`. Check the API at `http://localhost:4000/api/health`.
+
+## Seed accounts (development only)
+
+The platform administrator uses `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` from `server/.env` (the example defaults are `admin@jishnu.local` and `JishnuDevOnly!2026`). Other seeded accounts use `SEED_PASSWORD`, or `JishnuDevOnly!2026` if unset. The seed prints the actual development-only credentials and organization codes in PowerShell.
+
+| Portal | Sign-in identifier | Organization code |
+|---|---|---|
+| Super Admin | `SUPER_ADMIN_EMAIL` (default `admin@jishnu.local`) | Not required |
+| Org Admin | `orgadmin@jll-demo.local` | `jll-demo` |
+| Instructor | `instructor1@jll-demo.local`, `instructor2@jll-demo.local` | `jll-demo` |
+| Staff | `STF-1001`, `STF-1002` | `jll-demo` |
+| Student | `STU-1001` through `STU-1006` | `jll-demo` |
+| Northstar Org Admin | `orgadmin@northstar.local` | `northstar-academy` |
+| Northstar Instructor | `instructor@northstar.local` | `northstar-academy` |
+| Northstar Staff | `STF-2001`, `STF-2002` | `northstar-academy` |
+| Northstar Students | `STU-1001`, `NST-2002` | `northstar-academy` |
+
+The same `STU-1001` exists in both organizations to demonstrate tenant-scoped IDs. Both demo organizations are active and have two instructors and two staff accounts. Existing records from earlier seed versions are preserved.
+
+## Registration and approval flow
+
+- An organization registers at `/organizations/register`. By default, registration activates it immediately, creates its Org Admin, and displays its unique organization code. `REQUIRE_ORG_APPROVAL=true` restores a pending Super Admin approval flow.
+- Super Admin monitors organizations at `/super-admin/organizations` and can suspend or reactivate them. Organization summaries show role counts only, not internal student records.
+- Instructor and self-registering staff accounts are approved by the Org Admin of the same organization.
+- Students are approved by an instructor in the same organization.
+- Instructors are approved by the Org Admin of the same organization.
+- Only approved accounts can sign in. Pending, rejected (including the reason), and suspended accounts receive distinct messages.
+- Super Admin accounts are created only by the seed script.
+- Students have one active session; signing in again revokes the earlier session.
+- Approval, rejection, and account creation actions are written to `AuditLog`.
+- Staff and student approval routes are backend-protected; Staff and Students receive 403 responses.
+- Organization registration is rate-limited per IP and rejects duplicate organization email. Add email verification and CAPTCHA before production use.
+
+## Checkpoint 1B organization modules
+
+- **Create Staff** is Org Admin-only. Created accounts are approved, receive a temporary password once, and are required to change it at first sign-in. The API blocks other authenticated actions until the password is changed.
+- **Student Details** is available to Org Admins, instructors, and staff. Search matches Student ID and name; results are tenant-scoped, filterable, and paginated. Student detail shows safe profile fields plus the last 10 successful login timestamps. Org Admins and instructors can suspend/reactivate students; staff are read-only.
+- **Staff Details** is available to Org Admins and instructors. Search matches Staff ID and name; results are tenant-scoped, filterable, and paginated. Org Admins can edit, suspend, and reactivate staff.
+- **Publish Notes** is available to Org Admins, instructors, and staff. Each can create and publish notes; Org Admins can manage any organization note, while instructors/staff can edit, unpublish, or soft-delete only their own notes. Staff and instructors see published notes and their own drafts.
+- Note attachments are limited to PDF, PNG, JPG, and WEBP, at most 20 MB, and the extension must match the MIME type. DOC/DOCX/PPT/PPTX files must be converted to PDF before uploading.
+- Local files are stored outside the client web root in `NOTE_STORAGE_DIR`; all views and downloads use authenticated routes. The `StorageService` abstraction is the replacement point for a private S3 or Cloudflare R2 adapter.
+- Students see only published notes. Their viewer streams attachments inline through an authenticated endpoint, renders PDFs with PDF.js and images in-page, overlays the student's name and ID on every page, and omits download/print controls. View events are recorded. Browser controls cannot fully prevent screenshots or saving; the watermark and viewer restrictions are deterrents. DRM would be a stronger future option.
+
+## API endpoints
+
+- `POST /api/organizations/register`
+- `GET /api/super-admin/organizations` (summary list and optional `?search=`; does not expose student records)
+- `GET /api/super-admin/organizations/pending` (approval-mode registrations)
+- `POST /api/super-admin/organizations/:organizationId/approve`
+- `POST /api/super-admin/organizations/:organizationId/reject`
+- `POST /api/super-admin/organizations/:organizationId/suspend` and `/reactivate`
+- `POST /api/auth/students/register`, `/api/auth/instructors/register`, `/api/auth/staff/register`
+- `POST /api/auth/students/login`, `/api/auth/instructors/login`, `/api/auth/staff/login`
+- `POST /api/auth/org-admin/login`, `/api/auth/super-admin/login`
+- `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`
+- `GET /api/org-admin/instructors/pending` and `/api/org-admin/staff/pending`
+- `POST /api/org-admin/instructors/:userId/approve` and `/reject`
+- `POST /api/org-admin/staff/:userId/approve` and `/reject`
+- `GET /api/instructor/registrations/pending`
+- `POST /api/instructor/registrations/:studentId/approve` and `/reject`
+- `GET /api/students` (scoped to the authenticated organization)
+- `GET /api/students?search=&status=&page=&pageSize=`
+- `GET /api/students/:studentId` (safe profile and last 10 successful login timestamps)
+- `POST /api/students/:studentId/suspend` and `/reactivate` (Org Admin or Instructor)
+- `GET /api/staff?search=&status=&page=&pageSize=` and `GET /api/staff/:userId`
+- `POST /api/staff` (Org Admin creates an approved staff account; temporary password returned once)
+- `PATCH /api/staff/:userId`, `POST /api/staff/:userId/suspend`, and `/reactivate` (Org Admin)
+- `POST /api/auth/change-password` (required for staff created with temporary passwords)
+- `GET /api/notes?search=&subject=`, `POST /api/notes`, `PATCH /api/notes/:noteId`, `DELETE /api/notes/:noteId`
+- `POST /api/notes/:noteId/publish` and `/unpublish`
+- `GET /api/notes/:noteId/view` (authenticated inline viewer; student access only to published notes)
+- `GET /api/notes/:noteId/download` (Org Admin, Instructor, and Staff only)
+
+Access and refresh tokens are sent only in httpOnly cookies. Every tenant login requires an organization code; Super Admin login does not.
 
 ## Test and quality checks
 
-Before tests, apply the migration to the dedicated test database. In a PowerShell terminal, temporarily set `DATABASE_URL` for that command:
+Apply pending migrations to the dedicated test database before running tests:
 
 ```powershell
-$env:DATABASE_URL = "postgresql://postgres:YOUR_LOCAL_PASSWORD@localhost:5432/jishnu_learning_labs_test?schema=public"
-npm run db:migrate --workspace server
+Set-Location "D:\Learning labs\server"
+$testLine = Get-Content .env | Where-Object { $_ -match '^TEST_DATABASE_URL=' } | Select-Object -First 1
+$env:DATABASE_URL = $testLine.Substring('TEST_DATABASE_URL='.Length)
+npx prisma migrate deploy
 Remove-Item Env:DATABASE_URL
-```
-
-Then run:
-
-```powershell
+Set-Location ..
 npm test
 npm run lint
 npm run typecheck
 ```
 
-Expected: Vitest passes the API and UI tests, ESLint reports no errors, and both TypeScript projects type-check. Server tests require `TEST_DATABASE_URL` in `server/.env`; they only create uniquely named fixtures and remove their user records.
+Server tests use `TEST_DATABASE_URL`, create uniquely named fixtures, and remove only those fixtures. Never point it at the development database.
 
-## Phase 1 endpoints
+## Checkpoint scope
 
-- `POST /api/auth/students/register`
-- `POST /api/auth/students/login`
-- `POST /api/auth/instructors/login`
-- `POST /api/auth/staff/login` (also used by Super Admin)
-- `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`
-- `GET /api/instructor/registrations/pending`
-- `POST /api/instructor/registrations/:studentId/approve`
-- `POST /api/instructor/registrations/:studentId/reject`
-- `GET /api/students` (instructors see their batches, students see themselves, staff and Super Admin see all)
-- `GET|POST /api/instructor/courses`
-- `GET|PATCH|DELETE /api/instructor/courses/:courseId`
-- `POST /api/instructor/courses/:courseId/publish` and `/unpublish`
+- 1A: multi-tenant schema/migration, authentication, organization registration, approval flows, seed, and tests.
+- 1B: Create Staff with forced first-login password change, Student/Staff Details, and Publish Notes with private storage and student view-only protection.
+- 1C: Expert Sessions, Assessments, Practice Q/A, and final tests.
 
-Access and refresh JWTs are delivered only in httpOnly cookies. Student accounts remain unable to log in until instructor approval. Course video and document content, quizzes, assignments, assessments, payments, Redis, Docker, and reporting remain outside the completed phases.
+The Jitsi implementation planned for 1C is a basic live-class integration; it is not DRM and cannot prevent screen recording or screenshots.

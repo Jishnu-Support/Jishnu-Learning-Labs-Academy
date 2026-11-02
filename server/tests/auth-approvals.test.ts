@@ -1,30 +1,85 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import express from 'express';
 import request from 'supertest';
 import bcrypt from 'bcrypt';
-import { PrismaClient, Role, StudentStatus } from '@prisma/client';
+import { AccountStatus, OrganizationStatus, PrismaClient, Role, StudentStatus } from '@prisma/client';
 import { app } from '../src/app.js';
+import { env } from '../src/config/env.js';
+import * as approvalService from '../src/modules/approvals/approvals.service.js';
+import * as organizationService from '../src/modules/organizations/organizations.service.js';
+import { createOrganizationRegistrationLimiter } from '../src/modules/organizations/organizations.routes.js';
 
 const prisma = new PrismaClient();
 const password = 'TestPass!1234';
-const prefix = `phase1-${Date.now()}`;
+const prefix = `phase1a-${Date.now()}`;
 const createdUserIds: string[] = [];
+const createdOrganizationIds: string[] = [];
 
-async function makeUser(role: Role, suffix: string, status?: StudentStatus) {
-  const user = await prisma.user.create({
-    data: { email: `${prefix}-${suffix}@example.test`, name: `${suffix} Test`, role, passwordHash: await bcrypt.hash(password, 4) },
+async function makeOrganization(name: string, code: string) {
+  const organization = await prisma.organization.create({
+    data: {
+      name,
+      code,
+      headName: `${name} Head`,
+      contactNumber: '+15555550100',
+      email: `${prefix}-${code}@example.test`,
+      address: '10 Test Street',
+      city: 'Test City',
+      state: 'Test State',
+      country: 'Test Country',
+      status: OrganizationStatus.ACTIVE,
+    },
   });
-  createdUserIds.push(user.id);
-  if (role === Role.STUDENT) {
-    await prisma.studentProfile.create({ data: { userId: user.id, studentId: `${prefix}-${suffix}`, status: status ?? StudentStatus.PENDING, rejectionReason: status === StudentStatus.REJECTED ? 'Ask your instructor.' : null } });
-  }
-  return user;
+  createdOrganizationIds.push(organization.id);
+  return organization;
 }
 
-async function makeBatch(instructorId: string, studentIds: string[]) {
-  const batch = await prisma.batch.create({ data: { name: `${prefix}-batch-${Math.random()}` } });
-  await prisma.batchInstructor.create({ data: { batchId: batch.id, instructorId } });
-  for (const studentId of studentIds) await prisma.batchStudent.create({ data: { batchId: batch.id, studentId } });
-  return batch;
+async function makeUser(
+  organizationId: string | null,
+  role: Role,
+  suffix: string,
+  status = AccountStatus.APPROVED,
+  identifier?: string,
+) {
+  const email = `${prefix}-${suffix}@example.test`;
+  const user = await prisma.user.create({
+    data: {
+      organizationId,
+      email,
+      name: `${suffix} Test`,
+      phone: '+15555550123',
+      role,
+      status,
+      rejectionReason: status === AccountStatus.REJECTED ? 'Review the submitted information.' : null,
+      passwordHash: await bcrypt.hash(password, 4),
+      ...(role === Role.STUDENT && organizationId ? {
+        studentProfile: {
+          create: {
+            organizationId,
+            studentId: identifier ?? `${prefix}-${suffix}`,
+            status: status as StudentStatus,
+            rejectionReason: status === AccountStatus.REJECTED ? 'Review the submitted information.' : null,
+          },
+        },
+      } : {}),
+      ...(role === Role.STAFF && organizationId ? {
+        staffProfile: {
+          create: { organizationId, staffId: identifier ?? `${prefix}-${suffix}` },
+        },
+      } : {}),
+      ...((role === Role.INSTRUCTOR || role === Role.STAFF) && organizationId ? {
+        accountRegistration: {
+          create: {
+            organizationId,
+            status: status as StudentStatus,
+            rejectionReason: status === AccountStatus.REJECTED ? 'Review the submitted information.' : null,
+          },
+        },
+      } : {}),
+    },
+  });
+  createdUserIds.push(user.id);
+  return user;
 }
 
 function cookieHeader(response: { headers: { 'set-cookie'?: string | string[] } }): string {
@@ -33,127 +88,415 @@ function cookieHeader(response: { headers: { 'set-cookie'?: string | string[] } 
   return cookies.map((item) => item.split(';')[0]).join('; ');
 }
 
-async function studentLogin(studentId: string) {
-  return request(app).post('/api/auth/students/login').send({ studentId, password });
+function studentLogin(organizationCode: string, studentId: string) {
+  return request(app).post('/api/auth/students/login').send({ organizationCode, studentId, password });
 }
 
-async function portalLogin(portal: 'instructors' | 'staff', email: string) {
-  return request(app).post(`/api/auth/${portal}/login`).send({ email, password });
+function staffLogin(organizationCode: string, staffId: string) {
+  return request(app).post('/api/auth/staff/login').send({ organizationCode, identifier: staffId, password });
+}
+
+function instructorLogin(organizationCode: string, email: string) {
+  return request(app).post('/api/auth/instructors/login').send({ organizationCode, email, password });
+}
+
+function orgAdminLogin(organizationCode: string, email: string) {
+  return request(app).post('/api/auth/org-admin/login').send({ organizationCode, email, password });
+}
+
+async function registerStudent(organizationCode: string, studentId: string, suffix: string) {
+  const response = await request(app).post('/api/auth/students/register').send({
+    organizationCode,
+    studentId,
+    name: `${suffix} Student`,
+    email: `${prefix}-${suffix}@example.test`,
+    phone: '+15555550124',
+    password,
+  });
+  if (response.body.data?.user?.id) createdUserIds.push(response.body.data.user.id as string);
+  return response;
 }
 
 beforeAll(async () => prisma.$connect());
+
 afterAll(async () => {
-  if (createdUserIds.length) {
-    await prisma.auditLog.deleteMany({ where: { actorId: { in: createdUserIds } } });
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+  const organizationIds = [...new Set(createdOrganizationIds)];
+  const userIds = [...new Set(createdUserIds)];
+  if (organizationIds.length) {
+    await prisma.course.deleteMany({ where: { organizationId: { in: organizationIds } } });
+    await prisma.note.deleteMany({ where: { organizationId: { in: organizationIds } } });
+    await prisma.expertSession.deleteMany({ where: { organizationId: { in: organizationIds } } });
   }
+  if (organizationIds.length || userIds.length) {
+    await prisma.auditLog.deleteMany({
+      where: {
+        OR: [
+          ...(organizationIds.length ? [{ organizationId: { in: organizationIds } }] : []),
+          ...(userIds.length ? [{ actorId: { in: userIds } }] : []),
+        ],
+      },
+    });
+  }
+  if (userIds.length || organizationIds.length) {
+    await prisma.user.deleteMany({
+      where: {
+        OR: [
+          ...(userIds.length ? [{ id: { in: userIds } }] : []),
+          ...(organizationIds.length ? [{ organizationId: { in: organizationIds } }] : []),
+        ],
+      },
+    });
+  }
+  if (organizationIds.length) await prisma.organization.deleteMany({ where: { id: { in: organizationIds } } });
   await prisma.$disconnect();
 });
 
-describe('Phase 1 registration and authentication', () => {
-  it('registers a student as PENDING', async () => {
-    const response = await request(app).post('/api/auth/students/register').send({ studentId: `${prefix}-new`, name: 'New Learner', email: `${prefix}-new@example.test`, password });
-    expect(response.status).toBe(201);
-    expect(response.body.data.user.studentProfile.status).toBe(StudentStatus.PENDING);
-    createdUserIds.push(response.body.data.user.id as string);
+describe('multi-organization authentication and approvals', () => {
+  it('activates public organization registrations and supports approval only when configured', async () => {
+    const superAdmin = await makeUser(null, Role.SUPER_ADMIN, 'super-admin');
+    const adminLogin = await request(app).post('/api/auth/super-admin/login').send({ email: superAdmin.email, password });
+    expect(adminLogin.status).toBe(200);
+    const adminCookie = cookieHeader(adminLogin);
+
+    const registrationInput = {
+      organizationName: `${prefix} Academy`,
+      organizationHeadName: 'Organization Head',
+      contactNumber: '+15555550125',
+      email: `${prefix}-org@example.test`,
+      address: '12 Learning Road',
+      city: 'Learning City',
+      state: 'Learning State',
+      country: 'Learning Country',
+      registrationNumber: 'REG-1',
+      website: 'https://example.test',
+      password,
+    };
+    const registration = await request(app).post('/api/organizations/register').send(registrationInput);
+    expect(registration.status).toBe(201);
+    const registeredOrganization = registration.body.data.organization as { id: string; code: string; status: OrganizationStatus; adminUserId: string };
+    const organizationId = registeredOrganization.id;
+    createdOrganizationIds.push(organizationId);
+    createdUserIds.push(registeredOrganization.adminUserId);
+    expect(registeredOrganization.status).toBe(OrganizationStatus.ACTIVE);
+    expect(registeredOrganization.code).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    expect(await prisma.auditLog.count({ where: { organizationId, action: 'ORGANIZATION_REGISTERED' } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { organizationId, action: 'ORG_ADMIN_ACCOUNT_CREATED' } })).toBe(1);
+
+    const organizationCode = registeredOrganization.code;
+    const orgAdmin = await orgAdminLogin(organizationCode, `${prefix}-org@example.test`);
+    expect(orgAdmin.status).toBe(200);
+    expect(orgAdmin.body.data.user.role).toBe(Role.ORG_ADMIN);
+
+    const monitored = await request(app).get('/api/super-admin/organizations').set('Cookie', adminCookie);
+    expect(monitored.status).toBe(200);
+    const monitoredOrg = monitored.body.data.organizations.find((item: { id: string }) => item.id === organizationId);
+    expect(monitoredOrg.counts).toEqual({ students: 0, staff: 0, instructors: 0 });
+
+    const oldAdminSessionCookie = cookieHeader(orgAdmin);
+    const suspension = await request(app).post(`/api/super-admin/organizations/${organizationId}/suspend`).set('Cookie', adminCookie);
+    expect(suspension.status).toBe(200);
+    expect(suspension.body.data.organization.status).toBe(OrganizationStatus.SUSPENDED);
+    expect(await prisma.auditLog.count({ where: { organizationId, action: 'ORGANIZATION_SUSPENDED' } })).toBe(1);
+    expect((await orgAdminLogin(organizationCode, `${prefix}-org@example.test`)).status).toBe(403);
+    expect((await request(app).get('/api/auth/me').set('Cookie', oldAdminSessionCookie)).status).toBe(403);
+    const reactivation = await request(app).post(`/api/super-admin/organizations/${organizationId}/reactivate`).set('Cookie', adminCookie);
+    expect(reactivation.status).toBe(200);
+    expect(reactivation.body.data.organization.status).toBe(OrganizationStatus.ACTIVE);
+    expect(await prisma.auditLog.count({ where: { organizationId, action: 'ORGANIZATION_REACTIVATED' } })).toBe(1);
+    expect((await orgAdminLogin(organizationCode, `${prefix}-org@example.test`)).status).toBe(200);
+
+    const pendingInput = { ...registrationInput, email: `${prefix}-pending@example.test` };
+    const previousApprovalSetting = env.REQUIRE_ORG_APPROVAL;
+    const pendingRegistration = await (async () => {
+      env.REQUIRE_ORG_APPROVAL = true;
+      try {
+        return await request(app).post('/api/organizations/register').send(pendingInput);
+      } finally {
+        env.REQUIRE_ORG_APPROVAL = previousApprovalSetting;
+      }
+    })();
+    expect(pendingRegistration.status).toBe(201);
+    const pendingOrganization = pendingRegistration.body.data.organization as { id: string; code: string | null; status: OrganizationStatus };
+    createdOrganizationIds.push(pendingOrganization.id);
+    expect(pendingOrganization.status).toBe(OrganizationStatus.PENDING);
+    expect(pendingOrganization.code).toBeNull();
+    expect(await prisma.user.findFirst({ where: { organizationId: pendingOrganization.id, role: Role.ORG_ADMIN } })).toBeNull();
+    expect((await orgAdminLogin('pending-code', pendingInput.email)).status).toBe(401);
+    const pendingApproval = await request(app)
+      .post(`/api/super-admin/organizations/${pendingOrganization.id}/approve`)
+      .set('Cookie', adminCookie)
+      .send({});
+    expect(pendingApproval.status).toBe(200);
+    createdUserIds.push(pendingApproval.body.data.organization.adminUserId as string);
+    expect(pendingApproval.body.data.organization.status).toBe(OrganizationStatus.ACTIVE);
+    expect((await orgAdminLogin(pendingApproval.body.data.organization.code, pendingInput.email)).status).toBe(200);
+
+    const duplicate = await request(app).post('/api/organizations/register').send(registrationInput);
+    expect(duplicate.status).toBe(409);
   });
 
-  it('blocks PENDING, REJECTED and SUSPENDED students with distinct messages', async () => {
-    for (const [suffix, status, message] of [
-      ['pending', StudentStatus.PENDING, 'pending instructor approval'],
-      ['rejected', StudentStatus.REJECTED, 'Ask your instructor.'],
-      ['suspended', StudentStatus.SUSPENDED, 'account is suspended'],
-    ] as const) {
-      const user = await makeUser(Role.STUDENT, suffix, status);
-      const profile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: user.id } });
-      const response = await studentLogin(profile.studentId);
-      expect(response.status).toBe(403);
-      expect(response.body.error.message).toContain(message);
-    }
+  it('rate limits organization registrations by IP', async () => {
+    const limiterTestApp = express();
+    limiterTestApp.post('/register', createOrganizationRegistrationLimiter(2), (_req, res) => res.status(201).end());
+    expect((await request(limiterTestApp).post('/register')).status).toBe(201);
+    expect((await request(limiterTestApp).post('/register')).status).toBe(201);
+    expect((await request(limiterTestApp).post('/register')).status).toBe(429);
   });
 
-  it('instructor approval allows the student to sign in', async () => {
-    const instructor = await makeUser(Role.INSTRUCTOR, 'approver');
-    const student = await makeUser(Role.STUDENT, 'to-approve');
-    await makeBatch(instructor.id, [student.id]);
-    const approvalLogin = await portalLogin('instructors', instructor.email);
-    expect(approvalLogin.status).toBe(200);
-    const studentProfile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: student.id } });
-    const approval = await request(app).post(`/api/instructor/registrations/${studentProfile.studentId}/approve`).set('Cookie', cookieHeader(approvalLogin)).send({});
+  it('keeps Super Admin login isolated from tenant roles', async () => {
+    const organization = await makeOrganization(`${prefix} Role Isolation`, `${prefix}-role-isolation`);
+    const orgAdmin = await makeUser(organization.id, Role.ORG_ADMIN, 'role-isolation-admin');
+    const superAdmin = await makeUser(null, Role.SUPER_ADMIN, 'role-isolation-super');
+    expect((await request(app).post('/api/auth/super-admin/login').send({ email: orgAdmin.email, password })).status).toBe(401);
+    expect((await request(app).post('/api/auth/org-admin/login').send({ organizationCode: organization.code, email: superAdmin.email, password })).status).toBe(401);
+    expect((await request(app).post('/api/auth/super-admin/login').send({ email: superAdmin.email, password })).status).toBe(200);
+  });
+
+  it('rejects organization approval attempts by tenant administrators', async () => {
+    const superAdmin = await makeUser(null, Role.SUPER_ADMIN, 'unauthorized-super-admin');
+    const superAdminLogin = await request(app).post('/api/auth/super-admin/login').send({ email: superAdmin.email, password });
+    const tenant = await makeOrganization(`${prefix} Non-platform`, `${prefix}-non-platform`);
+    const tenantAdmin = await makeUser(tenant.id, Role.ORG_ADMIN, 'non-platform-admin');
+    const tenantAdminLogin = await orgAdminLogin(tenant.code!, tenantAdmin.email);
+    const registration = await organizationService.register({
+      organizationName: `${prefix} Pending Org`,
+      organizationHeadName: 'Pending Org Head',
+      contactNumber: '+15555550125',
+      email: `${prefix}-pending-org-approval@example.test`,
+      address: '12 Learning Road',
+      city: 'Learning City',
+      state: 'Learning State',
+      country: 'Learning Country',
+      password,
+    }, true);
+    createdOrganizationIds.push(registration.id);
+    const adminApprovalAttempt = await request(app)
+      .post(`/api/super-admin/organizations/${registration.id}/approve`)
+      .set('Cookie', cookieHeader(tenantAdminLogin))
+      .send({});
+    expect(adminApprovalAttempt.status).toBe(403);
+    const approval = await request(app)
+      .post(`/api/super-admin/organizations/${registration.id}/approve`)
+      .set('Cookie', cookieHeader(superAdminLogin))
+      .send({});
     expect(approval.status).toBe(200);
-    expect((await studentLogin(studentProfile.studentId)).status).toBe(200);
+    createdUserIds.push(approval.body.data.organization.adminUserId as string);
   });
 
-  it('records every credential login attempt', async () => {
-    const student = await makeUser(Role.STUDENT, 'bad-password', StudentStatus.APPROVED);
-    const profile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: student.id } });
-    const response = await request(app).post('/api/auth/students/login').send({ studentId: profile.studentId, password: 'wrong-password' });
-    expect(response.status).toBe(401);
-    expect(await prisma.loginLog.count({ where: { userId: student.id, success: false } })).toBe(1);
+  it('keeps legacy organization rejection available only for registrations awaiting approval', async () => {
+    const admin = await makeUser(null, Role.SUPER_ADMIN, 'reject-pending-super-admin');
+    const adminLogin = await request(app).post('/api/auth/super-admin/login').send({ email: admin.email, password });
+    const pending = await organizationService.register({
+      organizationName: `${prefix} Rejected Academy`,
+      organizationHeadName: 'Rejected Head',
+      contactNumber: '+15555550126',
+      email: `${prefix}-rejected-org@example.test`,
+      address: '14 Learning Road',
+      city: 'Learning City',
+      state: 'Learning State',
+      country: 'Learning Country',
+      password,
+    }, true);
+    createdOrganizationIds.push(pending.id);
+    const rejection = await request(app)
+      .post(`/api/super-admin/organizations/${pending.id}/reject`)
+      .set('Cookie', cookieHeader(adminLogin))
+      .send({ reason: 'Registration documents need review.' });
+    expect(rejection.status).toBe(200);
+    expect(rejection.body.data.organization.status).toBe(OrganizationStatus.REJECTED);
+    expect(await prisma.user.findFirst({ where: { organizationId: pending.id, role: Role.ORG_ADMIN } })).toBeNull();
   });
 
-  it('revokes the previous active student session on a new login', async () => {
-    const student = await makeUser(Role.STUDENT, 'single-session', StudentStatus.APPROVED);
-    const profile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: student.id } });
-    const first = await studentLogin(profile.studentId);
-    const oldCookies = cookieHeader(first);
-    const second = await studentLogin(profile.studentId);
-    expect(second.status).toBe(200);
-    expect((await request(app).get('/api/auth/me').set('Cookie', oldCookies)).status).toBe(401);
-    expect(await prisma.session.count({ where: { userId: student.id, revokedAt: null } })).toBe(1);
-  });
-});
+  it('allows the same Student ID and Staff ID in separate organizations, but rejects duplicates within one', async () => {
+    const first = await makeOrganization(`${prefix} First`, `${prefix}-first`);
+    const second = await makeOrganization(`${prefix} Second`, `${prefix}-second`);
 
-describe('Phase 1 instructor permissions', () => {
-  it('rejects staff and student approval attempts with 403', async () => {
-    const staff = await makeUser(Role.STAFF, 'staff-denied');
-    const student = await makeUser(Role.STUDENT, 'student-denied', StudentStatus.APPROVED);
-    const pending = await makeUser(Role.STUDENT, 'pending-target');
-    const pendingProfile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: pending.id } });
-    const staffSession = await portalLogin('staff', staff.email);
-    const studentProfile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: student.id } });
-    const studentSession = await studentLogin(studentProfile.studentId);
-    for (const cookie of [cookieHeader(staffSession), cookieHeader(studentSession)]) {
-      const response = await request(app).post(`/api/instructor/registrations/${pendingProfile.studentId}/approve`).set('Cookie', cookie).send({});
-      expect(response.status).toBe(403);
+    const firstStudent = await registerStudent(first.code!, 'SHARED-100', 'first-student');
+    const secondStudent = await registerStudent(second.code!, 'SHARED-100', 'second-student');
+    const duplicateStudent = await registerStudent(first.code!, 'SHARED-100', 'duplicate-student');
+    expect(firstStudent.status).toBe(201);
+    expect(secondStudent.status).toBe(201);
+    expect(duplicateStudent.status).toBe(409);
+
+    const staffA = await request(app).post('/api/auth/staff/register').send({
+      organizationCode: first.code, staffId: 'SHARED-STAFF', name: 'Staff A',
+      email: `${prefix}-staff-a@example.test`, phone: '+15555550127', password,
+    });
+    const staffB = await request(app).post('/api/auth/staff/register').send({
+      organizationCode: second.code, staffId: 'SHARED-STAFF', name: 'Staff B',
+      email: `${prefix}-staff-b@example.test`, phone: '+15555550128', password,
+    });
+    const duplicateStaff = await request(app).post('/api/auth/staff/register').send({
+      organizationCode: first.code, staffId: 'SHARED-STAFF', name: 'Staff Duplicate',
+      email: `${prefix}-staff-duplicate@example.test`, phone: '+15555550129', password,
+    });
+    for (const response of [staffA, staffB]) {
+      expect(response.status).toBe(201);
+      createdUserIds.push(response.body.data.user.id as string);
     }
+    expect(duplicateStaff.status).toBe(409);
   });
 
-  it('shows only own-batch and unassigned pending students', async () => {
-    const instructor = await makeUser(Role.INSTRUCTOR, 'scope-owner');
-    const otherInstructor = await makeUser(Role.INSTRUCTOR, 'scope-other');
-    const inBatch = await makeUser(Role.STUDENT, 'scope-in');
-    const outsideBatch = await makeUser(Role.STUDENT, 'scope-out');
-    const unassigned = await makeUser(Role.STUDENT, 'scope-free');
-    await makeBatch(instructor.id, [inBatch.id]);
-    await makeBatch(otherInstructor.id, [outsideBatch.id]);
-    const session = await portalLogin('instructors', instructor.email);
-    const response = await request(app).get('/api/instructor/registrations/pending').set('Cookie', cookieHeader(session));
-    expect(response.status).toBe(200);
-    const ids = (response.body.data.registrations as Array<{ studentId: string }>).map((item) => item.studentId);
-    const profiles = await prisma.studentProfile.findMany({ where: { userId: { in: [inBatch.id, outsideBatch.id, unassigned.id] } } });
-    const ownProfile = profiles.find((item) => item.userId === inBatch.id)!;
-    const otherProfile = profiles.find((item) => item.userId === outsideBatch.id)!;
-    const freeProfile = profiles.find((item) => item.userId === unassigned.id)!;
-    expect(ids).toContain(ownProfile.studentId);
-    expect(ids).toContain(freeProfile.studentId);
-    expect(ids).not.toContain(otherProfile.studentId);
+  it('enforces pending, rejected, and suspended login states and revokes older student sessions', async () => {
+    const organization = await makeOrganization(`${prefix} Status`, `${prefix}-status`);
+    const pending = await makeUser(organization.id, Role.STUDENT, 'pending', AccountStatus.PENDING, 'PENDING-ID');
+    const rejected = await makeUser(organization.id, Role.STUDENT, 'rejected', AccountStatus.REJECTED, 'REJECTED-ID');
+    const suspended = await makeUser(organization.id, Role.STUDENT, 'suspended', AccountStatus.SUSPENDED, 'SUSPENDED-ID');
+    await makeUser(organization.id, Role.STAFF, 'rejected-staff', AccountStatus.REJECTED, 'REJECTED-STAFF');
+    const suspendedInstructor = await makeUser(organization.id, Role.INSTRUCTOR, 'suspended-instructor', AccountStatus.SUSPENDED);
+    const pendingLogin = await studentLogin(organization.code!, 'PENDING-ID');
+    expect(pendingLogin.status).toBe(403);
+    expect(pendingLogin.body.error.message).toContain('pending instructor approval');
+    const rejectedLogin = await studentLogin(organization.code!, 'REJECTED-ID');
+    expect(rejectedLogin.status).toBe(403);
+    expect(rejectedLogin.body.error.message).toContain('Review the submitted information.');
+    const suspendedLogin = await studentLogin(organization.code!, 'SUSPENDED-ID');
+    expect(suspendedLogin.status).toBe(403);
+    expect(suspendedLogin.body.error.message).toContain('suspended');
+    const rejectedStaffLogin = await staffLogin(organization.code!, 'REJECTED-STAFF');
+    expect(rejectedStaffLogin.status).toBe(403);
+    expect(rejectedStaffLogin.body.error.message).toContain('Review the submitted information.');
+    const suspendedInstructorLogin = await instructorLogin(organization.code!, suspendedInstructor.email);
+    expect(suspendedInstructorLogin.status).toBe(403);
+    expect(suspendedInstructorLogin.body.error.message).toContain('suspended');
+    expect([pending.id, rejected.id, suspended.id]).toHaveLength(3);
+
+    const active = await makeUser(organization.id, Role.STUDENT, 'single-session', AccountStatus.APPROVED, 'SINGLE-ID');
+    const firstLogin = await studentLogin(organization.code!, 'SINGLE-ID');
+    const oldCookie = cookieHeader(firstLogin);
+    expect(firstLogin.status).toBe(200);
+    const secondLogin = await studentLogin(organization.code!, 'SINGLE-ID');
+    expect(secondLogin.status).toBe(200);
+    expect((await request(app).get('/api/auth/me').set('Cookie', oldCookie)).status).toBe(401);
+    expect(await prisma.session.count({ where: { userId: active.id, revokedAt: null } })).toBe(1);
   });
 
-  it('limits general student visibility to instructor-owned batches', async () => {
-    const instructor = await makeUser(Role.INSTRUCTOR, 'list-owner');
-    const otherInstructor = await makeUser(Role.INSTRUCTOR, 'list-other');
-    const inBatch = await makeUser(Role.STUDENT, 'list-in');
-    const outsideBatch = await makeUser(Role.STUDENT, 'list-out');
-    await makeBatch(instructor.id, [inBatch.id]);
-    await makeBatch(otherInstructor.id, [outsideBatch.id]);
-    const session = await portalLogin('instructors', instructor.email);
-    const response = await request(app).get('/api/students').set('Cookie', cookieHeader(session));
-    expect(response.status).toBe(200);
-    const ids = (response.body.data.students as Array<{ studentId: string }>).map((item) => item.studentId);
-    const ownProfile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: inBatch.id } });
-    const otherProfile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: outsideBatch.id } });
-    expect(ids).toContain(ownProfile.studentId);
-    expect(ids).not.toContain(otherProfile.studentId);
+  it('applies approval permissions and isolates student records by organization', async () => {
+    const first = await makeOrganization(`${prefix} Tenant A`, `${prefix}-tenant-a`);
+    const second = await makeOrganization(`${prefix} Tenant B`, `${prefix}-tenant-b`);
+    const adminA = await makeUser(first.id, Role.ORG_ADMIN, 'admin-a');
+    const adminB = await makeUser(second.id, Role.ORG_ADMIN, 'admin-b');
+    const instructorB = await makeUser(second.id, Role.INSTRUCTOR, 'instructor-b');
+    const studentA = await makeUser(first.id, Role.STUDENT, 'student-a', AccountStatus.APPROVED, 'DUPLICATE-ID');
+    const studentB = await makeUser(second.id, Role.STUDENT, 'student-b', AccountStatus.APPROVED, 'DUPLICATE-ID');
+    const pendingStudentB = await makeUser(second.id, Role.STUDENT, 'pending-student-b', AccountStatus.PENDING, 'B-ONLY-PENDING');
+
+    const pendingInstructorRegistration = await request(app).post('/api/auth/instructors/register').send({
+      organizationCode: first.code,
+      name: 'Pending Instructor A',
+      email: `${prefix}-pending-instructor-a@example.test`,
+      phone: '+15555550126',
+      password,
+    });
+    expect(pendingInstructorRegistration.status).toBe(201);
+    const pendingInstructorId = pendingInstructorRegistration.body.data.user.id as string;
+    createdUserIds.push(pendingInstructorId);
+    const pendingStaffRegistration = await request(app).post('/api/auth/staff/register').send({
+      organizationCode: first.code,
+      staffId: `${prefix}-pending-staff-a`,
+      name: 'Pending Staff A',
+      email: `${prefix}-pending-staff-a@example.test`,
+      phone: '+15555550127',
+      password,
+    });
+    expect(pendingStaffRegistration.status).toBe(201);
+    const pendingStaffId = pendingStaffRegistration.body.data.user.id as string;
+    createdUserIds.push(pendingStaffId);
+    const pendingStudentRegistration = await registerStudent(first.code!, `${prefix}-pending-student-a`, 'pending-student-a');
+    expect(pendingStudentRegistration.status).toBe(201);
+    const pendingStudentUserId = pendingStudentRegistration.body.data.user.id as string;
+    const pendingStudentId = pendingStudentRegistration.body.data.user.studentProfile.studentId as string;
+
+    const pendingInstructorEmail = `${prefix}-pending-instructor-a@example.test`;
+    const pendingInstructorLogin = await instructorLogin(first.code!, pendingInstructorEmail);
+    expect(pendingInstructorLogin.status).toBe(403);
+    expect(pendingInstructorLogin.body.error.message).toContain('pending organization admin approval');
+    const orgAdmin = await orgAdminLogin(first.code!, adminA.email);
+    expect(orgAdmin.status).toBe(200);
+    const orgAdminB = await orgAdminLogin(second.code!, adminB.email);
+    expect(orgAdminB.status).toBe(200);
+    const crossTenantInstructorApproval = await request(app)
+      .post(`/api/org-admin/instructors/${pendingInstructorId}/approve`)
+      .set('Cookie', cookieHeader(orgAdminB))
+      .send({});
+    expect(crossTenantInstructorApproval.status).toBe(404);
+    const instructorApproval = await request(app)
+      .post(`/api/org-admin/instructors/${pendingInstructorId}/approve`)
+      .set('Cookie', cookieHeader(orgAdmin))
+      .send({});
+    expect(instructorApproval.status).toBe(200);
+    const instructor = await instructorLogin(first.code!, pendingInstructorEmail);
+    expect(instructor.status).toBe(200);
+
+    const studentDenial = await request(app)
+      .post(`/api/instructor/registrations/${prefix}-student-a/approve`)
+      .set('Cookie', cookieHeader(orgAdmin))
+      .send({});
+    expect(studentDenial.status).toBe(403);
+
+    const instructorCookie = cookieHeader(instructor);
+    const instructorStaffApprovalAttempt = await request(app)
+      .post(`/api/org-admin/staff/${pendingStaffId}/approve`)
+      .set('Cookie', instructorCookie)
+      .send({});
+    expect(instructorStaffApprovalAttempt.status).toBe(403);
+    const approveStudent = await request(app)
+      .post(`/api/instructor/registrations/${encodeURIComponent(pendingStudentId)}/approve`)
+      .set('Cookie', instructorCookie)
+      .send({});
+    expect(approveStudent.status).toBe(200);
+    const approveStaff = await request(app)
+      .post(`/api/org-admin/staff/${pendingStaffId}/approve`)
+      .set('Cookie', cookieHeader(orgAdmin))
+      .send({});
+    expect(approveStaff.status).toBe(200);
+    expect((await studentLogin(first.code!, `${prefix}-pending-student-a`)).status).toBe(200);
+    expect((await staffLogin(first.code!, `${prefix}-pending-staff-a`)).status).toBe(200);
+
+    const staffCookie = cookieHeader(await staffLogin(first.code!, `${prefix}-pending-staff-a`));
+    const staffApprovalAttempt = await request(app)
+      .post(`/api/instructor/registrations/${prefix}-student-a/approve`)
+      .set('Cookie', staffCookie)
+      .send({});
+    expect(staffApprovalAttempt.status).toBe(403);
+    const studentCookie = cookieHeader(await studentLogin(first.code!, `${prefix}-pending-student-a`));
+    const studentApprovalAttempt = await request(app)
+      .post(`/api/instructor/registrations/${prefix}-student-a/approve`)
+      .set('Cookie', studentCookie)
+      .send({});
+    expect(studentApprovalAttempt.status).toBe(403);
+    const instructorOnInstructorRoute = await request(app)
+      .get('/api/org-admin/instructors/pending')
+      .set('Cookie', instructorCookie);
+    expect(instructorOnInstructorRoute.status).toBe(403);
+    await expect(approvalService.approveInstructor(first.id, pendingInstructorId, pendingInstructorId))
+      .rejects.toMatchObject({ status: 403 });
+
+    const firstStudentLogin = await studentLogin(first.code!, 'DUPLICATE-ID');
+    const secondStudentLogin = await studentLogin(second.code!, 'DUPLICATE-ID');
+    expect(firstStudentLogin.status).toBe(200);
+    expect(secondStudentLogin.status).toBe(200);
+    const firstStudentList = await request(app).get('/api/students').set('Cookie', instructorCookie);
+    expect(firstStudentList.status).toBe(200);
+    const firstStudents = firstStudentList.body.data.students as Array<{ studentId: string; user: { email: string } }>;
+    const firstIds = firstStudents.map((student) => student.studentId);
+    expect(firstIds).toContain('DUPLICATE-ID');
+    expect(firstStudents.some((student) => student.user.email === studentB.email)).toBe(false);
+    const secondInstructor = await instructorLogin(second.code!, instructorB.email);
+    const secondStudentList = await request(app).get('/api/students').set('Cookie', cookieHeader(secondInstructor));
+    expect(secondStudentList.status).toBe(200);
+    expect(secondStudentList.body.data.students).toHaveLength(2);
+
+    const superAdmin = await makeUser(null, Role.SUPER_ADMIN, 'isolation-superadmin');
+    const superAdminLogin = await request(app).post('/api/auth/super-admin/login').send({ email: superAdmin.email, password });
+    const superAdminStudentRead = await request(app).get('/api/students').set('Cookie', cookieHeader(superAdminLogin));
+    expect(superAdminStudentRead.status).toBe(403);
+
+    const crossTenantApprove = await request(app)
+      .post('/api/instructor/registrations/B-ONLY-PENDING/approve')
+      .set('Cookie', instructorCookie)
+      .send({});
+    expect(crossTenantApprove.status).toBe(404);
+    expect([pendingStudentUserId, pendingStudentB.id, studentA.id]).toHaveLength(3);
   });
 });

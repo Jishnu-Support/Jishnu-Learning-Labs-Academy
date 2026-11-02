@@ -1,7 +1,16 @@
 import { createContext, useContext } from 'react';
-import type { Role } from '../types';
+import type { AccountStatus, Role } from '../types';
 
-export type CurrentUser = { id: string; email: string; name: string; role: Role };
+export type CurrentUser = {
+  id: string;
+  organizationId: string | null;
+  email: string;
+  name: string;
+  role: Role;
+  status?: AccountStatus;
+  mustChangePassword?: boolean;
+  studentId?: string;
+};
 type AuthState = { user: CurrentUser | null; loading: boolean; logout: () => Promise<void> };
 export const AuthContext = createContext<AuthState | null>(null);
 

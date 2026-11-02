@@ -10,6 +10,37 @@ describe('Phase 1 portal shell', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /create a student account/i })).toHaveAttribute('href', '/student/register');
+    expect(screen.getByLabelText('Organization Code')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /register as student/i })).toHaveAttribute('href', '/student/register');
+  });
+
+  it('provides the instructor registration route with organization code and approval messaging', async () => {
+    window.history.pushState({}, '', '/instructor/register');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
+    expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
+    expect(screen.getByText(/organization admin must approve/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Organization Code')).toBeInTheDocument();
+    expect(screen.getByLabelText('Full name')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Student ID')).not.toBeInTheDocument();
+  });
+
+  it('shows the public organization registration portal', async () => {
+    window.history.pushState({}, '', '/organizations/register');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
+    expect(await screen.findByRole('heading', { name: 'Register your organization' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Organization head name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Password for the Org Admin account')).toBeInTheDocument();
+  });
+
+  it('shows Super Admin login without an organization code', async () => {
+    window.history.pushState({}, '', '/super-admin/login');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Email address')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Organization Code')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Platform Admin' })).toHaveAttribute('href', '/super-admin/login');
   });
 });
