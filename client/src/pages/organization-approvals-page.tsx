@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
+import { PageHeader } from '../components/page-header';
 import { api, ApiError } from '../lib/api';
 
 type Organization = {
@@ -19,8 +21,9 @@ type Action = 'suspend' | 'reactivate' | 'approve' | 'reject';
 
 export function OrganizationApprovalsPage() {
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [search, setSearch] = useState(searchParams.get('search') ?? '');
+  const [debouncedSearch, setDebouncedSearch] = useState(searchParams.get('search') ?? '');
   const [selected, setSelected] = useState<{ organization: Organization; action: Action } | null>(null);
   const [reason, setReason] = useState('');
   const [notice, setNotice] = useState('');
@@ -28,6 +31,14 @@ export function OrganizationApprovalsPage() {
     const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
     return () => window.clearTimeout(timer);
   }, [search]);
+  useEffect(() => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (debouncedSearch) next.set('search', debouncedSearch);
+      else next.delete('search');
+      return next;
+    }, { replace: true });
+  }, [debouncedSearch, setSearchParams]);
   const query = useQuery({
     queryKey: ['platform-organizations', debouncedSearch],
     queryFn: () => api<{ organizations: Organization[] }>(
@@ -66,7 +77,7 @@ export function OrganizationApprovalsPage() {
   return (
     <section>
       <p className="eyebrow">SUPER ADMIN PORTAL</p>
-      <h1>Organizations</h1>
+      <PageHeader title="Organizations" backTo="/super-admin/dashboard" breadcrumbs={['Dashboard', 'Organizations']} />
       <p className="muted">Monitor platform organizations and suspend or reactivate access. User records are not shown here.</p>
       <label className="field organization-search">
         <span>Search organizations</span>

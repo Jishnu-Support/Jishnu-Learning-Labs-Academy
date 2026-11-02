@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
 import { z } from 'zod';
 import { Field } from '../components/field';
+import { PageHeader } from '../components/page-header';
 import { Button } from '../components/ui/button';
 import { api, ApiError } from '../lib/api';
 import type { Role } from '../types';
@@ -56,7 +57,7 @@ export function RegisterPage({ role }: Props) {
     return (
       <section className="narrow-card card">
         <p className="eyebrow">REGISTRATION RECEIVED</p>
-        <h1>One step at a time.</h1>
+        <PageHeader title="Registration received" backTo="/organizations/register" breadcrumbs={['Register', 'Confirmation']} />
         <p className="muted">Your account is pending {details.approval} approval. You’ll be able to sign in after it is approved.</p>
         <Link className="text-link" to={details.login}>Return to {details.title.toLowerCase()} sign in</Link>
       </section>
@@ -65,7 +66,7 @@ export function RegisterPage({ role }: Props) {
   return (
     <section className="narrow-card card">
       <p className="eyebrow">{details.title.toUpperCase()} PORTAL</p>
-      <h1>Create your account</h1>
+      <PageHeader title="Create your account" backTo="/organizations/register" breadcrumbs={[details.title, 'Register']} hasUnsavedChanges={form.formState.isDirty} />
       <p className="muted">An {details.approval} must approve your registration before you can sign in.</p>
       <form className="form-stack" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
         <Field label="Organization Code" autoComplete="organization" {...form.register('organizationCode')} error={form.formState.errors.organizationCode?.message} />

@@ -14,7 +14,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api('/auth/logout', { method: 'POST' });
     } finally {
-      await queryClient.setQueryData(['me'], null);
+      queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== 'me' });
+      queryClient.setQueryData(['me'], null);
     }
   };
   return <AuthContext.Provider value={{ user: query.data ?? null, loading: query.isLoading, logout }}>{children}</AuthContext.Provider>;

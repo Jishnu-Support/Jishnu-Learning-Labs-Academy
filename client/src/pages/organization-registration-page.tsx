@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { Field } from '../components/field';
+import { PageHeader } from '../components/page-header';
 import { Button } from '../components/ui/button';
 import { api, ApiError } from '../lib/api';
 
@@ -53,13 +54,13 @@ export function OrganizationRegistrationPage() {
         <p className="eyebrow">REGISTRATION RECEIVED</p>
         {registration.status === 'PENDING' ? (
           <>
-            <h1>Waiting for approval</h1>
+            <PageHeader title="Waiting for approval" backTo="/student/register" breadcrumbs={['Organization', 'Registration']} />
             <p className="muted">Your organization is pending Super Admin approval. The Org Admin account will be available after approval.</p>
             <Link className="text-link" to="/super-admin/login">Platform Admin sign in</Link>
           </>
         ) : (
           <>
-            <h1>Your organization is active</h1>
+            <PageHeader title="Your organization is active" backTo="/student/register" breadcrumbs={['Organization', 'Registration']} />
             <p className="muted">Save this organization code. You need it each time you sign in to the Org Admin portal.</p>
             <p className="organization-code" aria-label="Organization code">{registration.code}</p>
             {copyMessage && <p className="notice" role="status">{copyMessage}</p>}
@@ -75,7 +76,7 @@ export function OrganizationRegistrationPage() {
   return (
     <section className="narrow-card card">
       <p className="eyebrow">JISHNU LEARNING LABS</p>
-      <h1>Register your organization</h1>
+      <PageHeader title="Register your organization" backTo="/student/register" breadcrumbs={['Organization', 'Register']} hasUnsavedChanges={form.formState.isDirty} />
       <p className="muted">Register your organization and create its Org Admin account.</p>
       <form className="form-stack" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
         <Field label="Organization name" autoComplete="organization" {...form.register('organizationName')} error={form.formState.errors.organizationName?.message} />

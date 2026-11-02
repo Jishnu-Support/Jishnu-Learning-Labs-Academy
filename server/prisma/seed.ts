@@ -1,6 +1,7 @@
 import 'dotenv/config';
+import { pathToFileURL } from 'node:url';
 import bcrypt from 'bcrypt';
-import { AccountStatus, OrganizationStatus, PrismaClient, Role, StudentStatus, type User } from '@prisma/client';
+import { AccountStatus, AssessmentStatus, EnrollmentStatus, OrganizationStatus, Prisma, PrismaClient, QuestionDifficulty, QuestionType, Role, StudentStatus, type User } from '@prisma/client';
 
 const prisma = new PrismaClient();
 const developmentPassword = process.env.SEED_PASSWORD ?? 'JishnuDevOnly!2026';
@@ -17,18 +18,19 @@ function studentStatus(status: AccountStatus): StudentStatus {
 }
 
 async function ensureSeedAudit(
+  database: PrismaClient,
   organizationId: string | null,
   action: string,
   targetType: string,
   targetId: string,
   metadata: object,
 ) {
-  const existing = await prisma.auditLog.findFirst({
+  const existing = await database.auditLog.findFirst({
     where: { organizationId, action, targetType, targetId },
     select: { id: true },
   });
   if (!existing) {
-    await prisma.auditLog.create({
+    await database.auditLog.create({
       data: { organizationId, action, targetType, targetId, metadata: { ...metadata, source: 'development-seed' } },
     });
   }
@@ -71,7 +73,7 @@ async function seedOrganization(input: {
       pendingAdminPasswordHash: input.pendingAdminPasswordHash ?? null,
     },
   });
-  await ensureSeedAudit(organization.id, 'ORGANIZATION_REGISTERED', 'Organization', organization.id, { status: input.status });
+  await ensureSeedAudit(prisma, organization.id, 'ORGANIZATION_REGISTERED', 'Organization', organization.id, { status: input.status });
   return organization;
 }
 
@@ -147,7 +149,7 @@ async function seedUser(input: {
       },
     });
   }
-  await ensureSeedAudit(input.organizationId, 'ACCOUNT_CREATED', 'User', user.id, { role: input.role });
+  await ensureSeedAudit(prisma, input.organizationId, 'ACCOUNT_CREATED', 'User', user.id, { role: input.role });
   return user;
 }
 
@@ -291,7 +293,7 @@ async function seedAuthoredNotes(
         await prisma.note.update({ where: { id: existing.id }, data });
       } else {
         const note = await prisma.note.create({ data });
-        await ensureSeedAudit(organizationId, 'NOTE_CREATED', 'Note', note.id, { published, authorRole: author.label });
+        await ensureSeedAudit(prisma, organizationId, 'NOTE_CREATED', 'Note', note.id, { published, authorRole: author.label });
       }
     }
   }
@@ -356,6 +358,295 @@ async function seedTenant(
     { user: host, label: 'Instructor' },
     { user: sampleStaff, label: 'Staff' },
   ]);
+  return { admin, instructors, students };
+}
+
+const courseFixtures = [
+  {
+    code: 'SAP101', title: 'SAP', category: 'IT / Software', plannedHours: 40,
+    description: 'Learn core SAP ERP navigation and practical module workflows.',
+    topics: [
+      ['Introduction to SAP and Navigation', 4], ['SAP FI Basics', 10], ['SAP MM Basics', 10], ['SAP SD Basics', 10], ['Reports and Practice', 6],
+    ],
+  },
+  {
+    code: 'ENG101', title: 'English', category: 'Languages', plannedHours: 30,
+    description: 'Build practical English grammar, reading, writing, and speaking skills.',
+    topics: [
+      ['Grammar Basics', 8], ['Vocabulary Building', 6], ['Reading Comprehension', 6], ['Writing Skills', 6], ['Speaking Practice', 4],
+    ],
+  },
+  {
+    code: 'TAM101', title: 'Tamil', category: 'Languages', plannedHours: 30,
+    description: 'Develop Tamil reading, grammar, poetry, prose, and writing skills.',
+    topics: [
+      ['Letters and Reading', 6], ['Grammar (இலக்கணம்)', 8], ['Poetry (செய்யுள்)', 6], ['Prose (உரைநடை)', 6], ['Writing Practice', 4],
+    ],
+  },
+  {
+    code: 'MAT101', title: 'Maths', category: 'Mathematics', plannedHours: 40,
+    description: 'Practice essential number, algebra, geometry, measurement, and data concepts.',
+    topics: [
+      ['Number System', 8], ['Algebra', 10], ['Geometry', 10], ['Mensuration', 6], ['Statistics and Data Handling', 6],
+    ],
+  },
+  {
+    code: 'SOC101', title: 'Social', category: 'Social Science', plannedHours: 30,
+    description: 'Explore history, geography, civics, economics, and map skills.',
+    topics: [
+      ['History', 8], ['Geography', 8], ['Civics', 6], ['Economics Basics', 4], ['Map Skills', 4],
+    ],
+  },
+  {
+    code: 'SCI101', title: 'Science', category: 'Science', plannedHours: 40,
+    description: 'Introduce core physics, chemistry, biology, environmental, and practical science.',
+    topics: [
+      ['Physics Basics', 10], ['Chemistry Basics', 10], ['Biology Basics', 10], ['Environmental Science', 6], ['Practical Experiments', 4],
+    ],
+  },
+] as const;
+
+const practiceExamples = [
+  {
+    type: QuestionType.MCQ_SINGLE,
+    prompt: (course: string, topic: string) => `Which statement best describes ${topic} in ${course}?`,
+    options: ['A foundational concept', 'An unrelated topic', 'A course date', 'A login credential'],
+    answer: 'A foundational concept',
+    explanation: 'Choose the option that accurately describes the topic.',
+  },
+  {
+    type: QuestionType.TRUE_FALSE,
+    prompt: (course: string, topic: string) => `${topic} is included in the ${course} learning plan.`,
+    options: ['True', 'False'],
+    answer: 'True',
+    explanation: 'This topic is part of the course outline.',
+  },
+  {
+    type: QuestionType.MATCH,
+    prompt: (course: string, topic: string) => `Match the ${course} topic with its course section: ${topic}.`,
+    options: [{ left: 'Example concept', right: 'Course learning topic' }],
+    answer: { 'Example concept': 'Course learning topic' },
+    explanation: 'The topic belongs to the course learning outline.',
+  },
+  {
+    type: QuestionType.FILL_IN_BLANK,
+    prompt: (_course: string, topic: string) => `Complete the course outline item: ${topic} is a learning _____.`,
+    options: null,
+    answer: 'topic',
+    explanation: 'Each listed item is a course topic.',
+  },
+] as const;
+
+export async function seedCourses(
+  database: PrismaClient,
+  organization: { id: string; name: string; code?: string | null },
+  admin: User,
+  instructors: User[],
+  students: User[],
+) {
+  const activeInstructors = instructors.filter((user) => user.status === AccountStatus.APPROVED);
+  const activeStudents = students.filter((user) => user.status === AccountStatus.APPROVED);
+  if (!activeInstructors.length) throw new Error(`No approved instructors found for ${organization.name}`);
+  const today = new Date();
+  const startDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 14));
+  const endDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 90));
+  const seededCourseCodes: string[] = [];
+
+  for (const [index, fixture] of courseFixtures.entries()) {
+    const instructor = activeInstructors[index % activeInstructors.length]!;
+    const course = await database.course.upsert({
+      where: { organizationId_code: { organizationId: organization.id, code: fixture.code } },
+      update: {
+        title: fixture.title,
+        description: fixture.description,
+        category: fixture.category,
+        plannedHours: fixture.plannedHours,
+        startDate,
+        endDate,
+        status: 'PUBLISHED',
+        minimumAttendancePercent: 75,
+        requiresAssessmentPass: true,
+        createdById: admin.id,
+      },
+      create: {
+        organizationId: organization.id,
+        code: fixture.code,
+        title: fixture.title,
+        description: fixture.description,
+        category: fixture.category,
+        plannedHours: fixture.plannedHours,
+        startDate,
+        endDate,
+        status: 'PUBLISHED',
+        minimumAttendancePercent: 75,
+        requiresAssessmentPass: true,
+        createdById: admin.id,
+      },
+    });
+    await database.courseInstructor.createMany({
+      data: [{ organizationId: organization.id, courseId: course.id, instructorId: instructor.id }],
+      skipDuplicates: true,
+    });
+
+    const topics = [];
+    for (const [topicIndex, [title, plannedHours]] of fixture.topics.entries()) {
+      const covered = (fixture.code === 'SAP101' && topicIndex === 0)
+        || (fixture.code === 'ENG101' && topicIndex < 2)
+        || (fixture.code === 'MAT101' && topicIndex === 0);
+      topics.push(await database.courseTopic.upsert({
+        where: {
+          organizationId_courseId_order: {
+            organizationId: organization.id,
+            courseId: course.id,
+            order: topicIndex + 1,
+          },
+        },
+        update: {
+          title,
+          plannedHours,
+          covered,
+          coveredAt: covered ? new Date() : null,
+        },
+        create: {
+          organizationId: organization.id,
+          courseId: course.id,
+          title,
+          plannedHours,
+          order: topicIndex + 1,
+          covered,
+          coveredAt: covered ? new Date() : null,
+        },
+      }));
+    }
+
+    const linkedNoteTitle = `${organization.name} ${fixture.title} course notes`;
+    const existingNote = await database.note.findFirst({
+      where: { organizationId: organization.id, courseId: course.id, title: linkedNoteTitle },
+      select: { id: true },
+    });
+    const noteData = {
+      organizationId: organization.id,
+      authorId: instructor.id,
+      title: linkedNoteTitle,
+      subject: fixture.category,
+      description: `Published learning notes for ${fixture.title} (${fixture.code}).`,
+      published: true,
+      courseId: course.id,
+    };
+    if (existingNote) {
+      await database.note.update({ where: { id: existingNote.id }, data: noteData });
+    } else {
+      const note = await database.note.create({ data: noteData });
+      await ensureSeedAudit(database, organization.id, 'NOTE_CREATED', 'Note', note.id, { published: true, courseCode: fixture.code });
+    }
+
+    const assessmentTitle = `${fixture.title} Course Assessment`;
+    const assessment = await prisma.assessment.upsert({
+      where: { id: (await database.assessment.findFirst({
+        where: { organizationId: organization.id, courseId: course.id, title: assessmentTitle },
+        select: { id: true },
+      }))?.id ?? `seed-assessment-${organization.id}-${fixture.code}` },
+      update: {
+        organizationId: organization.id,
+        courseId: course.id,
+        createdById: instructor.id,
+        title: assessmentTitle,
+        instructions: `Sample assessment for ${fixture.title}.`,
+        totalMarks: practiceExamples.length,
+        passMark: 2,
+        durationMinutes: 30,
+        status: AssessmentStatus.PUBLISHED,
+      },
+      create: {
+        id: `seed-assessment-${organization.id}-${fixture.code}`,
+        organizationId: organization.id,
+        courseId: course.id,
+        createdById: instructor.id,
+        title: assessmentTitle,
+        instructions: `Sample assessment for ${fixture.title}.`,
+        totalMarks: practiceExamples.length,
+        passMark: 2,
+        durationMinutes: 30,
+        status: AssessmentStatus.PUBLISHED,
+      },
+    });
+
+    for (const [questionIndex, example] of practiceExamples.entries()) {
+      const topic = topics[questionIndex % topics.length]!;
+      const prompt = example.prompt(fixture.title, topic.title);
+      const options = example.options === null ? Prisma.JsonNull : example.options;
+      const answer = example.answer;
+      const questionData = {
+        type: example.type,
+        prompt,
+        options: options as Prisma.InputJsonValue,
+        correctAnswer: answer as Prisma.InputJsonValue,
+        marks: 1,
+        explanation: example.explanation,
+      };
+      await database.assessmentQuestion.upsert({
+        where: {
+          organizationId_assessmentId_order: {
+            organizationId: organization.id,
+            assessmentId: assessment.id,
+            order: questionIndex + 1,
+          },
+        },
+        update: questionData,
+        create: {
+          organizationId: organization.id,
+          assessmentId: assessment.id,
+          ...questionData,
+          order: questionIndex + 1,
+        },
+      });
+
+      const existingPractice = await database.practiceQuestion.findFirst({
+        where: { organizationId: organization.id, courseId: course.id, type: example.type, prompt },
+        select: { id: true },
+      });
+      const practiceData = {
+        organizationId: organization.id,
+        courseId: course.id,
+        topicId: topic.id,
+        createdById: instructor.id,
+        type: questionData.type,
+        prompt: questionData.prompt,
+        options: questionData.options,
+        correctAnswer: questionData.correctAnswer,
+        explanation: questionData.explanation,
+        topic: topic.title,
+        difficulty: QuestionDifficulty.BEGINNER,
+      };
+      if (existingPractice) {
+        await database.practiceQuestion.update({ where: { id: existingPractice.id }, data: practiceData });
+      } else {
+        await database.practiceQuestion.create({ data: practiceData });
+      }
+    }
+    seededCourseCodes.push(fixture.code);
+  }
+
+  const enrollments = activeStudents.map((student, studentIndex) => ({
+    student,
+    courseIndexes: organization.code === 'northstar-academy'
+      ? []
+      : studentIndex === 0 ? [0, 1, 2, 3] : studentIndex === 1 ? [0, 4] : [],
+  }));
+  for (const { student, courseIndexes } of enrollments) {
+    for (const courseIndex of courseIndexes) {
+      const course = await database.course.findUniqueOrThrow({
+        where: { organizationId_code: { organizationId: organization.id, code: courseFixtures[courseIndex]!.code } },
+        select: { id: true },
+      });
+      await database.enrollment.upsert({
+        where: { organizationId_courseId_studentId: { organizationId: organization.id, courseId: course.id, studentId: student.id } },
+        update: {},
+        create: { organizationId: organization.id, courseId: course.id, studentId: student.id, status: EnrollmentStatus.ACTIVE },
+      });
+    }
+  }
+  console.log(`${organization.code ?? organization.id}: seeded course codes ${seededCourseCodes.join(', ')}`);
 }
 
 async function main() {
@@ -389,7 +680,7 @@ async function main() {
     throw new Error('Approved seed organizations must have organization codes');
   }
 
-  await seedTenant({ ...primaryOrganization, code: primaryOrganization.code }, passwordHash, {
+  const primarySeed = await seedTenant({ ...primaryOrganization, code: primaryOrganization.code }, passwordHash, {
     adminEmail: 'orgadmin@jll-demo.local',
     instructors: [
       { email: 'instructor1@jll-demo.local', name: 'Asha Instructor', status: AccountStatus.APPROVED },
@@ -410,7 +701,7 @@ async function main() {
     { studentId: 'STU-1006', email: 'pending3@jll-demo.local', name: 'Additional Pending Student', status: AccountStatus.PENDING },
     ],
   });
-  await seedTenant({ ...secondOrganization, code: secondOrganization.code }, passwordHash, {
+  const secondSeed = await seedTenant({ ...secondOrganization, code: secondOrganization.code }, passwordHash, {
     adminEmail: 'orgadmin@northstar.local',
     instructors: [
       { email: 'instructor@northstar.local', name: 'Northstar Instructor', status: AccountStatus.APPROVED },
@@ -425,6 +716,8 @@ async function main() {
     { studentId: 'NST-2002', email: 'student2@northstar.local', name: 'Northstar Student Two', status: AccountStatus.PENDING },
     ],
   });
+  await seedCourses(prisma, primaryOrganization, primarySeed.admin, primarySeed.instructors, primarySeed.students);
+  await seedCourses(prisma, secondOrganization, secondSeed.admin, secondSeed.instructors, secondSeed.students);
 
   console.log('\n=== DEVELOPMENT-ONLY SEED CREDENTIALS ===');
   console.log(`Password for all seeded accounts: ${developmentPassword}`);
@@ -442,7 +735,9 @@ async function main() {
 
 }
 
-main().catch((error: unknown) => {
-  console.error('Seed failed:', error);
-  process.exitCode = 1;
-}).finally(async () => prisma.$disconnect());
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main().catch((error: unknown) => {
+    console.error('Seed failed:', error);
+    process.exitCode = 1;
+  }).finally(async () => prisma.$disconnect());
+}

@@ -15,8 +15,8 @@ const allowedTypes = new Map([
   ['.webp', 'image/webp'],
 ]);
 
-type NoteInput = { title: string; subject: string; description: string };
-type NoteListInput = { search?: string; subject?: string };
+type NoteInput = { title: string; subject: string; description: string; courseId?: string | null };
+type NoteListInput = { search?: string; subject?: string; courseId?: string };
 
 function requireOrganizationId(organizationId: string | null): string {
   if (!organizationId) throw new HttpError(403, 'An organization-scoped account is required');
@@ -34,7 +34,14 @@ function safeNoteSelect() {
     createdAt: true,
     updatedAt: true,
     author: { select: { id: true, name: true, role: true } },
+    course: { select: { id: true, title: true, code: true } },
   } satisfies Prisma.NoteSelect;
+}
+
+async function validateCourse(organizationId: string, courseId: string | null | undefined) {
+  if (!courseId) return;
+  const course = await prisma.course.findFirst({ where: { id: courseId, organizationId }, select: { id: true } });
+  if (!course) throw new HttpError(404, 'Course not found in your organization');
 }
 
 async function storeUpload(file: Express.Multer.File | undefined) {
@@ -88,6 +95,7 @@ export async function listNotes(organizationId: string | null, userId: string, r
     where: {
       organizationId: tenantId,
       deletedAt: null,
+      ...(input.courseId ? { courseId: input.courseId } : {}),
       ...(role === Role.ORG_ADMIN ? {} : role === Role.STUDENT ? { published: true } : {
         OR: [{ published: true }, { authorId: userId }],
       }),
@@ -114,6 +122,7 @@ export async function createNote(
   file?: Express.Multer.File,
 ) {
   const tenantId = requireOrganizationId(organizationId);
+  await validateCourse(tenantId, input.courseId);
   const upload = await storeUpload(file);
   try {
     const note = await prisma.$transaction(async (tx) => {
@@ -124,6 +133,7 @@ export async function createNote(
           title: input.title,
           subject: input.subject,
           description: input.description,
+          courseId: input.courseId ?? null,
           ...(upload ? upload : {}),
         },
         select: safeNoteSelect(),
@@ -163,6 +173,7 @@ export async function updateNote(
   const tenantId = requireOrganizationId(organizationId);
   const note = await findNote(tenantId, noteId);
   requireNoteOwner(note, actorId, role);
+  if (input.courseId !== undefined) await validateCourse(tenantId, input.courseId);
   const updated = await prisma.$transaction(async (tx) => {
     const result = await tx.note.update({
       where: { id: note.id },

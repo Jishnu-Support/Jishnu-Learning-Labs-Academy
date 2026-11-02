@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Button } from '../components/ui/button';
+import { PageHeader } from '../components/page-header';
 import { api, ApiError } from '../lib/api';
 
 type Registration = {
@@ -57,7 +58,7 @@ export function InstructorApprovalsPage() {
   return (
     <section>
       <p className="eyebrow">ORG ADMIN PORTAL</p>
-      <h1>Pending registrations</h1>
+      <PageHeader title="Pending registrations" backTo="/org-admin" breadcrumbs={['Dashboard', 'Pending Registrations']} />
       <div className="row-actions" role="tablist" aria-label="Registration type">
         <Button variant={queue === 'INSTRUCTOR' ? 'primary' : 'secondary'} role="tab" aria-selected={queue === 'INSTRUCTOR'} onClick={() => setQueue('INSTRUCTOR')}>Pending Instructors</Button>
         <Button variant={queue === 'STAFF' ? 'primary' : 'secondary'} role="tab" aria-selected={queue === 'STAFF'} onClick={() => setQueue('STAFF')}>Pending Staff</Button>

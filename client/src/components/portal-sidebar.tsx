@@ -6,6 +6,7 @@ type PortalLink = { href: string; label: string };
 const linksByRole: Partial<Record<Role, PortalLink[]>> = {
   ORG_ADMIN: [
     { href: '/org-admin', label: 'Overview' },
+    { href: '/org-admin/courses', label: 'Courses' },
     { href: '/org-admin/instructors', label: 'Pending Instructors & Staff' },
     { href: '/org-admin/create-staff', label: 'Create Staff' },
     { href: '/org-admin/students', label: 'Student Details' },
@@ -14,6 +15,7 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
   ],
   INSTRUCTOR: [
     { href: '/instructor', label: 'Overview' },
+    { href: '/instructor/courses', label: 'Courses' },
     { href: '/instructor/approvals', label: 'Pending Students' },
     { href: '/instructor/students', label: 'Student Details' },
     { href: '/instructor/staff', label: 'Staff Details' },
@@ -26,6 +28,7 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
   ],
   STUDENT: [
     { href: '/student', label: 'Overview' },
+    { href: '/student/courses', label: 'My Courses' },
     { href: '/student/notes', label: 'Notes' },
   ],
 };

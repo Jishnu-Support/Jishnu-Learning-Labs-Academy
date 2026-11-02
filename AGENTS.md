@@ -38,6 +38,7 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 - Enforce role checks and organization ownership on every protected backend route; frontend checks are not authorization.
 - Use Prisma migrations for schema changes. Never reset or delete development data without warning the user first and receiving approval.
 - Keep changes focused, follow existing naming and formatting, and add or update tests for each feature.
+- Every new non-login page must use the shared `PageHeader` component with an explicit `backTo` route. Keep login pages and role dashboard home pages free of back navigation.
 - Keep upload storage behind an abstraction. Local files must be outside the web root and available only through authenticated routes.
 - For Checkpoint 1B notes, allow only PDF and PNG/JPG/WEBP attachments up to 20 MB, checking extension and MIME type. Staff, instructors, and org admins can create and publish notes; non-admin authors can edit, unpublish, or soft-delete only their own notes.
 - Students have read-only access to published notes through the authenticated inline viewer. Never expose a student download route or direct file URL; watermark each viewer page and document that browser controls are a deterrent, not DRM.
@@ -53,7 +54,7 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 - Protected uploads are served only through authenticated routes.
 
 ## Checkpoint workflow
-- Work in one requested checkpoint at a time: 1A, then 1B, then 1C. Stop after each checkpoint and wait for user confirmation before starting the next.
+- Work in one requested checkpoint at a time: 1A, then 1B, then 1C, followed only by explicitly approved later checkpoints such as 2A. Stop after each checkpoint and wait for user confirmation before starting the next.
 - Before coding each checkpoint, explain the plan and list the files expected to change; wait for explicit approval when requested.
 - Warn the user before any command that deletes or resets database data. Never run such a command without explicit approval.
 - After each checkpoint, run the relevant lint, type-check, and tests; fix failures before reporting completion.
@@ -64,4 +65,5 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 - 1A: multi-tenant schema/migration, authentication, organization registration, approval flows, seed script, and tests.
 - 1B: Create Staff with a one-time temporary password and forced change on first login; tenant-scoped Student Details and Staff Details; and Publish Notes with private storage and a student view-only viewer.
 - 1C: Expert Sessions, Assessments, Practice Q/A, and final tests.
-- No courses, videos, payments, certificates, or reports in these phases.
+- 2A: tenant-scoped Courses, instructors, topics, student enrollment, and course-linked notes. Assessment and practice records may be seeded for future modules; do not build assessment attempts or expand into unrelated later-phase functionality.
+- No videos, payments, certificates, or reports in these phases.

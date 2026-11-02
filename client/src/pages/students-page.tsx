@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/auth-context';
 import { ConfirmDialog, Toast } from '../components/feedback';
+import { PageHeader } from '../components/page-header';
 import { PortalSidebar } from '../components/portal-sidebar';
 import { Button } from '../components/ui/button';
 import { api, ApiError } from '../lib/api';
@@ -41,13 +43,26 @@ function dateLabel(date: string | null | undefined) {
 export function StudentsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
-  const [page, setPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [search, setSearch] = useState(searchParams.get('search') ?? '');
+  const [status, setStatus] = useState(searchParams.get('status') ?? '');
+  const [page, setPage] = useState(Number(searchParams.get('page') ?? '1'));
   const [selected, setSelected] = useState<Student | null>(null);
   const [pendingAction, setPendingAction] = useState<{ student: Student; action: 'suspend' | 'reactivate' } | null>(null);
   const [toast, setToast] = useState('');
   const debouncedSearch = useDebouncedValue(search);
+  useEffect(() => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (debouncedSearch) next.set('search', debouncedSearch);
+      else next.delete('search');
+      if (status) next.set('status', status);
+      else next.delete('status');
+      next.set('page', String(page));
+      next.set('pageSize', '10');
+      return next;
+    }, { replace: true });
+  }, [debouncedSearch, page, setSearchParams, status]);
   const queryString = new URLSearchParams({ page: String(page), pageSize: '10' });
   if (debouncedSearch) queryString.set('search', debouncedSearch);
   if (status) queryString.set('status', status);
@@ -55,6 +70,15 @@ export function StudentsPage() {
     queryKey: ['students', debouncedSearch, status, page],
     queryFn: () => api<StudentResult>(`/students?${queryString.toString()}`),
   });
+  useEffect(() => {
+    const detailId = searchParams.get('detail');
+    if (!detailId) {
+      setSelected(null);
+      return;
+    }
+    const match = students.data?.students.find((student) => student.studentId === detailId);
+    if (match) setSelected(match);
+  }, [searchParams, students.data]);
   const detail = useQuery({
     queryKey: ['student', selected?.studentId],
     queryFn: () => api<{ student: StudentDetails }>(`/students/${encodeURIComponent(selected!.studentId)}`).then((data) => data.student),
@@ -76,12 +100,29 @@ export function StudentsPage() {
   const canManage = user?.role === 'ORG_ADMIN' || user?.role === 'INSTRUCTOR';
   const role = user?.role ?? 'STAFF';
   const result = students.data;
+  const listRoute = role === 'ORG_ADMIN' ? '/org-admin/students' : role === 'INSTRUCTOR' ? '/instructor/students' : '/staff/students';
+  const openStudent = (student: Student) => {
+    setSelected(student);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('detail', student.studentId);
+      return next;
+    });
+  };
+  const closeStudent = () => {
+    setSelected(null);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('detail');
+      return next;
+    }, { replace: true });
+  };
   return (
     <div className="portal-layout">
       <PortalSidebar role={role} />
       <section className="portal-content">
         <p className="eyebrow">ORGANIZATION DIRECTORY</p>
-        <h1 className="page-title">Student Details</h1>
+        <PageHeader title="Student Details" backTo={`/${role.toLowerCase().replace('_', '-')}`} breadcrumbs={['Dashboard', 'Student Details']} />
         <p className="muted">Search and review student records for your organization.</p>
         <div className="directory-filters">
           <label className="field search-field"><span>Search by student ID or name</span><input className="input" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label>
@@ -101,7 +142,7 @@ export function StudentsPage() {
                     <td>{student.studentId}</td><td>{student.user.name}</td><td>{student.user.email}</td><td>{student.user.phone ?? '—'}</td>
                     <td>{student.user.batches.map((batch) => batch.name).join(', ') || '—'}</td><td><span className={`status-pill status-${student.status.toLowerCase()}`}>{student.status}</span></td>
                     <td>{dateLabel(student.createdAt)}</td>
-                    <td className="table-actions"><Button variant="secondary" onClick={() => setSelected(student)}>Details</Button>
+                    <td className="table-actions"><Button variant="secondary" onClick={() => openStudent(student)}>Details</Button>
                       {canManage && student.status === 'APPROVED' && <Button variant="danger" onClick={() => setPendingAction({ student, action: 'suspend' })}>Suspend</Button>}
                       {canManage && student.status === 'SUSPENDED' && <Button onClick={() => setPendingAction({ student, action: 'reactivate' })}>Reactivate</Button>}
                     </td>
@@ -121,8 +162,7 @@ export function StudentsPage() {
         {selected && (
           <div className="dialog-backdrop">
             <section className="dialog card detail-dialog" role="dialog" aria-modal="true" aria-labelledby="student-detail-title">
-              <p className="eyebrow">STUDENT PROFILE · {selected.studentId}</p>
-              <h2 id="student-detail-title">{detail.data?.user.name ?? selected.user.name}</h2>
+              <PageHeader title={detail.data?.user.name ?? selected.user.name} backTo={`${listRoute}?${new URLSearchParams([...searchParams].filter(([key]) => key !== 'detail')).toString()}`} breadcrumbs={['Dashboard', 'Student Details', selected.studentId]} onBack={closeStudent} />
               {detail.isLoading && <p className="loading">Loading profile…</p>}
               {detail.error && <p className="notice notice-error" role="alert">{detail.error instanceof ApiError ? detail.error.message : 'Could not load this student.'}</p>}
               {detail.data && <dl className="detail-grid">
@@ -131,7 +171,7 @@ export function StudentsPage() {
                 <dt>Registered</dt><dd>{dateLabel(detail.data.createdAt)}</dd><dt>Last login</dt><dd>{dateLabel(detail.data.loginHistory.lastLoginAt)}</dd>
                 <dt>Recent logins</dt><dd>{detail.data.loginHistory.recentLogins.length ? detail.data.loginHistory.recentLogins.map(({ createdAt }) => dateLabel(createdAt)).join(', ') : 'No successful logins'}</dd>
               </dl>}
-              <div className="row-actions"><Button variant="secondary" onClick={() => setSelected(null)}>Close</Button></div>
+              <div className="row-actions"><Button variant="secondary" onClick={closeStudent}>Close</Button></div>
             </section>
           </div>
         )}

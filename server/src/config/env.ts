@@ -11,6 +11,7 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(7),
   REQUIRE_ORG_APPROVAL: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  REQUIRE_ENROLLMENT_APPROVAL: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   NOTE_STORAGE_DIR: z.string().default('storage/notes'),
 });
 

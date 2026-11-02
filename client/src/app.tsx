@@ -1,8 +1,11 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { RouteGuard } from './components/route-guard';
 import { Shell } from './components/shell';
+import { PageHeader } from './components/page-header';
 import { ApprovalsPage } from './pages/approvals-page';
 import { ChangePasswordPage } from './pages/change-password-page';
+import { CourseDetailPage } from './pages/course-detail-page';
+import { CourseFormPage, CoursesPage } from './pages/courses-page';
 import { Dashboard } from './pages/dashboard';
 import { InstructorApprovalsPage } from './pages/instructor-approvals-page';
 import { LoginPage } from './pages/login-page';
@@ -11,12 +14,14 @@ import { OrganizationApprovalsPage } from './pages/organization-approvals-page';
 import { OrganizationRegistrationPage } from './pages/organization-registration-page';
 import { RegisterPage } from './pages/register-page';
 import { StaffDetailsPage, StaffManagementPage } from './pages/staff-page';
+import { StudentCourseDetailPage } from './pages/student-course-detail-page';
+import { StudentCoursesPage } from './pages/student-courses-page';
 import { StudentsPage } from './pages/students-page';
 
 const authenticatedRoles = ['STUDENT', 'INSTRUCTOR', 'STAFF', 'ORG_ADMIN', 'SUPER_ADMIN'] as const;
 
 function Unauthorized() {
-  return <section className="narrow-card card"><h1>Access unavailable</h1><p className="muted">This account does not have permission to open this page.</p></section>;
+  return <section className="narrow-card card"><PageHeader title="Access unavailable" backTo="/student/register" breadcrumbs={['Access', 'Unavailable']} /><p className="muted">This account does not have permission to open this page.</p></section>;
 }
 
 export function App() {
@@ -39,6 +44,8 @@ export function App() {
         </Route>
         <Route element={<RouteGuard roles={['STUDENT']} />}>
           <Route path="/student" element={<Dashboard role="STUDENT" />} />
+          <Route path="/student/courses" element={<StudentCoursesPage />} />
+          <Route path="/student/courses/:courseId" element={<StudentCourseDetailPage />} />
           <Route path="/student/notes" element={<NotesPage />} />
         </Route>
         <Route element={<RouteGuard roles={['INSTRUCTOR']} />}>
@@ -47,6 +54,10 @@ export function App() {
           <Route path="/instructor/students" element={<StudentsPage />} />
           <Route path="/instructor/staff" element={<StaffDetailsPage />} />
           <Route path="/instructor/notes" element={<NotesPage />} />
+          <Route path="/instructor/courses" element={<CoursesPage />} />
+          <Route path="/instructor/courses/new" element={<CourseFormPage />} />
+          <Route path="/instructor/courses/:courseId/edit" element={<CourseFormPage />} />
+          <Route path="/instructor/courses/:courseId" element={<CourseDetailPage />} />
         </Route>
         <Route element={<RouteGuard roles={['ORG_ADMIN']} />}>
           <Route path="/org-admin" element={<Dashboard role="ORG_ADMIN" />} />
@@ -55,6 +66,10 @@ export function App() {
           <Route path="/org-admin/students" element={<StudentsPage />} />
           <Route path="/org-admin/staff" element={<StaffDetailsPage />} />
           <Route path="/org-admin/notes" element={<NotesPage />} />
+          <Route path="/org-admin/courses" element={<CoursesPage />} />
+          <Route path="/org-admin/courses/new" element={<CourseFormPage />} />
+          <Route path="/org-admin/courses/:courseId/edit" element={<CourseFormPage />} />
+          <Route path="/org-admin/courses/:courseId" element={<CourseDetailPage />} />
         </Route>
         <Route element={<RouteGuard roles={['STAFF']} />}>
           <Route path="/staff" element={<Dashboard role="STAFF" />} />

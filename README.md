@@ -1,6 +1,6 @@
 # Jishnu Learning Labs
 
-Jishnu Learning Labs is a multi-organization learning platform. Each organization has isolated users and data. Checkpoint 1A delivers the tenant-aware database/authentication foundation, organization registration, and approval flows. Checkpoint 1B adds staff management, student/staff directories, and protected notes. Live classes, assessments, practice Q/A, payments, certificates, and reports are not part of 1B.
+Jishnu Learning Labs is a multi-organization learning platform. Each organization has isolated users and data. Checkpoint 1A delivers the tenant-aware database/authentication foundation, organization registration, and approval flows. Checkpoint 1B adds staff management, student/staff directories, and protected notes. Checkpoint 2A adds tenant-scoped courses, topics, student enrollment, and course-linked notes. Assessment and practice records are seeded for future modules; assessment attempts are not included here.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ if (-not (Test-Path .\server\.env)) { Copy-Item .\server\.env.example .\server\.
 if (-not (Test-Path .\client\.env)) { Copy-Item .\client\.env.example .\client\.env }
 ```
 
-Edit `server/.env` with the local PostgreSQL connection strings. Set `DATABASE_URL` to `jishnu_learning_labs` and `TEST_DATABASE_URL` to `jishnu_learning_labs_test`. Keep both URLs and JWT secrets private. Generate two different JWT secrets (at least 32 characters) with:
+Edit `server/.env` with the local PostgreSQL connection strings. Set `DATABASE_URL` to `jishnu_learning_labs` and `TEST_DATABASE_URL` to `jishnu_learning_labs_test`. Keep both URLs and JWT secrets private. `REQUIRE_ENROLLMENT_APPROVAL=false` allows students to enroll immediately; set it to `true` to create pending enrollments for course staff to approve. Generate two different JWT secrets (at least 32 characters) with:
 
 ```powershell
 node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
@@ -119,6 +119,14 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 - Local files are stored outside the client web root in `NOTE_STORAGE_DIR`; all views and downloads use authenticated routes. The `StorageService` abstraction is the replacement point for a private S3 or Cloudflare R2 adapter.
 - Students see only published notes. Their viewer streams attachments inline through an authenticated endpoint, renders PDFs with PDF.js and images in-page, overlays the student's name and ID on every page, and omits download/print controls. View events are recorded. Browser controls cannot fully prevent screenshots or saving; the watermark and viewer restrictions are deterrents. DRM would be a stronger future option.
 
+## Checkpoint 2A courses and enrollment
+
+- Org Admins manage courses for their organization; Instructors can manage only courses assigned to them. Course codes are unique within each organization.
+- Course pages support instructor assignment, planned hours and completion rules, topic creation/reordering/coverage, publishing, archiving, student search, and linked notes.
+- Students can browse only published courses in their organization, enroll, view course progress and notes, and drop active enrollment. Enrollment approvals are optional and default off through `REQUIRE_ENROLLMENT_APPROVAL`.
+- The seed adds six published courses per demo organization (SAP101, ENG101, TAM101, MAT101, SOC101, SCI101), example practice questions of four types, one published assessment per course, linked notes, and varied student enrollment/progress. It only adds or updates seeded records and does not delete data.
+- Student course pages show assessment titles and summary metadata only; assessment attempts and grading are not part of this checkpoint.
+
 ## API endpoints
 
 - `POST /api/organizations/register`
@@ -148,6 +156,12 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 - `POST /api/notes/:noteId/publish` and `/unpublish`
 - `GET /api/notes/:noteId/view` (authenticated inline viewer; student access only to published notes)
 - `GET /api/notes/:noteId/download` (Org Admin, Instructor, and Staff only)
+- `GET /api/courses`, `POST /api/courses`, `GET /api/courses/:courseId`, and `PATCH /api/courses/:courseId` (Org Admin or assigned Instructor)
+- `GET /api/courses/instructors`, `POST /api/courses/:courseId/publish`, `POST /api/courses/:courseId/archive`
+- `POST /api/courses/:courseId/topics`, `PATCH /api/courses/:courseId/topics/reorder`, and `PATCH /api/courses/:courseId/topics/:topicId`
+- `GET /api/courses/:courseId/enrollments?search=` and `POST /api/courses/:courseId/enrollments/:enrollmentId/approve`
+- `GET /api/student/courses/browse?search=`, `GET /api/student/courses/enrolled`, `GET /api/student/courses/:courseId`
+- `POST /api/student/courses/:courseId/enroll` and `/drop`
 
 Access and refresh tokens are sent only in httpOnly cookies. Every tenant login requires an organization code; Super Admin login does not.
 
@@ -174,5 +188,6 @@ Server tests use `TEST_DATABASE_URL`, create uniquely named fixtures, and remove
 - 1A: multi-tenant schema/migration, authentication, organization registration, approval flows, seed, and tests.
 - 1B: Create Staff with forced first-login password change, Student/Staff Details, and Publish Notes with private storage and student view-only protection.
 - 1C: Expert Sessions, Assessments, Practice Q/A, and final tests.
+- 2A: tenant-scoped Courses, topics, enrollment, linked notes, and seeded assessment/practice examples. Course tests use the dedicated test database.
 
 The Jitsi implementation planned for 1C is a basic live-class integration; it is not DRM and cannot prevent screen recording or screenshots.

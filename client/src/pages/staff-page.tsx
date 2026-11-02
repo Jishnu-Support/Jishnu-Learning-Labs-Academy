@@ -1,12 +1,14 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { useAuth } from '../auth/auth-context';
 import { Field } from '../components/field';
 import { ConfirmDialog, Toast } from '../components/feedback';
 import { PortalSidebar } from '../components/portal-sidebar';
+import { PageHeader } from '../components/page-header';
 import { Button } from '../components/ui/button';
 import { api, ApiError } from '../lib/api';
 import type { AccountStatus } from '../types';
@@ -52,14 +54,28 @@ function generatedPassword() {
 
 function StaffDirectory({ allowManage }: { allowManage: boolean }) {
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
-  const [page, setPage] = useState(1);
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [search, setSearch] = useState(searchParams.get('search') ?? '');
+  const [status, setStatus] = useState(searchParams.get('status') ?? '');
+  const [page, setPage] = useState(Number(searchParams.get('page') ?? '1'));
   const [selected, setSelected] = useState<Staff | null>(null);
   const [editing, setEditing] = useState<Staff | null>(null);
   const [pendingAction, setPendingAction] = useState<{ staff: Staff; action: 'suspend' | 'reactivate' } | null>(null);
   const [toast, setToast] = useState('');
   const searchValue = useDebouncedValue(search);
+  useEffect(() => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (searchValue) next.set('search', searchValue);
+      else next.delete('search');
+      if (status) next.set('status', status);
+      else next.delete('status');
+      next.set('page', String(page));
+      next.set('pageSize', '10');
+      return next;
+    }, { replace: true });
+  }, [page, searchValue, setSearchParams, status]);
   const queryString = new URLSearchParams({ page: String(page), pageSize: '10' });
   if (searchValue) queryString.set('search', searchValue);
   if (status) queryString.set('status', status);
@@ -88,11 +104,37 @@ function StaffDirectory({ allowManage }: { allowManage: boolean }) {
     mutationFn: ({ member, values }: { member: Staff; values: z.infer<typeof editFormSchema> }) =>
       api<{ staff: Staff }>(`/staff/${member.user.id}`, { method: 'PATCH', body: JSON.stringify(values) }),
     onSuccess: async () => {
-      setEditing(null);
+      closeOverlay('edit');
       setToast('Staff details updated.');
       await Promise.all([queryClient.invalidateQueries({ queryKey: ['staff'] }), queryClient.invalidateQueries({ queryKey: ['staff-detail'] })]);
     },
   });
+  useEffect(() => {
+    const detailId = searchParams.get('detail');
+    const editId = searchParams.get('edit');
+    setSelected(staff.data?.staff.find((member) => member.user.id === detailId) ?? null);
+    setEditing(staff.data?.staff.find((member) => member.user.id === editId) ?? null);
+  }, [searchParams, staff.data]);
+
+  const openOverlay = (key: 'detail' | 'edit', member: Staff) => {
+    if (key === 'detail') setSelected(member);
+    else setEditing(member);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set(key, member.user.id);
+      return next;
+    });
+  };
+  const closeOverlay = (key: 'detail' | 'edit') => {
+    if (key === 'detail') setSelected(null);
+    else setEditing(null);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete(key);
+      return next;
+    }, { replace: true });
+  };
+  const listRoute = `${location.pathname}?${new URLSearchParams([...searchParams].filter(([key]) => key !== 'detail' && key !== 'edit')).toString()}`;
 
   return (
     <>
@@ -113,8 +155,8 @@ function StaffDirectory({ allowManage }: { allowManage: boolean }) {
               <td>{member.staffId}</td><td>{member.user.name}</td><td>{member.user.email}</td><td>{member.user.phone ?? '—'}</td>
               <td><span className={`status-pill status-${member.user.status.toLowerCase()}`}>{member.user.status}</span></td><td>{dateLabel(member.joiningDate)}</td>
               <td className="table-actions">
-                <Button variant="secondary" onClick={() => setSelected(member)}>Details</Button>
-                {allowManage && <Button variant="secondary" onClick={() => setEditing(member)}>Edit</Button>}
+                <Button variant="secondary" onClick={() => openOverlay('detail', member)}>Details</Button>
+                {allowManage && <Button variant="secondary" onClick={() => openOverlay('edit', member)}>Edit</Button>}
                 {allowManage && member.user.status === 'APPROVED' && <Button variant="danger" onClick={() => setPendingAction({ staff: member, action: 'suspend' })}>Suspend</Button>}
                 {allowManage && member.user.status === 'SUSPENDED' && <Button onClick={() => setPendingAction({ staff: member, action: 'reactivate' })}>Reactivate</Button>}
               </td>
@@ -130,7 +172,7 @@ function StaffDirectory({ allowManage }: { allowManage: boolean }) {
         </div>
       </>}
       {selected && <div className="dialog-backdrop"><section className="dialog card detail-dialog" role="dialog" aria-modal="true" aria-labelledby="staff-detail-title">
-        <p className="eyebrow">STAFF PROFILE · {detail.data?.staff.staffId ?? selected.staffId}</p><h2 id="staff-detail-title">{detail.data?.staff.user.name ?? selected.user.name}</h2>
+        <PageHeader title={detail.data?.staff.user.name ?? selected.user.name} backTo={listRoute} breadcrumbs={['Staff Details', detail.data?.staff.staffId ?? selected.staffId]} />
         {detail.isLoading && <p className="loading">Loading profile…</p>}
         {detail.error && <p className="notice notice-error" role="alert">{detail.error instanceof ApiError ? detail.error.message : 'Could not load this staff member.'}</p>}
         {detail.data && <dl className="detail-grid">
@@ -138,12 +180,12 @@ function StaffDirectory({ allowManage }: { allowManage: boolean }) {
           <dt>Status</dt><dd>{detail.data.staff.user.status}</dd><dt>Staff ID</dt><dd>{detail.data.staff.staffId}</dd>
           <dt>Joining date</dt><dd>{dateLabel(detail.data.staff.joiningDate)}</dd>
         </dl>}
-        <div className="row-actions"><Button variant="secondary" onClick={() => setSelected(null)}>Close</Button></div>
+        <div className="row-actions"><Button variant="secondary" onClick={() => closeOverlay('detail')}>Close</Button></div>
       </section></div>}
       {editing && <StaffEditDialog
         member={editing}
         busy={editMutation.isPending}
-        onCancel={() => setEditing(null)}
+        onCancel={() => closeOverlay('edit')}
         onSave={(values) => editMutation.mutate({ member: editing, values })}
       />}
       {pendingAction && <ConfirmDialog
@@ -180,16 +222,22 @@ function StaffEditDialog({
       joiningDate: member.joiningDate.slice(0, 10),
     },
   });
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const requestCancel = () => {
+    if (form.formState.isDirty) setConfirmDiscard(true);
+    else onCancel();
+  };
   return <div className="dialog-backdrop"><section className="dialog card" role="dialog" aria-modal="true" aria-labelledby="edit-staff-title">
-    <p className="eyebrow">UPDATE STAFF RECORD</p><h2 id="edit-staff-title">Edit {member.user.name}</h2>
+    <PageHeader title={`Edit ${member.user.name}`} backTo="." breadcrumbs={['Staff Details', member.staffId, 'Edit']} hasUnsavedChanges={form.formState.isDirty} />
     <form className="form-stack" onSubmit={form.handleSubmit(onSave)}>
       <Field label="Staff ID" {...form.register('staffId')} error={form.formState.errors.staffId?.message} />
       <Field label="Full name" {...form.register('name')} error={form.formState.errors.name?.message} />
       <Field label="Contact number" type="tel" {...form.register('phone')} error={form.formState.errors.phone?.message} />
       <Field label="Email address" type="email" {...form.register('email')} error={form.formState.errors.email?.message} />
       <Field label="Joining date" type="date" {...form.register('joiningDate')} error={form.formState.errors.joiningDate?.message} />
-      <div className="row-actions"><Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Button></div>
+      <div className="row-actions"><Button type="button" variant="secondary" disabled={busy} onClick={requestCancel}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Button></div>
     </form>
+    {confirmDiscard && <ConfirmDialog title="Discard changes?" message="You have unsaved changes. Leave this form and discard them?" confirmLabel="Discard changes" onCancel={() => setConfirmDiscard(false)} onConfirm={onCancel} />}
   </section></div>;
 }
 
@@ -214,7 +262,7 @@ export function StaffManagementPage() {
     <div className="portal-layout">
       <PortalSidebar role="ORG_ADMIN" />
       <section className="portal-content">
-        <p className="eyebrow">ORGANIZATION ADMIN</p><h1 className="page-title">Create Staff</h1>
+        <p className="eyebrow">ORGANIZATION ADMIN</p><PageHeader title="Create Staff" backTo="/org-admin" breadcrumbs={['Dashboard', 'Create Staff']} hasUnsavedChanges={form.formState.isDirty} />
         <p className="muted">Create an approved staff account. The staff member must change this temporary password at first sign-in.</p>
         <form className="card module-form" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
           <div className="form-grid">
@@ -239,10 +287,11 @@ export function StaffManagementPage() {
 export function StaffDetailsPage() {
   const { user } = useAuth();
   const allowManage = user?.role === 'ORG_ADMIN';
+  const dashboardPath = user?.role === 'ORG_ADMIN' ? '/org-admin' : user?.role === 'STAFF' ? '/staff' : '/instructor';
   return <div className="portal-layout">
     <PortalSidebar role={user?.role ?? 'INSTRUCTOR'} />
     <section className="portal-content">
-      <p className="eyebrow">ORGANIZATION DIRECTORY</p><h1 className="page-title">Staff Details</h1>
+      <p className="eyebrow">ORGANIZATION DIRECTORY</p><PageHeader title="Staff Details" backTo={dashboardPath} breadcrumbs={['Dashboard', 'Staff Details']} />
       <p className="muted">Search staff ID or name, and review organization staff records.</p>
       <StaffDirectory allowManage={allowManage} />
     </section>

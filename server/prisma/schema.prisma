@@ -40,29 +40,58 @@ enum StudentStatus {
 enum CourseStatus {
   DRAFT
   PUBLISHED
+  ARCHIVED
+}
+
+enum EnrollmentStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  DROPPED
+}
+
+enum AssessmentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum QuestionType {
+  MCQ_SINGLE
+  MCQ_MULTIPLE
+  TRUE_FALSE
+  SHORT_ANSWER
+  MATCH
+  FILL_IN_BLANK
+}
+
+enum QuestionDifficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
 }
 
 model Organization {
-  id                       String             @id @default(cuid())
+  id                       String               @id @default(cuid())
   name                     String
-  code                     String?            @unique
+  code                     String?              @unique
   headName                 String
   contactNumber            String
-  email                    String             @unique
+  email                    String               @unique
   address                  String
   city                     String
   state                    String
   country                  String
   registrationNumber       String?
   website                  String?
-  status                   OrganizationStatus @default(PENDING)
+  status                   OrganizationStatus   @default(PENDING)
   rejectionReason          String?
   pendingAdminPasswordHash String?
   approvedById             String?
   approvedAt               DateTime?
-  createdAt                DateTime           @default(now())
-  updatedAt                DateTime           @updatedAt
-  approvedBy               User?              @relation("OrganizationApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  approvedBy               User?                @relation("OrganizationApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   users                    User[]
   studentProfiles          StudentProfile[]
   staffProfiles            StaffProfile[]
@@ -72,6 +101,12 @@ model Organization {
   auditLogs                AuditLog[]
   batches                  Batch[]
   courses                  Course[]
+  courseInstructors        CourseInstructor[]
+  enrollments              Enrollment[]
+  courseTopics             CourseTopic[]
+  assessments              Assessment[]
+  assessmentQuestions      AssessmentQuestion[]
+  practiceQuestions        PracticeQuestion[]
   notes                    Note[]
   noteViews                NoteView[]
   expertSessions           ExpertSession[]
@@ -82,41 +117,46 @@ model Organization {
 }
 
 model User {
-  id                    String            @id @default(cuid())
-  organizationId        String?
-  email                 String
-  passwordHash          String
-  name                  String
-  phone                 String?
-  role                  Role
-  status                AccountStatus     @default(PENDING)
-  rejectionReason       String?
-  mustChangePassword    Boolean           @default(false)
-  isActive              Boolean           @default(true)
-  approvedById          String?
-  approvedAt            DateTime?
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
-  organization          Organization?     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  studentProfile        StudentProfile?
-  staffProfile          StaffProfile?
-  sessions              Session[]
-  loginLogs             LoginLog[]
-  approvedProfiles      StudentProfile[]  @relation("ProfileApprover")
-  accountApprovals      AccountApproval[] @relation("AccountApprover")
-  accountRegistration   AccountApproval?  @relation("AccountRegistration")
-  approvedAccounts      User[]            @relation("UserApprover")
-  approvedBy            User?             @relation("UserApprover", fields: [approvedById], references: [id], onDelete: SetNull)
-  approvedOrganizations Organization[]    @relation("OrganizationApprover")
-  studentBatches        BatchStudent[]
-  instructorBatches     BatchInstructor[]
-  auditLogs             AuditLog[]        @relation("AuditActor")
-  courses               Course[]
-  notes                 Note[]            @relation("NoteAuthor")
-  noteViews             NoteView[]
-  hostedExpertSessions  ExpertSession[]   @relation("ExpertSessionHost")
+  id                       String             @id @default(cuid())
+  organizationId           String?
+  email                    String
+  passwordHash             String
+  name                     String
+  phone                    String?
+  role                     Role
+  status                   AccountStatus      @default(PENDING)
+  rejectionReason          String?
+  mustChangePassword       Boolean            @default(false)
+  isActive                 Boolean            @default(true)
+  approvedById             String?
+  approvedAt               DateTime?
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+  organization             Organization?      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  studentProfile           StudentProfile?
+  staffProfile             StaffProfile?
+  sessions                 Session[]
+  loginLogs                LoginLog[]
+  approvedProfiles         StudentProfile[]   @relation("ProfileApprover")
+  accountApprovals         AccountApproval[]  @relation("AccountApprover")
+  accountRegistration      AccountApproval?   @relation("AccountRegistration")
+  approvedAccounts         User[]             @relation("UserApprover")
+  approvedBy               User?              @relation("UserApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedOrganizations    Organization[]     @relation("OrganizationApprover")
+  studentBatches           BatchStudent[]
+  instructorBatches        BatchInstructor[]
+  auditLogs                AuditLog[]         @relation("AuditActor")
+  courses                  Course[]           @relation("CourseCreator")
+  instructedCourses        CourseInstructor[]
+  enrollments              Enrollment[]       @relation("StudentCourseEnrollments")
+  createdAssessments       Assessment[]       @relation("AssessmentCreator")
+  createdPracticeQuestions PracticeQuestion[] @relation("PracticeQuestionCreator")
+  notes                    Note[]             @relation("NoteAuthor")
+  noteViews                NoteView[]
+  hostedExpertSessions     ExpertSession[]    @relation("ExpertSessionHost")
 
   @@unique([organizationId, email])
+  @@unique([organizationId, id])
   @@index([organizationId, role, status])
 }
 
@@ -253,18 +293,148 @@ model AuditLog {
 }
 
 model Course {
+  id                       String             @id @default(cuid())
+  organizationId           String
+  code                     String
+  title                    String
+  description              String?
+  category                 String
+  plannedHours             Int
+  startDate                DateTime           @db.Date
+  endDate                  DateTime           @db.Date
+  status                   CourseStatus       @default(DRAFT)
+  minimumAttendancePercent Int                @default(75)
+  requiresAssessmentPass   Boolean            @default(true)
+  createdById              String
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+  organization             Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy                User               @relation("CourseCreator", fields: [organizationId, createdById], references: [organizationId, id], onDelete: Restrict)
+  instructors              CourseInstructor[]
+  topics                   CourseTopic[]
+  enrollments              Enrollment[]
+  notes                    Note[]
+  assessments              Assessment[]
+  practiceQuestions        PracticeQuestion[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@index([organizationId, status, updatedAt])
+  @@index([organizationId, createdById, status, updatedAt])
+}
+
+model CourseInstructor {
+  organizationId String
+  courseId       String
+  instructorId   String
+  assignedAt     DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  course         Course       @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Cascade)
+  instructor     User         @relation(fields: [organizationId, instructorId], references: [organizationId, id], onDelete: Cascade)
+
+  @@id([organizationId, courseId, instructorId])
+  @@index([organizationId, instructorId, courseId])
+}
+
+model CourseTopic {
+  id                String             @id @default(cuid())
+  organizationId    String
+  courseId          String
+  title             String
+  plannedHours      Int
+  order             Int
+  covered           Boolean            @default(false)
+  coveredAt         DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  course            Course             @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Cascade)
+  practiceQuestions PracticeQuestion[]
+
+  @@unique([organizationId, courseId, order])
+  @@index([organizationId, courseId, order])
+}
+
+model Enrollment {
+  id             String           @id @default(cuid())
+  organizationId String
+  courseId       String
+  studentId      String
+  status         EnrollmentStatus @default(ACTIVE)
+  enrolledAt     DateTime         @default(now())
+  completedAt    DateTime?
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  course         Course           @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Cascade)
+  student        User             @relation("StudentCourseEnrollments", fields: [organizationId, studentId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, courseId, studentId])
+  @@index([organizationId, studentId, status, enrolledAt])
+  @@index([organizationId, courseId, status, enrolledAt])
+}
+
+model Assessment {
+  id              String               @id @default(cuid())
+  organizationId  String
+  courseId        String
+  createdById     String
+  title           String
+  instructions    String
+  totalMarks      Int
+  passMark        Int
+  durationMinutes Int
+  opensAt         DateTime?
+  closesAt        DateTime?
+  status          AssessmentStatus     @default(DRAFT)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  course          Course               @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdBy       User                 @relation("AssessmentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  questions       AssessmentQuestion[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, courseId, status])
+}
+
+model AssessmentQuestion {
   id             String       @id @default(cuid())
   organizationId String
-  instructorId   String
-  title          String
-  description    String?
-  status         CourseStatus @default(DRAFT)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  assessmentId   String
+  type           QuestionType
+  prompt         String
+  options        Json?
+  correctAnswer  Json
+  marks          Int
+  explanation    String?
+  order          Int
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  instructor     User         @relation(fields: [instructorId], references: [id], onDelete: Restrict)
+  assessment     Assessment   @relation(fields: [organizationId, assessmentId], references: [organizationId, id], onDelete: Cascade)
 
-  @@index([organizationId, instructorId, status, updatedAt])
+  @@unique([organizationId, assessmentId, order])
+  @@index([organizationId, assessmentId])
+}
+
+model PracticeQuestion {
+  id             String             @id @default(cuid())
+  organizationId String
+  courseId       String
+  topicId        String?
+  createdById    String
+  type           QuestionType
+  prompt         String
+  options        Json?
+  correctAnswer  Json
+  topic          String
+  difficulty     QuestionDifficulty
+  explanation    String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  course         Course             @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Cascade)
+  courseTopic    CourseTopic?       @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  createdBy      User               @relation("PracticeQuestionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, courseId, type, topic])
 }
 
 model Note {
@@ -278,14 +448,17 @@ model Note {
   originalName   String?
   mimeType       String?
   published      Boolean      @default(false)
+  courseId       String?
   deletedAt      DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   author         User         @relation("NoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
   views          NoteView[]
+  course         Course?      @relation(fields: [courseId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, published, updatedAt])
+  @@index([organizationId, courseId])
 }
 
 model NoteView {

@@ -17,10 +17,15 @@ export function Dashboard({ role }: { role: Role }) {
     SUPER_ADMIN: [
       { title: 'Organizations', description: 'Monitor organizations and suspend or reactivate access when needed.', href: '/super-admin/organizations', label: 'Manage organizations' },
     ],
+    STUDENT: [
+      { title: 'My courses', description: 'Browse published courses and continue your learning.', href: '/student/courses', label: 'Open courses' },
+    ],
     ORG_ADMIN: [
+      { title: 'Courses', description: 'Create organization courses, assign instructors, and track progress.', href: '/org-admin/courses', label: 'Manage courses' },
       { title: 'Pending registrations', description: 'Approve instructors and staff registrations for your organization.', href: '/org-admin/instructors', label: 'Review registrations' },
     ],
     INSTRUCTOR: [
+      { title: 'Courses', description: 'Manage your assigned courses and mark topics as delivered.', href: '/instructor/courses', label: 'Open courses' },
       { title: 'Pending students', description: 'Approve or reject student registrations for your organization.', href: '/instructor/approvals', label: 'Review students' },
     ],
   };

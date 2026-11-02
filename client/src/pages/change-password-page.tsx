@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { useAuth } from '../auth/auth-context';
 import { Field } from '../components/field';
+import { PageHeader } from '../components/page-header';
 import { Button } from '../components/ui/button';
 import { api, ApiError } from '../lib/api';
 
@@ -27,13 +28,13 @@ export function ChangePasswordPage() {
       api('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['me'] });
-      navigate(user ? `/${user.role.toLowerCase().replace('_', '-')}` : '/', { replace: true });
+      navigate(user ? `/${user.role.toLowerCase().replace('_', '-')}` : '/student/login', { replace: true });
     },
   });
   return (
     <section className="narrow-card card">
       <p className="eyebrow">ACCOUNT SECURITY</p>
-      <h1>Change your temporary password</h1>
+      <PageHeader title="Change your temporary password" backTo={user ? `/${user.role.toLowerCase().replace('_', '-')}` : '/student/login'} hasUnsavedChanges={form.formState.isDirty} />
       <p className="muted">Choose a new password before continuing to your workspace.</p>
       <form className="form-stack" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
         <Field label="Temporary password" type="password" autoComplete="current-password" {...form.register('currentPassword')} error={form.formState.errors.currentPassword?.message} />
