@@ -138,7 +138,7 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 - Org Admins manage courses for their organization; Instructors can manage only courses assigned to them. Course codes are unique within each organization.
 - Course pages support instructor assignment, planned hours and completion rules, topic creation/reordering/coverage, publishing, archiving, student search, and linked notes.
 - Students can browse only published courses in their organization, enroll, view course progress and notes, and drop active enrollment. Enrollment approvals are optional and default off through `REQUIRE_ENROLLMENT_APPROVAL`.
-- The seed adds six published courses per demo organization (SAP101, ENG101, TAM101, MAT101, SOC101, SCI101), example practice questions of four types, one published assessment per course, linked notes, and varied student enrollment/progress. It only adds or updates seeded records and does not delete data.
+- The seed provides 12 published courses per demo organization: SAP101, ENG101, TAM101, MAT101, SOC101, SCI101, PY101, CPP101, JAV101, JS101, HTML101, and CSS101. Each has subject-specific practice questions for single- and multiple-answer MCQ, True/False, Match, and Fill in the blanks, plus a published assessment, linked notes, and demo enrollment/progress. Course fixture seeding is additive and idempotent: it preserves existing course, topic, enrollment, note, and user edits; an existing course's status alone is restored to PUBLISHED.
 - Student course pages show assessment titles and summary metadata only; assessment attempts and grading are not part of this checkpoint.
 
 ## API endpoints
