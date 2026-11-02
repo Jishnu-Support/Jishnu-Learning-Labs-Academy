@@ -44,6 +44,14 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 - Students have read-only access to published notes through the authenticated inline viewer. Never expose a student download route or direct file URL; watermark each viewer page and document that browser controls are a deterrent, not DRM.
 - Keep the live-class integration behind a provider abstraction. The initial Jitsi Meet iframe integration is a basic live-class version, not a claim of full conferencing or DRM security.
 
+## Brand and visual design
+- Use the Jishnu Learning Labs design tokens documented in `docs/design-system.md`: navy is primary, magenta is the action/focus colour, lime is a success/highlight fill, and gray is secondary text/borders.
+- Keep all theme colours and typography in shared CSS variables and Tailwind theme tokens; do not hard-code brand colours in page components. Never use lime text on white; use navy text on lime fills.
+- Use a bold serif for headings and a clean sans-serif for body copy, with Noto Sans Tamil in the body font fallback stack. Prefer optional/preloaded fonts or system fallbacks to avoid layout shift.
+- Keep the logo in the shared shell and portal navigation. Every portal login and organization registration surface must show the logo and platform-brand chrome without replacing an organization's own identity.
+- Preserve `PageHeader` on every non-login, non-dashboard page and keep its explicit `backTo` route.
+- The welcome intro is a one-time-per-browser-session overlay on the first root or login visit only. Keep its 7-second duration and sound cues in the shared intro configuration, respect reduced motion, autoplay restrictions, mute preference, and cleanup rules. Do not replay it on route changes or after authentication.
+
 ## Security and privacy
 - Never commit secrets; use environment variables and keep `.env.example` aligned.
 - Never log or return passwords, password hashes, tokens, or temporary credentials beyond the one-time development seed output.

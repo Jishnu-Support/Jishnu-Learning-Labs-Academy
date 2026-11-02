@@ -75,6 +75,20 @@ Open `http://localhost:5173`. All portals share that host:
 
 The client uses the same-origin `/api` path. Vite proxies it to the local API on port 4000 during development, so browser login and API requests stay on the frontend host. For a single-domain deployment, configure the platform's reverse proxy to serve the frontend and forward `/api` to the backend; keep `VITE_API_URL=/api`. The API health endpoint is available at `http://localhost:4000/api/health` during local development.
 
+## Brand theme and welcome intro
+
+The client uses the Jishnu Learning Labs brand palette, shared logo, responsive portal styling, and a seven-second welcome intro. The intro appears once per browser session on the first root or login page visit; it is skipped for authenticated users and is not replayed on later routes. The Skip control appears after one second, and Escape also skips it.
+
+Sound is synthesized locally with the Web Audio API by default. `client/src/lib/brand-config.ts` contains the intro copy, shared animation/sound cue timings, and these options:
+
+- `INTRO_SOUND_ENABLED` enables or disables intro sound.
+- `INTRO_SOUND_SOURCE` is `synth` by default. Set it to `file` to use `client/public/brand/intro-chime.mp3`; a missing or unreadable file falls back to the synth.
+- `INTRO_REQUIRE_TAP` defaults to `false`. Set it to `true` to require the branded Enter button, which starts the animation and sound from the same user gesture.
+
+Browsers may block audio started without a user gesture. When that happens, the intro continues silently and offers a “Tap for sound” control; later cues are synchronized to the current point in the animation. The mute preference is stored in browser `localStorage` under `jll-intro-sound`. Reduced-motion mode uses a short fade and does not play audio.
+
+Only use an intro audio file that you own or are licensed to use, and keep its license and attribution with the asset. Do not add a third-party audio file without confirming its redistribution and commercial-use terms.
+
 ## Seed accounts (development only)
 
 The platform administrator uses `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` from `server/.env` (the example defaults are `admin@jishnu.local` and `JishnuDevOnly!2026`). Other seeded accounts use `SEED_PASSWORD`, or `JishnuDevOnly!2026` if unset. The seed prints the actual development-only credentials and organization codes in PowerShell.

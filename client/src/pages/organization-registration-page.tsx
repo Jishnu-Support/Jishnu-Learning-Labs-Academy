@@ -6,6 +6,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { Field } from '../components/field';
 import { PageHeader } from '../components/page-header';
+import { BrandLogo } from '../components/brand-logo';
 import { Button } from '../components/ui/button';
 import { api, ApiError } from '../lib/api';
 
@@ -51,6 +52,7 @@ export function OrganizationRegistrationPage() {
     };
     return (
       <section className="narrow-card card">
+        <BrandLogo className="registration-logo" />
         <p className="eyebrow">REGISTRATION RECEIVED</p>
         {registration.status === 'PENDING' ? (
           <>
@@ -75,6 +77,7 @@ export function OrganizationRegistrationPage() {
   }
   return (
     <section className="narrow-card card">
+      <BrandLogo className="registration-logo" />
       <p className="eyebrow">JISHNU LEARNING LABS</p>
       <PageHeader title="Register your organization" backTo="/student/register" breadcrumbs={['Organization', 'Register']} hasUnsavedChanges={form.formState.isDirty} />
       <p className="muted">Register your organization and create its Org Admin account.</p>

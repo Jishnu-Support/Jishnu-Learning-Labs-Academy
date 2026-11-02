@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import type { Role } from '../types';
+import { BrandLogo } from './brand-logo';
 
 type PortalLink = { href: string; label: string };
 
@@ -38,6 +39,7 @@ export function PortalSidebar({ role }: { role: Role }) {
   if (!links) return null;
   return (
     <aside className="portal-sidebar" aria-label={`${role.replace('_', ' ')} navigation`}>
+      <BrandLogo className="sidebar-logo" />
       <p className="eyebrow">WORKSPACE</p>
       <nav>
         {links.map((link) => (

@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { Field } from '../components/field';
+import { BrandLogo } from '../components/brand-logo';
 import { Button } from '../components/ui/button';
 import { api, ApiError } from '../lib/api';
 import type { Role } from '../types';
@@ -120,6 +121,7 @@ export function LoginPage({ portal }: Props) {
   return (
     <section className="auth-layout">
       <div className="auth-story">
+        <div className="auth-brand-card"><BrandLogo className="auth-logo" /></div>
         <p className="eyebrow">JISHNU LEARNING LABS</p>
         <h1>{details.title}</h1>
         <p>{details.subtitle}</p>
