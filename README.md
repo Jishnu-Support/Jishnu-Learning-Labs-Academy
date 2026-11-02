@@ -65,7 +65,15 @@ Terminal 2:
 npm run dev:client
 ```
 
-Open `http://localhost:5173`. Check the API at `http://localhost:4000/api/health`.
+Open `http://localhost:5173`. All portals share that host:
+
+- Student: `/student/login`
+- Instructor: `/instructor/login`
+- Staff: `/staff/login`
+- Org Admin: `/org-admin/login`
+- Super Admin: `/super-admin/login`
+
+The client uses the same-origin `/api` path. Vite proxies it to the local API on port 4000 during development, so browser login and API requests stay on the frontend host. For a single-domain deployment, configure the platform's reverse proxy to serve the frontend and forward `/api` to the backend; keep `VITE_API_URL=/api`. The API health endpoint is available at `http://localhost:4000/api/health` during local development.
 
 ## Seed accounts (development only)
 
