@@ -64,6 +64,14 @@ const portalDetails: Record<Portal, {
   },
 };
 
+const demoAccounts: Record<Portal, { identifier: string; organizationCode?: string }> = {
+  student: { identifier: 'STU-1003', organizationCode: 'jll-demo' },
+  instructor: { identifier: 'instructor1@jll-demo.local', organizationCode: 'jll-demo' },
+  staff: { identifier: 'STF-1001', organizationCode: 'jll-demo' },
+  'org-admin': { identifier: 'orgadmin@jll-demo.local', organizationCode: 'jll-demo' },
+  'super-admin': { identifier: import.meta.env.VITE_DEMO_SUPER_ADMIN_EMAIL ?? 'admin@jishnu.local' },
+};
+
 function routeForRole(role: Role): string {
   if (role === 'SUPER_ADMIN') return '/super-admin/dashboard';
   if (role === 'ORG_ADMIN') return '/org-admin';
@@ -72,6 +80,13 @@ function routeForRole(role: Role): string {
 
 export function LoginPage({ portal }: Props) {
   const details = portalDetails[portal];
+  const demoAccount = demoAccounts[portal];
+  const demoPassword = (portal === 'super-admin'
+    ? import.meta.env.VITE_DEMO_SUPER_ADMIN_PASSWORD
+    : import.meta.env.VITE_DEMO_PASSWORD) ?? '';
+  const showDemoCredentials = import.meta.env.DEV
+    && import.meta.env.VITE_SHOW_DEMO_LOGINS === 'true'
+    && Boolean(demoPassword);
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema.superRefine((values, context) => {
       if (portal !== 'super-admin' && !values.organizationCode?.trim()) {
@@ -113,6 +128,25 @@ export function LoginPage({ portal }: Props) {
       </div>
       <form className="card auth-card" onSubmit={submit}>
         <div><p className="eyebrow">{portal.toUpperCase().replace('-', ' ')} PORTAL</p><h2>Sign in</h2></div>
+        {showDemoCredentials && (
+          <section className="demo-credentials" aria-label="Development demo credentials">
+            <h3>Development demo account</h3>
+            {portal !== 'super-admin' && <p><strong>Organization code:</strong> {demoAccount.organizationCode}</p>}
+            <p><strong>{details.identifierLabel}:</strong> {demoAccount.identifier}</p>
+            <p><strong>Password:</strong> {demoPassword}</p>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                form.setValue('organizationCode', demoAccount.organizationCode ?? '');
+                form.setValue('identifier', demoAccount.identifier);
+                form.setValue('password', demoPassword);
+              }}
+            >
+              Fill demo credentials
+            </Button>
+          </section>
+        )}
         {portal !== 'super-admin' && (
           <Field label="Organization Code" autoComplete="organization" {...form.register('organizationCode')} error={form.formState.errors.organizationCode?.message} />
         )}

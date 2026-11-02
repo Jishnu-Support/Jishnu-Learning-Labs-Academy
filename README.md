@@ -79,6 +79,8 @@ The client uses the same-origin `/api` path. Vite proxies it to the local API on
 
 The platform administrator uses `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` from `server/.env` (the example defaults are `admin@jishnu.local` and `JishnuDevOnly!2026`). Other seeded accounts use `SEED_PASSWORD`, or `JishnuDevOnly!2026` if unset. The seed prints the actual development-only credentials and organization codes in PowerShell.
 
+For local development only, set `VITE_SHOW_DEMO_LOGINS=true` in `client/.env` to show the matching demo account and a fill-in button on each login page. Keep `VITE_DEMO_PASSWORD`, `VITE_DEMO_SUPER_ADMIN_EMAIL`, and `VITE_DEMO_SUPER_ADMIN_PASSWORD` in sync with the seed settings in `server/.env`. The credential panel is hidden from production builds; never use demo credentials outside local development.
+
 | Portal | Sign-in identifier | Organization code |
 |---|---|---|
 | Super Admin | `SUPER_ADMIN_EMAIL` (default `admin@jishnu.local`) | Not required |

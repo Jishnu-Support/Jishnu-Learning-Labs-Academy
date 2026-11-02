@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './app';
@@ -42,5 +43,18 @@ describe('Phase 1 portal shell', () => {
     expect(screen.getByLabelText('Email address')).toBeInTheDocument();
     expect(screen.queryByLabelText('Organization Code')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Platform Admin' })).toHaveAttribute('href', '/super-admin/login');
+  });
+
+  it('shows and fills local Org Admin demo credentials when enabled', async () => {
+    window.history.pushState({}, '', '/org-admin/login');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
+
+    expect(await screen.findByRole('region', { name: 'Development demo credentials' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Fill demo credentials' }));
+
+    expect(screen.getByLabelText('Organization Code')).toHaveValue('jll-demo');
+    expect(screen.getByLabelText('Email address')).toHaveValue('orgadmin@jll-demo.local');
+    expect(screen.getByLabelText('Password')).toHaveValue('Demo@123');
   });
 });
