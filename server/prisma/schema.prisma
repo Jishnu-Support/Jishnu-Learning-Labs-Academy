@@ -85,6 +85,7 @@ model Organization {
   registrationNumber       String?
   website                  String?
   status                   OrganizationStatus   @default(PENDING)
+  isPlatformOwner          Boolean              @default(false)
   rejectionReason          String?
   pendingAdminPasswordHash String?
   approvedById             String?

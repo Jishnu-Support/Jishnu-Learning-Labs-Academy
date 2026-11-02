@@ -10,6 +10,7 @@ export type CurrentUser = {
   status?: AccountStatus;
   mustChangePassword?: boolean;
   studentId?: string;
+  organization: { name: string; code: string | null; isPlatformOwner: boolean } | null;
 };
 type AuthState = { user: CurrentUser | null; loading: boolean; logout: () => Promise<void> };
 export const AuthContext = createContext<AuthState | null>(null);

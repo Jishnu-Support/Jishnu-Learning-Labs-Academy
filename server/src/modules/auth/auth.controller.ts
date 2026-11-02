@@ -81,8 +81,12 @@ export const logout: RequestHandler = async (req, res) => {
 };
 
 export const me: RequestHandler = async (req, res) => {
+  if (!req.auth) {
+    res.status(401).json({ error: { message: 'Authentication required' } });
+    return;
+  }
   const user = await prisma.user.findFirst({
-    where: { id: req.auth!.userId, organizationId: req.auth!.organizationId },
+    where: { id: req.auth.userId, organizationId: req.auth.organizationId },
     select: {
       id: true,
       organizationId: true,
@@ -91,15 +95,23 @@ export const me: RequestHandler = async (req, res) => {
       role: true,
       status: true,
       mustChangePassword: true,
+      organization: { select: { name: true, code: true, isPlatformOwner: true } },
       studentProfile: { select: { studentId: true } },
     },
   });
   if (!user) {
-    res.json({ data: { user: null } });
+    res.status(401).json({ error: { message: 'Session expired. Please sign in again.' } });
     return;
   }
   const { studentProfile, ...safeUser } = user;
-  res.json({ data: { user: { ...safeUser, studentId: user.role === 'STUDENT' ? studentProfile?.studentId : undefined } } });
+  res.json({
+    data: {
+      user: {
+        ...safeUser,
+        studentId: user.role === 'STUDENT' ? studentProfile?.studentId : undefined,
+      },
+    },
+  });
 };
 
 export const changePassword: RequestHandler = async (req, res) => {

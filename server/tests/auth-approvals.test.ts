@@ -186,6 +186,12 @@ describe('multi-organization authentication and approvals', () => {
     const orgAdmin = await orgAdminLogin(organizationCode, `${prefix}-org@example.test`);
     expect(orgAdmin.status).toBe(200);
     expect(orgAdmin.body.data.user.role).toBe(Role.ORG_ADMIN);
+    const currentUser = await request(app).get('/api/auth/me').set('Cookie', cookieHeader(orgAdmin));
+    expect(currentUser.body.data.user.organization).toEqual({
+      name: registrationInput.organizationName,
+      code: organizationCode,
+      isPlatformOwner: false,
+    });
 
     const monitored = await request(app).get('/api/super-admin/organizations').set('Cookie', adminCookie);
     expect(monitored.status).toBe(200);
@@ -370,6 +376,65 @@ describe('multi-organization authentication and approvals', () => {
     expect((await request(app).get('/api/auth/me').set('Cookie', oldCookie)).status).toBe(401);
     expect(await prisma.session.count({ where: { userId: active.id, revokedAt: null } })).toBe(1);
   });
+  it('returns a safe current-user profile for every role and rejects invalid, expired, and revoked sessions', async () => {
+    expect((await request(app).get('/api/auth/me')).status).toBe(401);
+    expect((await request(app).get('/api/auth/me').set('Cookie', 'accessToken=invalid')).status).toBe(401);
+
+    const organization = await makeOrganization(`${prefix} Me`, `${prefix}-me`);
+    const users = [
+      { user: await makeUser(null, Role.SUPER_ADMIN, 'me-super-admin'), role: Role.SUPER_ADMIN },
+      { user: await makeUser(organization.id, Role.ORG_ADMIN, 'me-org-admin'), role: Role.ORG_ADMIN },
+      { user: await makeUser(organization.id, Role.INSTRUCTOR, 'me-instructor'), role: Role.INSTRUCTOR },
+      { user: await makeUser(organization.id, Role.STAFF, 'me-staff', AccountStatus.APPROVED, 'ME-STAFF'), role: Role.STAFF },
+      { user: await makeUser(organization.id, Role.STUDENT, 'me-student', AccountStatus.APPROVED, 'ME-STUDENT'), role: Role.STUDENT },
+    ];
+
+    for (const { user, role } of users) {
+      const login = role === Role.SUPER_ADMIN
+        ? await request(app).post('/api/auth/super-admin/login').send({ email: user.email, password })
+        : role === Role.ORG_ADMIN
+          ? await orgAdminLogin(organization.code!, user.email)
+          : role === Role.INSTRUCTOR
+            ? await instructorLogin(organization.code!, user.email)
+            : role === Role.STAFF
+              ? await staffLogin(organization.code!, 'ME-STAFF')
+              : await studentLogin(organization.code!, 'ME-STUDENT');
+      expect(login.status).toBe(200);
+
+      const response = await request(app).get('/api/auth/me').set('Cookie', cookieHeader(login));
+      expect(response.status).toBe(200);
+      expect(response.body.data.user).toMatchObject({
+        id: user.id,
+        organizationId: user.organizationId,
+        email: user.email,
+        name: user.name,
+        role,
+        status: AccountStatus.APPROVED,
+        mustChangePassword: false,
+        organization: role === Role.SUPER_ADMIN ? null : {
+          name: organization.name,
+          code: organization.code,
+          isPlatformOwner: false,
+        },
+      });
+      if (role === Role.STUDENT) expect(response.body.data.user.studentId).toBe('ME-STUDENT');
+      expect(response.body.data.user).not.toHaveProperty('passwordHash');
+      expect(JSON.stringify(response.body.data.user)).not.toMatch(/accessToken|refreshToken|passwordHash|token/i);
+    }
+
+    const expiredStudent = await makeUser(organization.id, Role.STUDENT, 'expired-me', AccountStatus.APPROVED, 'EXPIRED-ME');
+    const expiredLogin = await studentLogin(organization.code!, 'EXPIRED-ME');
+    const expiredSession = await prisma.session.findFirstOrThrow({ where: { userId: expiredStudent.id } });
+    await prisma.session.update({ where: { id: expiredSession.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    expect((await request(app).get('/api/auth/me').set('Cookie', cookieHeader(expiredLogin))).status).toBe(401);
+
+    const revokedStudent = await makeUser(organization.id, Role.STUDENT, 'revoked-me', AccountStatus.APPROVED, 'REVOKED-ME');
+    const revokedLogin = await studentLogin(organization.code!, 'REVOKED-ME');
+    const revokedSession = await prisma.session.findFirstOrThrow({ where: { userId: revokedStudent.id } });
+    await prisma.session.update({ where: { id: revokedSession.id }, data: { revokedAt: new Date() } });
+    expect((await request(app).get('/api/auth/me').set('Cookie', cookieHeader(revokedLogin))).status).toBe(401);
+  });
+
 
   it('applies approval permissions and isolates student records by organization', async () => {
     const first = await makeOrganization(`${prefix} Tenant A`, `${prefix}-tenant-a`);

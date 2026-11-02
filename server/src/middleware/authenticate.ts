@@ -1,6 +1,7 @@
 import type { Request, RequestHandler } from 'express';
 import { AccountStatus, OrganizationStatus, Role } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
+import { logger } from '../config/logger.js';
 import { HttpError } from '../utils/http-error.js';
 import { verifyAccessToken } from '../utils/tokens.js';
 
@@ -43,7 +44,8 @@ export const authenticate: RequestHandler = async (req, _res, next) => {
       organizationId: session.user.organizationId,
     };
     return next();
-  } catch {
+  } catch (error) {
+    logger.error({ err: error }, 'Unable to verify authenticated session');
     return next(new HttpError(500, 'Unable to verify your session'));
   }
 };
