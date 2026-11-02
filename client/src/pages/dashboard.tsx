@@ -23,10 +23,15 @@ export function Dashboard({ role }: { role: Role }) {
     ORG_ADMIN: [
       { title: 'Courses', description: 'Create organization courses, assign instructors, and track progress.', href: '/org-admin/courses', label: 'Manage courses' },
       { title: 'Pending registrations', description: 'Approve instructors and staff registrations for your organization.', href: '/org-admin/instructors', label: 'Review registrations' },
+      { title: 'Media', description: 'Upload and manage course videos and audio.', href: '/org-admin/media', label: 'Upload media' },
     ],
     INSTRUCTOR: [
       { title: 'Courses', description: 'Manage your assigned courses and mark topics as delivered.', href: '/instructor/courses', label: 'Open courses' },
       { title: 'Pending students', description: 'Approve or reject student registrations for your organization.', href: '/instructor/approvals', label: 'Review students' },
+      { title: 'Media', description: 'Upload and manage your course videos and audio.', href: '/instructor/media', label: 'Upload media' },
+    ],
+    STAFF: [
+      { title: 'Media', description: 'Upload and manage course videos and audio.', href: '/staff/media', label: 'Upload media' },
     ],
   };
   const cards = links[role] ?? [];

@@ -9,6 +9,7 @@ import { CourseFormPage, CoursesPage } from './pages/courses-page';
 import { Dashboard } from './pages/dashboard';
 import { InstructorApprovalsPage } from './pages/instructor-approvals-page';
 import { LoginPage } from './pages/login-page';
+import { MediaPage } from './pages/media-page';
 import { NotesPage } from './pages/notes-page';
 import { OrganizationApprovalsPage } from './pages/organization-approvals-page';
 import { OrganizationRegistrationPage } from './pages/organization-registration-page';
@@ -54,6 +55,7 @@ export function App() {
           <Route path="/instructor/students" element={<StudentsPage />} />
           <Route path="/instructor/staff" element={<StaffDetailsPage />} />
           <Route path="/instructor/notes" element={<NotesPage />} />
+          <Route path="/instructor/media" element={<MediaPage />} />
           <Route path="/instructor/courses" element={<CoursesPage />} />
           <Route path="/instructor/courses/new" element={<CourseFormPage />} />
           <Route path="/instructor/courses/:courseId/edit" element={<CourseFormPage />} />
@@ -66,6 +68,7 @@ export function App() {
           <Route path="/org-admin/students" element={<StudentsPage />} />
           <Route path="/org-admin/staff" element={<StaffDetailsPage />} />
           <Route path="/org-admin/notes" element={<NotesPage />} />
+          <Route path="/org-admin/media" element={<MediaPage />} />
           <Route path="/org-admin/courses" element={<CoursesPage />} />
           <Route path="/org-admin/courses/new" element={<CourseFormPage />} />
           <Route path="/org-admin/courses/:courseId/edit" element={<CourseFormPage />} />
@@ -75,6 +78,7 @@ export function App() {
           <Route path="/staff" element={<Dashboard role="STAFF" />} />
           <Route path="/staff/students" element={<StudentsPage />} />
           <Route path="/staff/notes" element={<NotesPage />} />
+          <Route path="/staff/media" element={<MediaPage />} />
         </Route>
         <Route element={<RouteGuard roles={['SUPER_ADMIN']} />}>
           <Route path="/super-admin" element={<Navigate to="/super-admin/dashboard" replace />} />

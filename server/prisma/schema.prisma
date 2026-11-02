@@ -71,6 +71,30 @@ enum QuestionDifficulty {
   ADVANCED
 }
 
+enum MediaType {
+  VIDEO
+  AUDIO
+}
+
+enum MediaStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum MediaVisibility {
+  DRAFT
+  PUBLISHED
+}
+
+enum MediaJobStatus {
+  QUEUED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
 model Organization {
   id                       String               @id @default(cuid())
   name                     String
@@ -110,6 +134,9 @@ model Organization {
   practiceQuestions        PracticeQuestion[]
   notes                    Note[]
   noteViews                NoteView[]
+  mediaItems               MediaItem[]
+  mediaJobs                MediaJob[]
+  watchProgress            WatchProgress[]
   expertSessions           ExpertSession[]
   batchStudents            BatchStudent[]
   batchInstructors         BatchInstructor[]
@@ -153,6 +180,8 @@ model User {
   createdAssessments       Assessment[]       @relation("AssessmentCreator")
   createdPracticeQuestions PracticeQuestion[] @relation("PracticeQuestionCreator")
   notes                    Note[]             @relation("NoteAuthor")
+  uploadedMedia            MediaItem[]        @relation("MediaUploader")
+  watchProgress            WatchProgress[]    @relation("WatchProgressStudent")
   noteViews                NoteView[]
   hostedExpertSessions     ExpertSession[]    @relation("ExpertSessionHost")
 
@@ -315,6 +344,7 @@ model Course {
   topics                   CourseTopic[]
   enrollments              Enrollment[]
   notes                    Note[]
+  mediaItems               MediaItem[]
   assessments              Assessment[]
   practiceQuestions        PracticeQuestion[]
 
@@ -351,7 +381,9 @@ model CourseTopic {
   organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   course            Course             @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Cascade)
   practiceQuestions PracticeQuestion[]
+  mediaItems        MediaItem[]
 
+  @@unique([organizationId, id])
   @@unique([organizationId, courseId, order])
   @@index([organizationId, courseId, order])
 }
@@ -474,6 +506,78 @@ model NoteView {
 
   @@index([organizationId, noteId, createdAt])
   @@index([organizationId, userId, createdAt])
+}
+
+model MediaItem {
+  id              String          @id @default(cuid())
+  organizationId  String
+  courseId        String
+  topicId         String?
+  title           String
+  description     String?         @db.Text
+  type            MediaType
+  status          MediaStatus     @default(UPLOADING)
+  visibility      MediaVisibility @default(DRAFT)
+  durationSeconds Int?
+  sizeBytes       BigInt          @default(0)
+  storageBytes    BigInt          @default(0)
+  originalKey     String?
+  streamKey       String?
+  thumbnailKey    String?
+  uploadedById    String
+  publishedAt     DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  course          Course          @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Restrict)
+  topic           CourseTopic?    @relation(fields: [organizationId, topicId], references: [organizationId, id], onDelete: Restrict)
+  uploadedBy      User            @relation("MediaUploader", fields: [organizationId, uploadedById], references: [organizationId, id], onDelete: Restrict)
+  job             MediaJob?
+  watchProgress   WatchProgress[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, deletedAt, status, createdAt])
+  @@index([organizationId, courseId, type, status])
+  @@index([organizationId, uploadedById, createdAt])
+}
+
+model MediaJob {
+  id              String         @id @default(cuid())
+  organizationId  String
+  mediaId         String
+  status          MediaJobStatus @default(QUEUED)
+  attempts        Int            @default(0)
+  progressPercent Int            @default(0)
+  error           String?        @db.Text
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  availableAt     DateTime       @default(now())
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  media           MediaItem      @relation(fields: [organizationId, mediaId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, mediaId])
+  @@index([status, availableAt, createdAt])
+  @@index([organizationId, status, availableAt])
+}
+
+model WatchProgress {
+  id                  String       @id @default(cuid())
+  organizationId      String
+  studentId           String
+  mediaId             String
+  lastPositionSeconds Float        @default(0)
+  watchedSeconds      Float        @default(0)
+  completed           Boolean      @default(false)
+  updatedAt           DateTime     @updatedAt
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  student             User         @relation("WatchProgressStudent", fields: [organizationId, studentId], references: [organizationId, id], onDelete: Cascade)
+  media               MediaItem    @relation(fields: [organizationId, mediaId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, studentId, mediaId])
+  @@index([organizationId, mediaId, completed])
 }
 
 model ExpertSession {

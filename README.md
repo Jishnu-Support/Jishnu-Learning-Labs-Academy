@@ -75,6 +75,34 @@ Open `http://localhost:5173`. All portals share that host:
 
 The client uses the same-origin `/api` path. Vite proxies it to the local API on port 4000 during development, so browser login and API requests stay on the frontend host. For a single-domain deployment, configure the platform's reverse proxy to serve the frontend and forward `/api` to the backend; keep `VITE_API_URL=/api`. The API health endpoint is available at `http://localhost:4000/api/health` during local development.
 
+## Video and audio media (Part B)
+
+Staff and instructors can upload and manage their own course media; Org Admins can manage all media for their organization. Uploads are streamed to private storage outside the client web root, validated by extension, MIME type and file signature, then processed by the server's background worker. The uploader can preview, edit, publish, unpublish and soft-delete media. Student playback is not part of Part B.
+
+`server/.env.example` documents the media configuration:
+
+- `MEDIA_STORAGE_DIR` defaults to `storage/media` under the server working directory. Use a private path outside any public web root.
+- `MEDIA_STORAGE_QUOTA_GB` defaults to 10 GB per organization.
+- `MAX_VIDEO_MB` defaults to 500 MB and `MAX_AUDIO_MB` to 100 MB.
+- `KEEP_ORIGINAL_MEDIA` defaults to `true`; set it to `false` to remove the source after successful processing.
+- `MEDIA_PROCESSING_MAX_ATTEMPTS` defaults to 3.
+
+Install dependencies and apply the forward-only schema migration before starting the server:
+
+```powershell
+Set-Location "D:\Learning labs"
+npm install
+npm run prisma:generate --workspace server
+Set-Location .\server
+npx prisma migrate deploy
+Set-Location ..
+npm run dev:server
+```
+
+In another PowerShell terminal, start the frontend with `npm run dev:client`. To generate and queue small local video/audio samples for the seeded `jll-demo` courses, run `npm run media:sample` after seeding. The script is safe to rerun and does not delete media or other database data.
+
+Video processing uses bundled FFmpeg to create encrypted HLS renditions and a thumbnail; audio is normalized to AAC/M4A. Production deployments need a compatible FFmpeg binary on the server or a managed media service such as Mux, Cloudflare Stream, or AWS MediaConvert. The media storage adapter is isolated behind a streaming-capable interface so a private object-storage adapter can replace local disk. Do not expose the media storage directory through a static web server; playback and encryption keys are available only through authenticated API routes.
+
 ## Brand theme and welcome intro
 
 The client uses the Jishnu Learning Labs brand palette, shared logo, responsive portal styling, and a seven-second welcome intro. The intro appears once per browser session on the first root or login page visit; it is skipped for authenticated users and is not replayed on later routes. The Skip control appears after one second, and Escape also skips it.

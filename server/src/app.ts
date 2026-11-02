@@ -10,6 +10,7 @@ import { approvalsRouter, orgAdminApprovalsRouter } from './modules/approvals/ap
 import { authRouter } from './modules/auth/auth.routes.js';
 import { coursesRouter, studentCoursesRouter } from './modules/courses/courses.routes.js';
 import { notesRouter } from './modules/notes/notes.routes.js';
+import { mediaRouter } from './modules/media/media.routes.js';
 import { organizationsRouter, superAdminOrganizationsRouter } from './modules/organizations/organizations.routes.js';
 import { staffRouter } from './modules/staff/staff.routes.js';
 import { studentsRouter } from './modules/students/students.routes.js';
@@ -30,6 +31,7 @@ app.use('/api/staff', staffRouter);
 app.use('/api/courses', coursesRouter);
 app.use('/api/student/courses', studentCoursesRouter);
 app.use('/api/notes', notesRouter);
+app.use('/api/media', mediaRouter);
 app.use('/api/instructor/registrations', approvalsRouter);
 app.use('/api/org-admin', orgAdminApprovalsRouter);
 app.use((_req, res) => res.status(404).json({ error: { message: 'Route not found' } }));
