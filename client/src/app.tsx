@@ -2,6 +2,15 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { RouteGuard } from './components/route-guard';
 import { Shell } from './components/shell';
 import { PageHeader } from './components/page-header';
+
+function NotFoundPage() {
+  return (
+    <section className="narrow-card card">
+      <PageHeader title="Page not found" backTo="/student" breadcrumbs={['Not found']} />
+      <p className="muted">The page you requested does not exist or is no longer available.</p>
+    </section>
+  );
+}
 import { ApprovalsPage } from './pages/approvals-page';
 import { ChangePasswordPage } from './pages/change-password-page';
 import { CourseDetailPage } from './pages/course-detail-page';
@@ -17,6 +26,7 @@ import { RegisterPage } from './pages/register-page';
 import { StaffDetailsPage, StaffManagementPage } from './pages/staff-page';
 import { StudentCourseDetailPage } from './pages/student-course-detail-page';
 import { StudentCoursesPage } from './pages/student-courses-page';
+import { StudentMediaPage, StudentMediaPlayerPage } from './pages/student-media-page';
 import { StudentsPage } from './pages/students-page';
 import {
   PracticeQuestionBankPage, StudentAssessmentAttemptPage, StudentAssessmentResultPage,
@@ -51,6 +61,8 @@ export function App() {
           <Route path="/student" element={<Dashboard role="STUDENT" />} />
           <Route path="/student/courses" element={<StudentCoursesPage />} />
           <Route path="/student/courses/:courseId" element={<StudentCourseDetailPage />} />
+          <Route path="/student/media" element={<StudentMediaPage />} />
+          <Route path="/student/media/:mediaId" element={<StudentMediaPlayerPage />} />
           <Route path="/student/notes" element={<NotesPage />} />
           <Route path="/student/assessments" element={<StudentAssessmentsPage />} />
           <Route path="/student/assessment/:attemptId" element={<StudentAssessmentAttemptPage />} />
@@ -97,7 +109,7 @@ export function App() {
           <Route path="/super-admin/dashboard" element={<Dashboard role="SUPER_ADMIN" />} />
           <Route path="/super-admin/organizations" element={<OrganizationApprovalsPage />} />
         </Route>
-        <Route path="*" element={<Navigate to="/student/login" replace />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
   );

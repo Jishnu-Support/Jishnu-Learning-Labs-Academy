@@ -1,12 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { Field } from '../components/field';
 import { BrandLogo } from '../components/brand-logo';
 import { Button } from '../components/ui/button';
 import { api, ApiError } from '../lib/api';
+import { INTRO_LOGIN_SUCCESS_EVENT, LAST_ORGANIZATION_CODE_KEY } from '../lib/brand-config';
 import type { Role } from '../types';
 
 const loginSchema = z.object({
@@ -102,7 +103,17 @@ export function LoginPage({ portal }: Props) {
     defaultValues: { organizationCode: '', identifier: '', password: '' },
   });
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  const returnTo = (() => {
+    const param = new URLSearchParams(location.search).get('returnTo');
+    if (param && param.startsWith('/')) return param;
+    const stateTarget = typeof location.state === 'object' && location.state && 'returnTo' in location.state
+      ? String((location.state as { returnTo?: string }).returnTo)
+      : null;
+    if (stateTarget && stateTarget.startsWith('/')) return stateTarget;
+    return null;
+  })();
   const mutation = useMutation({
     mutationFn: (values: z.infer<typeof loginSchema>) => {
       const body: Record<string, string> = { password: values.password };
@@ -112,9 +123,18 @@ export function LoginPage({ portal }: Props) {
       else if (values.identifier) body.email = values.identifier;
       return api<{ user: { role: Role; mustChangePassword: boolean } }>(details.endpoint, { method: 'POST', body: JSON.stringify(body) });
     },
-    onSuccess: async (data) => {
+    onSuccess: async (data, values) => {
+      if (portal !== 'super-admin' && values.organizationCode) {
+        try {
+          window.localStorage.setItem(LAST_ORGANIZATION_CODE_KEY, values.organizationCode.trim());
+        } catch {
+          // Remembering an organization is optional when storage is unavailable.
+        }
+      }
       await queryClient.invalidateQueries({ queryKey: ['me'] });
-      navigate(data.user.mustChangePassword ? '/change-password' : routeForRole(data.user.role));
+      window.dispatchEvent(new Event(INTRO_LOGIN_SUCCESS_EVENT));
+      const destination = data.user.mustChangePassword ? '/change-password' : (returnTo ?? routeForRole(data.user.role));
+      navigate(destination, { replace: true });
     },
   });
   const submit = form.handleSubmit((values) => mutation.mutate(values));

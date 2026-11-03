@@ -1,6 +1,7 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/auth-context';
 import { PortalSidebar } from '../components/portal-sidebar';
+import { Toast } from '../components/feedback';
 import type { Role } from '../types';
 
 const roleTitles: Record<Role, string> = {
@@ -13,6 +14,10 @@ const roleTitles: Record<Role, string> = {
 
 export function Dashboard({ role }: { role: Role }) {
   const { user } = useAuth();
+  const location = useLocation();
+  const toastMessage = typeof location.state === 'object' && location.state && 'toast' in location.state
+    ? String((location.state as { toast?: string }).toast)
+    : '';
   const links: Partial<Record<Role, Array<{ title: string; description: string; href: string; label: string }>>> = {
     SUPER_ADMIN: [
       { title: 'Organizations', description: 'Monitor organizations and suspend or reactivate access when needed.', href: '/super-admin/organizations', label: 'Manage organizations' },
@@ -39,6 +44,7 @@ export function Dashboard({ role }: { role: Role }) {
     <div className="portal-layout">
       <PortalSidebar role={role} />
       <section className="dashboard portal-content">
+        {toastMessage && <Toast message={toastMessage} onDismiss={() => {}} />}
         <p className="eyebrow">{roleTitles[role]} PORTAL</p>
         <h1>Good to have you here, {user?.name.split(' ')[0]}.</h1>
         <p className="muted">You are signed in to your organization’s Jishnu Learning Labs workspace.</p>
