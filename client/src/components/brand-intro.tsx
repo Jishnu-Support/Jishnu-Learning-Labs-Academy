@@ -112,10 +112,13 @@ function getIntroDuration(reducedMotion: boolean) {
 }
 
 function WelcomeText({ text }: { text: string }) {
+  const words = text.split(/\s+/);
   return (
-    <p className="intro-welcome" aria-label={text}>
-      {text.split(/\s+/).map((word, index) => (
-        <span key={`${word}-${index}`} aria-hidden="true" style={{ '--word-index': index } as CSSProperties}>{word}&nbsp;</span>
+    <p className="intro-welcome" aria-label={text} data-testid="intro-headline">
+      {words.map((word, index) => (
+        <span key={`${word}-${index}`} aria-hidden="true" style={{ '--word-index': index } as CSSProperties}>
+          {word}{index < words.length - 1 ? ' ' : ''}
+        </span>
       ))}
     </p>
   );
@@ -124,7 +127,7 @@ function WelcomeText({ text }: { text: string }) {
 function WelcomeOrganization({ name }: { name: string }) {
   const text = INTRO_CONFIG.copy.partnerOrganizationWelcome.replace('{organizationName}', name);
   return (
-    <p className="intro-organization" aria-label={text}>
+    <p className="intro-organization" aria-label={text} data-testid="intro-organization">
       {text}
     </p>
   );
@@ -274,36 +277,46 @@ export function BrandIntro({
       role="status"
       aria-live="polite"
       aria-label={welcomeText}
+      data-testid="brand-intro"
     >
       {started && (
         <>
-          <div className="intro-stage">
+          <div className="intro-stage" data-testid="intro-stage">
             <div className="intro-decoration" aria-hidden="true">
               <svg viewBox="0 0 360 360" focusable="false">
                 <circle className="intro-arc intro-arc-gray" cx="180" cy="180" r="164" />
                 <circle className="intro-arc intro-arc-lime" cx="180" cy="180" r="146" />
               </svg>
-              <div className="intro-dots">{[0, 1, 2, 3, 4].map((dot) => <span key={dot} />)}</div>
+              <div className="intro-dots" data-testid="intro-dots">{[0, 1, 2, 3, 4].map((dot) => <span key={dot} />)}</div>
             </div>
             <div className="intro-content">
-              <img className="intro-logo-mark" src="/brand/jishnu-logo.png" alt="Jishnu Learning Labs — Empowering Minds" />
+              <img className="intro-logo-mark" data-testid="intro-logo" src="/brand/jishnu-logo.png" alt="Jishnu Learning Labs — Empowering Minds" />
               {brand.variant === 'PARTNER' && SHOW_PARTNER_ORG_NAME && brand.organizationName && (
                 <WelcomeOrganization name={brand.organizationName} />
               )}
               <WelcomeText text={welcomeText} />
-              <p className="intro-tagline">{INTRO_CONFIG.copy.tagline}</p>
+              <p className="intro-tagline" data-testid="intro-tagline">{INTRO_CONFIG.copy.tagline}</p>
             </div>
           </div>
         </>
       )}
       {!started && (
         <div className="intro-enter-panel">
-          <img className="intro-enter-logo" src="/brand/jishnu-logo.png" alt="Jishnu Learning Labs — Empowering Minds" />
+          <img className="intro-enter-logo" data-testid="intro-logo" src="/brand/jishnu-logo.png" alt="Jishnu Learning Labs — Empowering Minds" />
           <Button onClick={start}>Enter</Button>
         </div>
       )}
       <div className="intro-controls">
-        {INTRO_CONFIG.soundEnabled && !reducedMotion && (
+        {INTRO_CONFIG.soundEnabled && !reducedMotion && soundBlocked && !muted ? (
+          <Button
+            variant="secondary"
+            className="intro-sound-toggle"
+            aria-label="Tap for sound"
+            onClick={() => void sound.current?.resumeAudioContext(elapsedMs())}
+          >
+            <Volume2 size={16} aria-hidden="true" /> Tap for sound
+          </Button>
+        ) : INTRO_CONFIG.soundEnabled && !reducedMotion ? (
           <Button
             variant="secondary"
             className="intro-sound-toggle"
@@ -313,12 +326,7 @@ export function BrandIntro({
             {muted ? <VolumeX size={16} aria-hidden="true" /> : <Volume2 size={16} aria-hidden="true" />}
             {muted ? 'Unmute' : 'Mute'}
           </Button>
-        )}
-        {soundBlocked && !muted && !reducedMotion && (
-          <Button variant="secondary" className="intro-sound-toggle" onClick={() => void sound.current?.resumeAudioContext(elapsedMs())}>
-            <Volume2 size={16} aria-hidden="true" /> Tap for sound
-          </Button>
-        )}
+        ) : null}
         {skipVisible && (
           <Button variant="secondary" className="intro-skip" onClick={finish}>Skip</Button>
         )}

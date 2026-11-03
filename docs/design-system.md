@@ -38,3 +38,5 @@ The OWNER variant says “Welcome to Jishnu Learning Labs”; it is used for Sup
 The seeded `jll-demo` organization is the platform owner. A Super Admin can change this in **Super Admin → Organizations → Set as platform owner**; the confirmation updates the old and new owner in one transaction and records audit entries. The unique database index enforces that no more than one organization owns the platform branding.
 
 The intro respects `prefers-reduced-motion` with a two-second fade and no audio. Sound is synthesized locally by default. If autoplay is blocked, the intro remains usable and provides a “Tap for sound” action to resume only cues still ahead in the timeline. The mute setting is saved in `localStorage`; sound and audio resources are stopped on skip, completion, tab hiding, and unmount. An optional licensed `client/public/brand/intro-chime.mp3` can be selected in the intro config; an unavailable file falls back to synthesis.
+
+The intro logo is blended into its light background to reduce the white rectangle in the current raster asset. A transparent PNG or SVG logo would be preferable for future brand asset updates.

@@ -441,7 +441,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   position: fixed;
   z-index: 1000;
   inset: 0;
-  overflow: hidden auto;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
   color: var(--text-primary);
   background: linear-gradient(142deg, #fff 0%, #FBFAFF 54%, #F1EFFA 100%);
   animation: intro-exit var(--intro-fade-duration) var(--intro-fade-start) ease-in forwards;
@@ -449,34 +451,31 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .intro-stage {
   position: relative;
   display: grid;
-  min-height: 100vh;
-  min-height: 100dvh;
+  width: min(86vmin, 640px);
+  aspect-ratio: 1;
   place-items: center;
-  padding: max(72px, calc(env(safe-area-inset-top) + 60px)) max(20px, env(safe-area-inset-right)) max(72px, calc(env(safe-area-inset-bottom) + 60px)) max(20px, env(safe-area-inset-left));
 }
 .intro-content {
   position: relative;
   z-index: 2;
   display: flex;
-  width: min(820px, 100%);
+  width: 76%;
   flex-direction: column;
   align-items: center;
+  gap: clamp(8px, 2.5vmin, 16px);
   text-align: center;
 }
 .intro-decoration {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: min(72vmin, 460px);
-  aspect-ratio: 1;
-  transform: translate(-50%, -50%);
+  inset: 0;
+  z-index: 1;
   animation: intro-decoration-in 1.2s ease-out both;
 }
 .intro-decoration svg { width: 100%; height: 100%; overflow: visible; transform: rotate(-35deg); }
 .intro-arc { fill: none; stroke-dasharray: 1100; stroke-dashoffset: 1100; stroke-linecap: round; }
 .intro-arc-gray { stroke: #8A8B91; stroke-width: 4; animation: intro-arc-draw var(--intro-arcs-end) ease-out forwards; }
 .intro-arc-lime { stroke: var(--brand-lime); stroke-width: 4; animation: intro-arc-draw calc(var(--intro-arcs-end) - 180ms) 180ms ease-out forwards; }
-.intro-dots { position: absolute; top: 41%; left: -1%; display: grid; gap: clamp(5px, 1.5vmin, 11px); }
+.intro-dots { position: absolute; top: 41%; left: 3%; display: grid; gap: clamp(5px, 1.5vmin, 11px); }
 .intro-dots span { width: clamp(5px, 1.2vmin, 9px); aspect-ratio: 1; border-radius: 50%; background: var(--brand-magenta); opacity: 0; animation: intro-dot-pop .34s ease-out forwards; }
 .intro-dots span:nth-child(2) { animation-delay: .18s; }
 .intro-dots span:nth-child(3) { animation-delay: .34s; }
@@ -484,42 +483,43 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .intro-dots span:nth-child(5) { animation-delay: .66s; }
 .intro-logo-mark {
   display: block;
-  width: min(560px, 86vw, 132vh);
-  max-height: 34dvh;
+  width: 100%;
+  max-height: 22%;
   object-fit: contain;
   height: auto;
-  margin-bottom: clamp(8px, 2.5vh, 20px);
+  mix-blend-mode: multiply;
   clip-path: inset(0 100% 0 0);
   animation: intro-logo-reveal 1.6s var(--intro-logo-start) cubic-bezier(.2,.8,.2,1) forwards;
 }
 .intro-organization {
   max-width: 100%;
-  margin: 0 0 8px;
+  margin: 0;
   color: var(--brand-gray);
-  font-size: clamp(14px, 2.2vw, 20px);
-  line-height: 1.35;
+  font-size: clamp(13px, 2vmin, 18px);
+  line-height: 1.25;
   overflow-wrap: anywhere;
   text-wrap: balance;
 }
 .intro-welcome {
-  max-width: min(820px, 100%);
+  max-width: 100%;
   margin: 0;
   color: var(--brand-navy);
   font-family: var(--font-heading);
-  font-size: clamp(25px, 5.2vw, 54px);
+  font-size: clamp(1.5rem, 4.2vmin, 2.6rem);
   font-weight: 800;
-  line-height: 1.14;
-  letter-spacing: -.04em;
+  line-height: 1.12;
+  letter-spacing: -.03em;
   text-wrap: balance;
   overflow-wrap: anywhere;
 }
 .intro-welcome span { display: inline-block; opacity: 0; transform: translateY(14px); animation: intro-word-in .56s cubic-bezier(.2,.8,.2,1) forwards; animation-delay: calc(var(--intro-welcome-start) + var(--word-index) * 170ms); }
 .intro-welcome span:nth-child(n+3) { color: var(--brand-magenta); }
 .intro-tagline {
-  margin: clamp(7px, 1.5vh, 14px) 0 0;
+  margin: 0;
   color: var(--brand-magenta);
-  font-size: clamp(15px, 2.6vw, 24px);
+  font-size: clamp(14px, 2.6vmin, 20px);
   font-style: italic;
+  line-height: 1.2;
   opacity: 0;
   animation: intro-tagline-in .6s var(--intro-tagline-start) ease-out forwards;
 }
@@ -528,8 +528,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .intro-controls .button { min-height: 38px; padding: 0 13px; border: 1px solid var(--border-subtle); background: #ffffffed; box-shadow: 0 4px 14px #14246b12; }
 .intro-sound-toggle { display: inline-flex; align-items: center; gap: 7px; }
 .intro-skip { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); }
-.intro-enter-panel { display: flex; flex-direction: column; align-items: center; gap: 28px; }
-.intro-enter-logo { width: min(560px, 86vw, 132vh); max-height: 34dvh; object-fit: contain; }
+.intro-enter-panel { display: flex; width: min(76%, 560px); flex-direction: column; align-items: center; gap: 28px; }
+.intro-enter-logo { width: 100%; max-height: 22dvh; object-fit: contain; mix-blend-mode: multiply; }
 .intro-pending { animation: none; }
 .intro-reduced { animation: intro-reduced-overlay 2s ease-in-out both; }
 .intro-reduced .intro-decoration, .intro-reduced .intro-dots { display: none; }
@@ -537,7 +537,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .intro-reduced .intro-welcome span { opacity: 1; transform: none; animation: none; }
 
 @keyframes intro-arc-draw { to { stroke-dashoffset: 0; } }
-@keyframes intro-decoration-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.92); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes intro-decoration-in { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
 @keyframes intro-dot-pop { 0% { opacity: 0; transform: scale(.4); } 75% { opacity: 1; transform: scale(1.2); } 100% { opacity: 1; transform: scale(1); } }
 @keyframes intro-glow-pulse { 0%, 100% { opacity: .2; transform: scale(.92); } 50% { opacity: .85; transform: scale(1.04); } }
 @keyframes intro-logo-reveal { from { clip-path: inset(0 100% 0 0); transform: scale(.94); } to { clip-path: inset(0 0 0 0); transform: scale(1); } }
@@ -578,13 +578,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .portal-sidebar .eyebrow { display: none; }
   .intro-controls { top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); gap: 5px; }
   .intro-controls .button { min-height: 36px; padding-inline: 10px; font-size: 11px; }
-  .intro-stage { padding-inline: max(14px, env(safe-area-inset-left)) max(14px, env(safe-area-inset-right)); }
-  .intro-welcome { font-size: clamp(25px, 8vw, 38px); }
 }
 @media (max-height:500px) {
-  .intro-stage { padding-block: max(56px, calc(env(safe-area-inset-top) + 42px)) max(56px, calc(env(safe-area-inset-bottom) + 42px)); }
-  .intro-logo-mark, .intro-enter-logo { max-height: 26dvh; }
-  .intro-logo-mark { margin-bottom: 6px; }
-  .intro-welcome { font-size: clamp(22px, 5vh, 32px); }
-  .intro-tagline { margin-top: 4px; font-size: clamp(14px, 3.5vh, 19px); }
+  .intro-content { gap: clamp(6px, 1.8vmin, 10px); }
+  .intro-logo-mark { max-height: 18%; }
+  .intro-enter-logo { max-height: 18dvh; }
+  .intro-welcome { font-size: clamp(1.5rem, 4.2vmin, 2rem); }
+  .intro-tagline { font-size: clamp(14px, 2.6vmin, 18px); }
 }
