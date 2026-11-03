@@ -1,4 +1,4 @@
-import { MediaSource, MediaStatus, MediaType, MediaVisibility } from '@prisma/client';
+import { MediaStatus, MediaType, MediaVisibility } from '@prisma/client';
 import { z } from 'zod';
 
 const mediaId = z.string().min(1).max(64);
@@ -21,26 +21,6 @@ const extensionMimeTypes: Record<MediaType, Record<string, string[]>> = {
 
 const extension = z.string().regex(/^\.[a-z0-9]{2,5}$/);
 
-export function youtubeVideoId(value: string): string | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:' || url.username || url.password) return null;
-    if (url.hostname === 'youtu.be') {
-      const match = url.pathname.match(/^\/([A-Za-z0-9_-]{11})\/?$/);
-      return match?.[1] ?? null;
-    }
-    if (!['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(url.hostname)) return null;
-    if (url.pathname === '/watch') {
-      const id = url.searchParams.get('v');
-      return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-    }
-    const match = url.pathname.match(/^\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})\/?$/);
-    return match?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
-
 export const mediaIdSchema = z.object({ mediaId });
 
 export const createMediaSchema = z.object({
@@ -49,29 +29,12 @@ export const createMediaSchema = z.object({
   courseId: mediaId,
   topicId: mediaId.nullable().optional(),
   type: z.nativeEnum(MediaType),
-  source: z.nativeEnum(MediaSource).optional().default(MediaSource.UPLOAD),
-  youtubeUrl: z.string().trim().max(2048).optional(),
   sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   extension: extension.optional(),
   mimeType: z.string().trim().min(3).max(100).optional(),
   fileName: z.string().min(1).max(255).refine((value) => !/[\\/]/.test(value), 'File name must not contain a path').optional(),
   publishOnReady: z.boolean().optional().default(false),
 }).superRefine((value, context) => {
-  if (value.source === MediaSource.YOUTUBE) {
-    if (value.type !== MediaType.VIDEO) {
-      context.addIssue({ code: 'custom', path: ['type'], message: 'YouTube links can only be added as video media' });
-    }
-    if (!value.youtubeUrl || !youtubeVideoId(value.youtubeUrl)) {
-      context.addIssue({ code: 'custom', path: ['youtubeUrl'], message: 'Enter a valid HTTPS YouTube watch, short, or embed URL' });
-    }
-    if (value.sizeBytes !== undefined || value.extension !== undefined || value.mimeType !== undefined || value.fileName !== undefined) {
-      context.addIssue({ code: 'custom', path: ['source'], message: 'YouTube links cannot include upload file details' });
-    }
-    return;
-  }
-  if (value.youtubeUrl !== undefined) {
-    context.addIssue({ code: 'custom', path: ['youtubeUrl'], message: 'A YouTube URL is only valid for YouTube video media' });
-  }
   if (!value.sizeBytes || !value.extension || !value.mimeType || !value.fileName) {
     return;
   }

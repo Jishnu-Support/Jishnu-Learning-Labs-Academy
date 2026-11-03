@@ -1,4 +1,4 @@
-import { EnrollmentStatus, MediaJobStatus, MediaSource, MediaStatus, MediaType, MediaVisibility, Prisma, Role } from '@prisma/client';
+import { EnrollmentStatus, MediaJobStatus, MediaStatus, MediaType, MediaVisibility, Prisma, Role } from '@prisma/client';
 import { fileTypeFromFile } from 'file-type';
 import { basename, extname } from 'node:path';
 import { env } from '../../config/env.js';
@@ -6,12 +6,11 @@ import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { mediaStorage } from './media.storage.js';
 import type { CreateMediaInput, MediaListInput, UpdateMediaInput } from './media.schemas.js';
-import { expectedMediaMimeTypes, youtubeVideoId } from './media.schemas.js';
+import { expectedMediaMimeTypes } from './media.schemas.js';
 
 const managerRoles = [Role.STAFF, Role.INSTRUCTOR, Role.ORG_ADMIN] as const;
 const videoLimits = new Set(['.mp4', '.mov', '.webm', '.mkv']);
 const audioLimits = new Set(['.mp3', '.m4a', '.aac', '.wav', '.ogg']);
-const maximumVideoMegabytes = 180;
 
 type MediaActor = { organizationId: string | null; userId: string; role: Role };
 
@@ -27,12 +26,7 @@ function assertMediaManager(role: Role): void {
 }
 
 function fileLimitBytes(type: MediaType): number {
-  const maximumMegabytes = type === MediaType.VIDEO ? Math.min(env.MAX_VIDEO_MB, maximumVideoMegabytes) : env.MAX_AUDIO_MB;
-  return maximumMegabytes * 1024 * 1024;
-}
-
-function fileLimitMegabytes(type: MediaType): number {
-  return Math.floor(fileLimitBytes(type) / (1024 * 1024));
+  return (type === MediaType.VIDEO ? env.MAX_VIDEO_MB : env.MAX_AUDIO_MB) * 1024 * 1024;
 }
 
 function storageQuotaBytes(): bigint {
@@ -210,12 +204,9 @@ export async function recordWatchProgress(actor: MediaActor, mediaId: string, in
       status: MediaStatus.READY,
       courseId: { in: courseIds },
     },
-    select: { id: true, durationSeconds: true, source: true },
+    select: { id: true, durationSeconds: true },
   });
   if (!media) throw new HttpError(404, 'Media not found in your enrolled courses');
-  if (media.source === MediaSource.YOUTUBE) {
-    throw new HttpError(409, 'Watch progress is not available for YouTube videos');
-  }
 
   const durationSeconds = media.durationSeconds ?? input.positionSeconds;
   const completed = Boolean(input.completed || (durationSeconds > 0 && input.positionSeconds >= durationSeconds * 0.9));
@@ -333,19 +324,9 @@ export async function listMediaCourses(actor: MediaActor) {
 export async function createMedia(actor: MediaActor, input: CreateMediaInput) {
   assertMediaManager(actor.role);
   const organizationId = tenantId(actor);
-  const source = input.source ?? MediaSource.UPLOAD;
-  const externalVideoId = source === MediaSource.YOUTUBE && input.youtubeUrl
-    ? youtubeVideoId(input.youtubeUrl)
-    : null;
-  if (source === MediaSource.YOUTUBE && !externalVideoId) {
-    throw new HttpError(400, 'Enter a valid HTTPS YouTube video URL');
-  }
   const hasFile = Boolean(input.fileName && input.extension && input.sizeBytes && input.mimeType);
 
-  if (source === MediaSource.YOUTUBE && hasFile) {
-    throw new HttpError(400, 'YouTube links cannot include upload file details');
-  }
-  if (source === MediaSource.UPLOAD && hasFile) {
+  if (hasFile) {
     const extension = input.extension!.toLowerCase();
     const fileNameExtension = extname(basename(input.fileName!.replaceAll('\\', '/'))).toLowerCase();
     if (fileNameExtension !== extension) throw new HttpError(400, 'File name extension does not match the selected type');
@@ -354,7 +335,7 @@ export async function createMedia(actor: MediaActor, input: CreateMediaInput) {
       throw new HttpError(400, 'Unsupported file extension for this media type');
     }
     if (input.sizeBytes! > fileLimitBytes(input.type)) {
-      throw new HttpError(413, `Files of this type may not exceed ${fileLimitMegabytes(input.type)} MB`);
+      throw new HttpError(413, `Files of this type may not exceed ${input.type === MediaType.VIDEO ? env.MAX_VIDEO_MB : env.MAX_AUDIO_MB} MB`);
     }
   }
 
@@ -371,10 +352,7 @@ export async function createMedia(actor: MediaActor, input: CreateMediaInput) {
       if (hasFile && usedBytes + requestedBytes > storageQuotaBytes()) {
         throw new HttpError(413, 'Organization media storage quota would be exceeded');
       }
-      const publishImmediately = source === MediaSource.YOUTUBE && Boolean(input.publishOnReady);
-      const mediaStatus = source === MediaSource.YOUTUBE
-        ? MediaStatus.READY
-        : hasFile ? MediaStatus.UPLOADING : MediaStatus.AWAITING_FILE;
+      const mediaStatus = hasFile ? MediaStatus.UPLOADING : MediaStatus.AWAITING_FILE;
       const media = await tx.mediaItem.create({
         data: {
           organizationId,
@@ -384,19 +362,15 @@ export async function createMedia(actor: MediaActor, input: CreateMediaInput) {
           title: input.title,
           description: input.description,
           type: input.type,
-          source,
-          youtubeVideoId: externalVideoId,
           status: mediaStatus,
-          visibility: publishImmediately ? MediaVisibility.PUBLISHED : MediaVisibility.DRAFT,
+          visibility: MediaVisibility.DRAFT,
           sizeBytes: requestedBytes,
           storageBytes: requestedBytes,
           publishOnReady: Boolean(input.publishOnReady),
-          publishedAt: publishImmediately ? new Date() : null,
         },
       });
-      await audit(tx, organizationId, actor.userId, source === MediaSource.YOUTUBE ? 'MEDIA_YOUTUBE_ADDED' : 'MEDIA_UPLOAD_STARTED', media.id, {
+      await audit(tx, organizationId, actor.userId, 'MEDIA_UPLOAD_STARTED', media.id, {
         type: media.type,
-        source,
         courseId: media.courseId,
         sizeBytes: input.sizeBytes ?? 0,
         status: mediaStatus,
@@ -578,13 +552,13 @@ export async function mediaUsage(actor: MediaActor) {
   return {
     usedBytes: Number(aggregate._sum.storageBytes ?? 0n),
     quotaBytes: Number(storageQuotaBytes()),
-    maxVideoBytes: fileLimitBytes(MediaType.VIDEO),
+    maxVideoBytes: env.MAX_VIDEO_MB * 1024 * 1024,
     maxAudioBytes: env.MAX_AUDIO_MB * 1024 * 1024,
   };
 }
 
 export const mediaLimits = {
-  maxVideoBytes: fileLimitBytes(MediaType.VIDEO),
+  maxVideoBytes: env.MAX_VIDEO_MB * 1024 * 1024,
   maxAudioBytes: env.MAX_AUDIO_MB * 1024 * 1024,
   quotaBytes: Number(storageQuotaBytes()),
 };

@@ -28,8 +28,6 @@ const processingMedia = {
   title: 'Python introduction',
   description: 'A short course video',
   type: 'VIDEO',
-  source: 'UPLOAD',
-  youtubeVideoId: null,
   status: 'PROCESSING',
   visibility: 'DRAFT',
   durationSeconds: null,
@@ -62,7 +60,7 @@ describe('MediaPage', () => {
   it('renders the upload form, explicit dashboard back button, and processing progress', async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === '/media/courses') return { courses: [{ id: 'course-1', title: 'Python', code: 'PY101', topics: [{ id: 'topic-1', title: 'Basics', order: 1 }] }] };
-      if (path === '/media/limits') return { limits: { maxVideoBytes: 180 * 1024 * 1024, maxAudioBytes: 100 * 1024 * 1024 } };
+      if (path === '/media/limits') return { limits: { maxVideoBytes: 500 * 1024 * 1024, maxAudioBytes: 100 * 1024 * 1024 } };
       if (path.startsWith('/media?')) return { media: [processingMedia], storage: null };
       throw new Error(`Unexpected API request: ${path}`);
     });
@@ -70,7 +68,6 @@ describe('MediaPage', () => {
     renderMediaPage();
 
     expect(await screen.findByRole('heading', { name: 'Upload Media' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Add course media' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument();
     expect(screen.getByLabelText('Title')).toBeInTheDocument();
     expect(screen.getByLabelText('Media type')).toBeInTheDocument();
@@ -83,7 +80,7 @@ describe('MediaPage', () => {
   it('shows the selected file and permits switching the picker to audio', async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === '/media/courses') return { courses: [{ id: 'course-1', title: 'Python', code: 'PY101', topics: [{ id: 'topic-1', title: 'Basics', order: 1 }] }] };
-      if (path === '/media/limits') return { limits: { maxVideoBytes: 180 * 1024 * 1024, maxAudioBytes: 100 * 1024 * 1024 } };
+      if (path === '/media/limits') return { limits: { maxVideoBytes: 500 * 1024 * 1024, maxAudioBytes: 100 * 1024 * 1024 } };
       if (path.startsWith('/media?')) return { media: [], storage: null };
       throw new Error(`Unexpected API request: ${path}`);
     });
@@ -98,38 +95,5 @@ describe('MediaPage', () => {
     await waitFor(() => expect(screen.getByText('lesson.mp3')).toBeInTheDocument());
     expect(screen.getByText('1 KB · audio/mpeg')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Upload & Publish' })).toBeEnabled();
-  });
-
-  it('validates YouTube URLs and adds a valid link without creating a file upload', async () => {
-    const addedMedia = {
-      ...processingMedia,
-      source: 'YOUTUBE',
-      youtubeVideoId: 'abcdefghijk',
-      status: 'READY',
-      visibility: 'PUBLISHED',
-    };
-    vi.mocked(api).mockImplementation(async (path, init) => {
-      if (path === '/media/courses') return { courses: [{ id: 'course-1', title: 'Python', code: 'PY101', topics: [] }] };
-      if (path === '/media/limits') return { limits: { maxVideoBytes: 180 * 1024 * 1024, maxAudioBytes: 100 * 1024 * 1024 } };
-      if (path === '/media' && init?.method === 'POST') return { media: addedMedia };
-      if (path.startsWith('/media?')) return { media: [], storage: null };
-      throw new Error(`Unexpected API request: ${path}`);
-    });
-    renderMediaPage();
-
-    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Shared lesson' } });
-    fireEvent.change(screen.getAllByLabelText('Course')[0], { target: { value: 'course-1' } });
-    fireEvent.change(screen.getByLabelText('Video source'), { target: { value: 'YOUTUBE' } });
-    fireEvent.change(screen.getByLabelText('YouTube video URL'), { target: { value: 'https://youtube.com.evil.example/watch?v=abcdefghijk' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add & Publish' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('valid HTTPS YouTube');
-    expect(vi.mocked(api).mock.calls.some(([path, init]) => path === '/media' && init?.method === 'POST')).toBe(false);
-
-    fireEvent.change(screen.getByLabelText('YouTube video URL'), { target: { value: 'https://youtu.be/abcdefghijk' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add & Publish' }));
-    expect(await screen.findByText('YouTube video added and published to the course.')).toBeInTheDocument();
-    const createCall = vi.mocked(api).mock.calls.find(([path, init]) => path === '/media' && init?.method === 'POST');
-    expect(createCall?.[1]?.body).toContain('"source":"YOUTUBE"');
-    expect(createCall?.[1]?.body).toContain('"publishOnReady":true');
   });
 });
