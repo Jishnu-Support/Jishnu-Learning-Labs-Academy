@@ -6,7 +6,7 @@ import type { Role } from '../types';
 
 const roleTitles: Record<Role, string> = {
   STUDENT: 'STUDENT',
-  INSTRUCTOR: 'STAFF',
+  INSTRUCTOR: 'INSTRUCTOR',
   STAFF: 'STAFF',
   ORG_ADMIN: 'ORG ADMIN',
   SUPER_ADMIN: 'SUPER ADMIN',
@@ -31,9 +31,9 @@ export function Dashboard({ role }: { role: Role }) {
       { title: 'Media', description: 'Upload and manage course videos and audio.', href: '/org-admin/media', label: 'Upload media' },
     ],
     INSTRUCTOR: [
-      { title: 'Courses', description: 'Manage your assigned courses and mark topics as delivered.', href: '/staff/courses', label: 'Open courses' },
-      { title: 'Pending students', description: 'Approve or reject student registrations for your organization.', href: '/staff/approvals', label: 'Review students' },
-      { title: 'Media', description: 'Upload and manage your course videos and audio.', href: '/staff/media', label: 'Upload media' },
+      { title: 'Courses', description: 'Manage your assigned courses and mark topics as delivered.', href: '/instructor/courses', label: 'Open courses' },
+      { title: 'Pending students', description: 'Approve or reject student registrations for your organization.', href: '/instructor/approvals', label: 'Review students' },
+      { title: 'Media', description: 'Upload and manage your course videos and audio.', href: '/instructor/media', label: 'Upload media' },
     ],
     STAFF: [
       { title: 'Media', description: 'Upload and manage course videos and audio.', href: '/staff/media', label: 'Upload media' },

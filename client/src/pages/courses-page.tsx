@@ -43,7 +43,7 @@ type CourseForm = {
 const noInstructors: Instructor[] = [];
 
 function routeForRole(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/staff/courses';
+  return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/instructor/courses';
 }
 
 function safeReturnTo(value: string | null, base: string) {
@@ -52,7 +52,7 @@ function safeReturnTo(value: string | null, base: string) {
 }
 
 function roleDashboard(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin' : '/staff';
+  return role === 'ORG_ADMIN' ? '/org-admin' : '/instructor';
 }
 
 function emptyForm(instructors: Instructor[], role: Role, userId?: string): CourseForm {

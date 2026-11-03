@@ -12,14 +12,14 @@ export function Shell() {
   const location = useLocation();
   const navigationType = useNavigationType();
   const navigate = useNavigate();
-  const isAuthSurface = /^\/(student|staff|org-admin|super-admin)\/(login|register)(\/.*)?$/.test(location.pathname)
+  const isAuthSurface = /^\/(student|instructor|staff|org-admin|super-admin)\/(login|register)$/.test(location.pathname)
     || location.pathname === '/organizations/register';
   useEffect(() => {
     recordAppLocation(`${location.pathname}${location.search}`, navigationType);
   }, [location.pathname, location.search, navigationType]);
 
   useEffect(() => {
-    const loginMatch = location.pathname.match(/^\/(student|staff|org-admin|super-admin)\/login$/);
+    const loginMatch = location.pathname.match(/^\/(student|instructor|staff|org-admin|super-admin)\/login$/);
     const roleLabel = loginMatch?.[1]?.replace('-', ' ');
     const pageTitle = roleLabel
       ? `${roleLabel.replace(/\b\w/g, (letter) => letter.toUpperCase())} Login`
@@ -29,7 +29,9 @@ export function Shell() {
           ? 'Change Password'
           : location.pathname.startsWith('/student')
             ? 'Student Portal'
-            : location.pathname.startsWith('/org-admin')
+            : location.pathname.startsWith('/instructor')
+              ? 'Instructor Portal'
+              : location.pathname.startsWith('/org-admin')
                 ? 'Organization Admin Portal'
                 : location.pathname.startsWith('/staff')
                   ? 'Staff Portal'
@@ -43,7 +45,7 @@ export function Shell() {
     await logout();
     const loginRoute = user?.role === 'SUPER_ADMIN' ? '/super-admin/login'
       : user?.role === 'ORG_ADMIN' ? '/org-admin/login'
-        : user?.role === 'INSTRUCTOR' ? '/staff/login'
+        : user?.role === 'INSTRUCTOR' ? '/instructor/login'
           : user?.role === 'STAFF' ? '/staff/login' : '/student/login';
     navigate(loginRoute, { replace: true });
   };

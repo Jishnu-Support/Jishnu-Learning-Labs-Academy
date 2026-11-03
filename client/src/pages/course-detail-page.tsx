@@ -35,7 +35,7 @@ type Enrollment = {
 };
 
 function courseListPath(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/staff/courses';
+  return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/instructor/courses';
 }
 
 function safeReturnTo(value: string | null, base: string) {
@@ -43,7 +43,7 @@ function safeReturnTo(value: string | null, base: string) {
 }
 
 function notesPath(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin/notes' : '/staff/notes';
+  return role === 'ORG_ADMIN' ? '/org-admin/notes' : '/instructor/notes';
 }
 
 export function CourseDetailPage() {

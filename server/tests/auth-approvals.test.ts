@@ -461,7 +461,7 @@ describe('multi-organization authentication and approvals', () => {
     expect(await prisma.session.count({ where: { userId: active.id, revokedAt: null } })).toBe(1);
   });
 
-  it('uses the shared Staff Portal login for staff and instructors and returns safe current-user profiles', async () => {
+  it('returns a safe current-user profile for every role and rejects invalid, expired, and revoked sessions', async () => {
     expect((await request(app).get('/api/auth/me')).status).toBe(401);
     expect((await request(app).get('/api/auth/me').set('Cookie', 'accessToken=invalid')).status).toBe(401);
 
@@ -480,7 +480,7 @@ describe('multi-organization authentication and approvals', () => {
         : role === Role.ORG_ADMIN
           ? await orgAdminLogin(organization.code!, user.email)
           : role === Role.INSTRUCTOR
-            ? await staffLogin(organization.code!, user.email)
+            ? await instructorLogin(organization.code!, user.email)
             : role === Role.STAFF
               ? await staffLogin(organization.code!, 'ME-STAFF')
               : await studentLogin(organization.code!, 'ME-STUDENT');
@@ -506,11 +506,6 @@ describe('multi-organization authentication and approvals', () => {
       expect(response.body.data.user).not.toHaveProperty('passwordHash');
       expect(JSON.stringify(response.body.data.user)).not.toMatch(/accessToken|refreshToken|passwordHash|token/i);
     }
-
-    expect((await staffLogin(organization.code!, `${prefix}-me-org-admin@example.test`)).status).toBe(401);
-
-    const oldInstructorLogin = await instructorLogin(organization.code!, `${prefix}-me-instructor@example.test`);
-    expect(oldInstructorLogin.status).toBe(200);
 
     const expiredStudent = await makeUser(organization.id, Role.STUDENT, 'expired-me', AccountStatus.APPROVED, 'EXPIRED-ME');
     const expiredLogin = await studentLogin(organization.code!, 'EXPIRED-ME');

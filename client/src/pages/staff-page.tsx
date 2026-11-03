@@ -287,7 +287,7 @@ export function StaffManagementPage() {
 export function StaffDetailsPage() {
   const { user } = useAuth();
   const allowManage = user?.role === 'ORG_ADMIN';
-  const dashboardPath = user?.role === 'ORG_ADMIN' ? '/org-admin' : '/staff';
+  const dashboardPath = user?.role === 'ORG_ADMIN' ? '/org-admin' : user?.role === 'STAFF' ? '/staff' : '/instructor';
   return <div className="portal-layout">
     <PortalSidebar role={user?.role ?? 'INSTRUCTOR'} />
     <section className="portal-content">
