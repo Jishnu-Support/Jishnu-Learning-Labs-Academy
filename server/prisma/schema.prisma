@@ -94,6 +94,11 @@ enum MediaType {
   AUDIO
 }
 
+enum MediaSource {
+  UPLOAD
+  YOUTUBE
+}
+
 enum MediaStatus {
   UPLOADING
   AWAITING_FILE
@@ -656,6 +661,8 @@ model MediaItem {
   title           String
   description     String?         @db.Text
   type            MediaType
+  source          MediaSource     @default(UPLOAD)
+  youtubeVideoId  String?         @db.VarChar(11)
   status          MediaStatus     @default(UPLOADING)
   visibility      MediaVisibility @default(DRAFT)
   durationSeconds Int?

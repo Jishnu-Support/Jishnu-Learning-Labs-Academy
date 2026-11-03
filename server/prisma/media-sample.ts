@@ -5,7 +5,7 @@ import { stat } from 'node:fs/promises';
 import { fileTypeFromFile } from 'file-type';
 import { AccountStatus, MediaJobStatus, MediaStatus, MediaType, PrismaClient, Role } from '@prisma/client';
 import { env } from '../src/config/env.js';
-import { createMedia } from '../src/modules/media/media.service.js';
+import { createMedia, mediaLimits } from '../src/modules/media/media.service.js';
 import { localMediaStorage } from '../src/modules/media/media.storage.js';
 
 const prisma = new PrismaClient();
@@ -174,7 +174,7 @@ async function main() {
     format: 'wav',
     args: ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=10', '-t', '10', '-c:a', 'pcm_s16le', '-ar', '44100'],
   });
-  console.log(`Media sample generation complete. Video max: ${env.MAX_VIDEO_MB} MB; audio max: ${env.MAX_AUDIO_MB} MB.`);
+  console.log(`Media sample generation complete. Video max: ${Math.floor(mediaLimits.maxVideoBytes / (1024 * 1024))} MiB; audio max: ${env.MAX_AUDIO_MB} MiB.`);
 }
 
 main()

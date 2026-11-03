@@ -13,7 +13,7 @@ Save this whole specification as `docs/part-b-media-plan.md` in the repository (
 - Keep the same-origin `/api` setup, organization scoping on every query, backend permission checks, Zod validation, `AuditLog` entries, the `PageHeader` back-button rule and the Jishnu theme.
 - Do not reset the database or delete any data. If Prisma asks for a reset, stop and ask me.
 - Ask me before installing anything other than the npm packages `ffmpeg-static`, `ffprobe-static` and small helpers such as `file-type`; do not install system software.
-- Build Part B only. Do not build student playback (that is Part C).
+- Build Part B only. Do not add a new general student media library/player (that is Part C); this checkpoint may extend the existing authenticated viewer to handle approved YouTube links.
 
 ## Part B requirements
 
@@ -28,7 +28,8 @@ Save this whole specification as `docs/part-b-media-plan.md` in the repository (
 
 - `MediaItem`: `organizationId`, required `courseId`, optional `topicId`, `title`, `description`, `type` (`VIDEO` / `AUDIO`), `status` (`UPLOADING` / `PROCESSING` / `READY` / `FAILED`), `visibility` (`DRAFT` / `PUBLISHED`), `durationSeconds`, `sizeBytes`, `originalKey`, `streamKey` (HLS manifest folder or processed audio), `thumbnailKey`, `uploadedBy`, `publishedAt`, soft delete, `createdAt`.
 - `MediaJob` (database-backed job queue): `mediaId`, `status`, `attempts`, `error`, `startedAt`, `finishedAt`.
-- Per-organization storage usage is a computed total with a quota setting (default 10 GB) and per-file limits `MAX_VIDEO_MB` (default 500) and `MAX_AUDIO_MB` (default 100), all configurable through environment variables documented in `.env.example`.
+- Per-organization storage usage is a computed total with a quota setting (default 10 GB) and per-file limits `MAX_VIDEO_MB` (default and hard cap 180 MiB) and `MAX_AUDIO_MB` (default 100 MiB), configurable through environment variables documented in `.env.example`. The configured video limit may be lowered but cannot exceed the hard cap.
+- YouTube sources store only a validated video ID and use the privacy-enhanced embed; unsupported or restricted playback links to the canonical YouTube page. YouTube viewing does not update in-app watch progress.
 - `WatchProgress`: `studentId`, `mediaId`, `lastPositionSeconds`, `watchedSeconds`, `completed`, `updatedAt`. Create the table now; it is used in Part C.
 
 ### Upload

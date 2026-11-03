@@ -23,6 +23,7 @@ body { min-width:320px; }
   background-size:480px 480px;
   opacity:var(--wallpaper-opacity-app);
 }
+.media-player-wrap iframe.media-player,.media-preview-dialog iframe { display:block; width:100%; aspect-ratio:16/9; border:0; border-radius:10px; background:var(--brand-navy); }
 .brand-wallpaper::after {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--page-background) 48%, transparent), transparent 25% 72%, color-mix(in srgb, var(--page-background) 56%, transparent)),

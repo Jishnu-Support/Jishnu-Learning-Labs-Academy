@@ -12,6 +12,8 @@ type StudentMediaItem = {
   title: string;
   description: string | null;
   type: 'VIDEO' | 'AUDIO';
+  source: 'UPLOAD' | 'YOUTUBE';
+  youtubeVideoId: string | null;
   durationSeconds: number | null;
   progressPercent: number;
   completed: boolean;
@@ -93,7 +95,9 @@ export function StudentMediaPage() {
             </div>
           </div>
 
-          {!mediaQuery.isLoading && !mediaQuery.data?.items.length && (
+          {mediaQuery.isError && <p className="notice notice-error" role="alert">Media could not be loaded. Please try again.</p>}
+
+          {!mediaQuery.isLoading && !mediaQuery.isError && !mediaQuery.data?.items.length && (
             <div className="empty-state card" style={{ marginTop: '18px' }}>
               <h2>No media yet</h2>
               <p>Nothing is published for your enrolled courses yet. Try another filter or check back later.</p>
@@ -122,14 +126,16 @@ export function StudentMediaPage() {
                         {item.completed && <span className="media-complete">✓</span>}
                       </div>
                       <p>{item.topic?.title ?? 'General lesson'}</p>
-                      {item.watchProgress && item.watchProgress.lastPositionSeconds > 0 && (
+                      {item.source === 'UPLOAD' && item.watchProgress && item.watchProgress.lastPositionSeconds > 0 && (
                         <div className="progress-wrap" aria-label={`Progress ${Math.round(item.progressPercent)} percent`}>
                           <div className="progress-bar" style={{ width: `${Math.min(100, item.progressPercent)}%` }} />
                         </div>
                       )}
                       <div className="media-actions">
-                        <Link className="button button-secondary" to={`/student/media/${item.id}`}>{item.completed ? 'Replay' : 'Continue watching'}</Link>
-                        <span className="media-status">{item.completed ? 'Completed' : 'In progress'}</span>
+                        <Link className="button button-secondary" to={`/student/media/${item.id}`}>{item.source === 'YOUTUBE' ? 'Open video' : item.completed ? 'Replay' : 'Continue watching'}</Link>
+                        {item.source === 'YOUTUBE'
+                          ? <span className="media-status">YouTube</span>
+                          : <span className="media-status">{item.completed ? 'Completed' : 'In progress'}</span>}
                       </div>
                     </div>
                   </article>
@@ -157,6 +163,7 @@ export function StudentMediaPlayerPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [lastSavedAt, setLastSavedAt] = useState(0);
+  const [playbackError, setPlaybackError] = useState('');
   const payload = useMutation({
     mutationFn: (input: { positionSeconds: number; watchedSeconds: number; completed: boolean }) =>
       api(`/student/media/${mediaId}/progress`, {
@@ -187,7 +194,7 @@ export function StudentMediaPlayerPage() {
 
   useEffect(() => {
     const element = media?.type === 'VIDEO' ? videoRef.current : audioRef.current;
-    if (!element || !source) return;
+    if (!element || !source || media?.source !== 'UPLOAD') return;
     const record = () => {
       const currentSeconds = Number.isFinite(element.currentTime) ? element.currentTime : 0;
       const duration = media?.durationSeconds ?? (currentSeconds > 0 ? currentSeconds : 1);
@@ -203,26 +210,48 @@ export function StudentMediaPlayerPage() {
   }, [media, lastSavedAt, payload, source]);
 
   useEffect(() => {
-    if (!source || !media) return;
+    if (!source || !media || media.source !== 'UPLOAD') return;
+    const element = media.type === 'VIDEO' ? videoRef.current : audioRef.current;
+    if (!element) return;
+    const fail = () => setPlaybackError('This media could not be played. Reload the page or contact your instructor.');
+    element.addEventListener('error', fail);
+    setPlaybackError('');
     if (media.type === 'AUDIO') {
-      if (audioRef.current) audioRef.current.src = source;
-      return;
+      element.src = source;
+      return () => {
+        element.removeEventListener('error', fail);
+        element.removeAttribute('src');
+        element.load();
+      };
     }
+
     const video = videoRef.current;
     if (!video) return;
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = source;
-      return;
+      return () => {
+        video.removeEventListener('error', fail);
+        video.removeAttribute('src');
+        video.load();
+      };
     }
-    if (Hls.isSupported()) {
-      const hls = new Hls({ xhrSetup: (xhr) => { xhr.withCredentials = true; } });
-      hls.loadSource(source);
-      hls.attachMedia(video);
-      return () => hls.destroy();
+    if (!Hls.isSupported()) {
+      setPlaybackError('This browser does not support HLS video playback.');
+      return () => video.removeEventListener('error', fail);
     }
+    const hls = new Hls({ xhrSetup: (xhr) => { xhr.withCredentials = true; } });
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (data.fatal) fail();
+    });
+    hls.loadSource(source);
+    hls.attachMedia(video);
+    return () => {
+      video.removeEventListener('error', fail);
+      hls.destroy();
+    };
   }, [media, source]);
 
-  if (!media || mediaQuery.isLoading) {
+  if (mediaQuery.isLoading) {
     return (
       <div className="portal-layout">
         <PortalSidebar role="STUDENT" />
@@ -231,7 +260,20 @@ export function StudentMediaPlayerPage() {
     );
   }
 
+  if (mediaQuery.isError || !media) {
+    return (
+      <div className="portal-layout">
+        <PortalSidebar role="STUDENT" />
+        <section className="portal-content">
+          <PageHeader title="Media unavailable" backTo="/student/media" breadcrumbs={['Student', 'Videos & Audios']} />
+          <div className="card"><p className="notice notice-error" role="alert">We could not load this media. It may have been removed or you may no longer have access.</p></div>
+        </section>
+      </div>
+    );
+  }
+
   const watermark = `${user?.name ?? 'Student'} • ${user?.studentId ?? 'ID'}`;
+  const youtubeUrl = media.youtubeVideoId ? `https://www.youtube.com/watch?v=${encodeURIComponent(media.youtubeVideoId)}` : null;
 
   return (
     <div className="portal-layout">
@@ -240,20 +282,33 @@ export function StudentMediaPlayerPage() {
         <PageHeader title={media.title} backTo="/student/media" breadcrumbs={['Student', 'Videos & Audios']} />
         <div className="card media-player-shell">
           <div className="media-player-wrap" onContextMenu={(event) => event.preventDefault()}>
-            {media.type === 'VIDEO' ? (
+            {media.source === 'YOUTUBE' && media.youtubeVideoId ? (
+              <>
+                <iframe
+                  title={`YouTube video: ${media.title}`}
+                  src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(media.youtubeVideoId)}?rel=0`}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allowFullScreen
+                  className="media-player"
+                />
+                <p className="muted">YouTube videos do not report viewing progress here. If playback is unavailable or restricted, <a href={youtubeUrl ?? undefined} target="_blank" rel="noreferrer">open it on YouTube</a>.</p>
+              </>
+            ) : media.type === 'VIDEO' ? (
               <video ref={videoRef} controls preload="metadata" playsInline className="media-player" onContextMenu={(event) => event.preventDefault()} />
             ) : (
               <audio ref={audioRef} controls preload="metadata" className="media-player audio-player" onContextMenu={(event) => event.preventDefault()} />
             )}
-            <div className="media-watermark" aria-hidden="true">{watermark}</div>
+            {media.source === 'UPLOAD' && <div className="media-watermark" aria-hidden="true">{watermark}</div>}
           </div>
+          {playbackError && <p className="notice notice-error" role="alert">{playbackError}</p>}
           <div className="media-player-meta">
             <div>
               <p className="eyebrow">{media.course.code}</p>
               <h2>{media.course.title}</h2>
             </div>
             <div className="media-controls-row">
-              <label className="field compact-field">
+              {media.source === 'UPLOAD' && <label className="field compact-field">
                 <span>Speed</span>
                 <select className="input" value={playbackRate} onChange={(event) => setPlaybackRate(Number(event.target.value))}>
                   <option value={0.75}>0.75x</option>
@@ -262,12 +317,12 @@ export function StudentMediaPlayerPage() {
                   <option value={1.5}>1.5x</option>
                   <option value={2}>2x</option>
                 </select>
-              </label>
+              </label>}
               <button type="button" className="button button-secondary" onClick={() => navigate('/student/media')}>Back to library</button>
             </div>
           </div>
           {media.description && <p className="muted">{media.description}</p>}
-          {media.watchProgress && (
+          {media.source === 'UPLOAD' && media.watchProgress && (
             <p className="muted">Resume at {formatDuration(Math.round(media.watchProgress.lastPositionSeconds))} • {Math.round(media.progressPercent)}% watched.</p>
           )}
         </div>

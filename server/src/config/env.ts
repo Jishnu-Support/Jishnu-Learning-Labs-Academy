@@ -16,7 +16,7 @@ const envSchema = z.object({
   NOTE_STORAGE_DIR: z.string().default('storage/notes'),
   MEDIA_STORAGE_DIR: z.string().default('storage/media'),
   MEDIA_STORAGE_QUOTA_GB: z.coerce.number().positive().default(10),
-  MAX_VIDEO_MB: z.coerce.number().int().positive().default(500),
+  MAX_VIDEO_MB: z.coerce.number().int().positive().default(180),
   MAX_AUDIO_MB: z.coerce.number().int().positive().default(100),
   KEEP_ORIGINAL_MEDIA: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   MEDIA_PROCESSING_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),

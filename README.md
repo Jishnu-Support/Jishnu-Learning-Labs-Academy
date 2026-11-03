@@ -77,13 +77,14 @@ The client uses the same-origin `/api` path. Vite proxies it to the local API on
 
 ## Video and audio media (Part B)
 
-Staff and instructors can upload and manage their own course media; Org Admins can manage all media for their organization. Uploads are streamed to private storage outside the client web root, validated by extension, MIME type and file signature, then processed by the server's background worker. The uploader can preview, edit, publish, unpublish and soft-delete media. Student playback is not part of Part B.
+Staff and instructors can upload and manage their own course media; Org Admins can manage all media for their organization. Uploads are streamed to private storage outside the client web root, validated by extension, MIME type and file signature, then processed by the server's background worker. Managers can also add HTTPS YouTube watch, short, or embed links; only the validated video ID is stored, and the player uses YouTube's privacy-enhanced embed. YouTube playback restrictions may require opening the canonical video link, and YouTube viewing does not update in-app watch progress. Uploaded student media remains protected behind authenticated routes.
 
 `server/.env.example` documents the media configuration:
 
 - `MEDIA_STORAGE_DIR` defaults to `storage/media` under the server working directory. Use a private path outside any public web root.
 - `MEDIA_STORAGE_QUOTA_GB` defaults to 10 GB per organization.
-- `MAX_VIDEO_MB` defaults to 500 MB and `MAX_AUDIO_MB` to 100 MB.
+- `MAX_VIDEO_MB` defaults to 180 MiB and cannot raise the per-file video cap above 180 MiB; lower values are supported. `MAX_AUDIO_MB` defaults to 100 MiB.
+- Uploads use an authenticated raw request stream, not multipart form data. Configure any deployment reverse proxy to accept request bodies of at least 180 MiB; no reverse-proxy configuration is maintained in this repository.
 - `KEEP_ORIGINAL_MEDIA` defaults to `true`; set it to `false` to remove the source after successful processing.
 - `MEDIA_PROCESSING_MAX_ATTEMPTS` defaults to 3.
 

@@ -4,8 +4,11 @@ import bcrypt from 'bcrypt';
 import {
   AccountStatus,
   CourseStatus,
+  EnrollmentStatus,
   MediaJobStatus,
+  MediaSource,
   MediaStatus,
+  MediaVisibility,
   OrganizationStatus,
   PrismaClient,
   Role,
@@ -220,6 +223,23 @@ describe('Part B media management', () => {
       env.MAX_VIDEO_MB = previousMax;
     }
 
+    const previousHighLimit = env.MAX_VIDEO_MB;
+    env.MAX_VIDEO_MB = 500;
+    try {
+      const aboveHardCap = await request(app).post('/api/media').set('Cookie', staffCookie).send({
+        title: 'Above hard video cap',
+        courseId: course.id,
+        type: 'VIDEO',
+        sizeBytes: 180 * 1024 * 1024 + 1,
+        extension: '.mp4',
+        mimeType: 'video/mp4',
+        fileName: 'large.mp4',
+      });
+      expect(aboveHardCap.status).toBe(413);
+    } finally {
+      env.MAX_VIDEO_MB = previousHighLimit;
+    }
+
     const previousQuota = env.MEDIA_STORAGE_QUOTA_GB;
     env.MEDIA_STORAGE_QUOTA_GB = 0.000001;
     try {
@@ -278,6 +298,58 @@ describe('Part B media management', () => {
     expect(await prisma.auditLog.count({ where: { organizationId: organization.id, targetType: 'MediaItem' } })).toBeGreaterThan(0);
     expect(student.organizationId).toBe(organization.id);
     expect(admin.organizationId).toBe(organization.id);
+  });
+
+  it('validates YouTube sources and serves published links only to enrolled students', async () => {
+    const organization = await makeOrganization('youtube');
+    const staff = await makeUser(organization.id, Role.STAFF, 'youtube-staff');
+    const student = await makeUser(organization.id, Role.STUDENT, 'youtube-student');
+    const { course } = await makeCourse(organization.id, staff.id, 'YT101');
+    await prisma.enrollment.create({
+      data: { organizationId: organization.id, courseId: course.id, studentId: student.id, status: EnrollmentStatus.ACTIVE },
+    });
+    const staffCookie = await login('staff', organization.code!, `${prefix}-youtube-staff`);
+    const studentCookie = await login('students', organization.code!, `${prefix}-youtube-student`);
+
+    const invalidUrl = await request(app).post('/api/media').set('Cookie', staffCookie).send({
+      title: 'Unsafe embed',
+      courseId: course.id,
+      type: 'VIDEO',
+      source: MediaSource.YOUTUBE,
+      youtubeUrl: 'https://youtube.com.evil.example/watch?v=abcdefghijk',
+    });
+    expect(invalidUrl.status).toBe(400);
+
+    const created = await request(app).post('/api/media').set('Cookie', staffCookie).send({
+      title: 'Shared lesson',
+      courseId: course.id,
+      type: 'VIDEO',
+      source: MediaSource.YOUTUBE,
+      youtubeUrl: 'https://youtu.be/abcdefghijk',
+      publishOnReady: true,
+    });
+    expect(created.status).toBe(201);
+    const media = created.body.data.media as { id: string; source: MediaSource; youtubeVideoId: string; status: MediaStatus; visibility: MediaVisibility };
+    expect(media).toMatchObject({
+      source: MediaSource.YOUTUBE,
+      youtubeVideoId: 'abcdefghijk',
+      status: MediaStatus.READY,
+      visibility: MediaVisibility.PUBLISHED,
+    });
+
+    const listed = await request(app).get('/api/student/media').set('Cookie', studentCookie);
+    expect(listed.status).toBe(200);
+    expect(listed.body.data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: media.id, source: MediaSource.YOUTUBE, youtubeVideoId: 'abcdefghijk' }),
+    ]));
+    const opened = await request(app).get(`/api/student/media/${media.id}`).set('Cookie', studentCookie);
+    expect(opened.body.data.media.source).toBe(MediaSource.YOUTUBE);
+    expect((await request(app).post(`/api/student/media/${media.id}/progress`).set('Cookie', studentCookie).send({
+      positionSeconds: 30,
+      watchedSeconds: 30,
+      completed: false,
+    })).status).toBe(409);
+    expect((await request(app).get(`/api/student/media/${media.id}/stream/master.m3u8`).set('Cookie', studentCookie)).status).toBe(404);
   });
 
   it('processes jobs, persists progress, retries failures, and recovers interrupted work', async () => {

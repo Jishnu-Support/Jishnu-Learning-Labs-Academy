@@ -10,12 +10,15 @@ import { Button } from '../components/ui/button';
 import { api, apiUrl, ApiError } from '../lib/api';
 
 type MediaType = 'VIDEO' | 'AUDIO';
+type MediaSource = 'UPLOAD' | 'YOUTUBE';
 type MediaStatus = 'UPLOADING' | 'AWAITING_FILE' | 'PROCESSING' | 'READY' | 'FAILED';
 type Media = {
   id: string;
   title: string;
   description: string | null;
   type: MediaType;
+  source: MediaSource;
+  youtubeVideoId: string | null;
   status: MediaStatus;
   visibility: 'DRAFT' | 'PUBLISHED';
   durationSeconds: number | null;
@@ -33,10 +36,14 @@ type MediaListResponse = {
   media: Media[];
   storage: { usedBytes: number; quotaBytes: number; quotaGigabytes: number } | null;
 };
-type UploadDraft = { title: string; description: string; courseId: string; topicId: string; type: MediaType };
+type UploadDraft = { title: string; description: string; courseId: string; topicId: string; type: MediaType; source: MediaSource; youtubeUrl: string };
 type PendingUpload = { id: string; file: File; progress: number };
 
-const initialDraft: UploadDraft = { title: '', description: '', courseId: '', topicId: '', type: 'VIDEO' };
+const initialDraft: UploadDraft = { title: '', description: '', courseId: '', topicId: '', type: 'VIDEO', source: 'UPLOAD', youtubeUrl: '' };
+const allowedExtensions: Record<MediaType, Record<string, string[]>> = {
+  VIDEO: { '.mp4': ['video/mp4'], '.mov': ['video/quicktime'], '.webm': ['video/webm'], '.mkv': ['video/x-matroska'] },
+  AUDIO: { '.mp3': ['audio/mpeg'], '.m4a': ['audio/mp4'], '.aac': ['audio/aac', 'audio/x-aac'], '.wav': ['audio/wav', 'audio/x-wav', 'audio/wave'], '.ogg': ['audio/ogg', 'application/ogg'] },
+};
 
 function ControlField({ label, children }: { label: string; children: ReactNode }) {
   return <label className="field"><span>{label}</span>{children}</label>;
@@ -63,6 +70,26 @@ function errorText(error: unknown) {
 
 function extensionFor(file: File) {
   return file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+}
+
+function validateMediaFile(file: File, type: MediaType): string | null {
+  const expectedMimeTypes = allowedExtensions[type][extensionFor(file)];
+  if (!expectedMimeTypes) return `Unsupported ${type.toLowerCase()} file extension.`;
+  if (!expectedMimeTypes.includes(file.type.toLowerCase())) return 'The file type does not match its extension.';
+  return null;
+}
+
+function validYouTubeUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return false;
+    if (url.hostname === 'youtu.be') return /^\/[A-Za-z0-9_-]{11}\/?$/.test(url.pathname);
+    if (!['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(url.hostname)) return false;
+    if (url.pathname === '/watch') return /^[A-Za-z0-9_-]{11}$/.test(url.searchParams.get('v') ?? '');
+    return /^\/(?:embed|shorts)\/[A-Za-z0-9_-]{11}\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 function sendFile(
@@ -103,30 +130,76 @@ function sendFile(
 
 function MediaPreview({ media }: { media: Media }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const source = `${apiUrl}/media/${encodeURIComponent(media.id)}/stream/${media.type === 'VIDEO' ? 'master.m3u8' : 'audio.m4a'}`;
+  const [playbackError, setPlaybackError] = useState('');
 
   useEffect(() => {
+    if (media.source !== 'UPLOAD') return;
+    setPlaybackError('');
+    if (media.type === 'AUDIO') {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const fail = () => setPlaybackError('This media preview could not be played. Try again or check the original file.');
+      audio.addEventListener('error', fail);
+      audio.src = source;
+      return () => {
+        audio.removeEventListener('error', fail);
+        audio.removeAttribute('src');
+        audio.load();
+      };
+    }
     const video = videoRef.current;
-    if (media.type !== 'VIDEO' || !video) return;
+    if (!video) return;
     let hls: Hls | undefined;
+    const fail = () => setPlaybackError('This media preview could not be played. Try again or check the original file.');
+    video.addEventListener('error', fail);
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = source;
     } else if (Hls.isSupported()) {
       hls = new Hls({ xhrSetup: (xhr) => { xhr.withCredentials = true; } });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) fail();
+      });
       hls.loadSource(source);
       hls.attachMedia(video);
+    } else {
+      setPlaybackError('This browser does not support HLS video playback.');
     }
     return () => {
+      video.removeEventListener('error', fail);
       hls?.destroy();
       video.removeAttribute('src');
       video.load();
     };
-  }, [media.type, source]);
+  }, [media.source, media.type, source]);
+
+  if (media.source === 'YOUTUBE' && media.youtubeVideoId) {
+    const youtubeUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(media.youtubeVideoId)}`;
+    return (
+      <>
+        <iframe
+          title={`YouTube video: ${media.title}`}
+          src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(media.youtubeVideoId)}?rel=0`}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allowFullScreen
+        />
+        <p className="muted">If this video is unavailable or restricted, <a href={youtubeUrl} target="_blank" rel="noreferrer">open it on YouTube</a>.</p>
+      </>
+    );
+  }
 
   if (media.type === 'AUDIO') {
-    return <audio controls preload="metadata" src={source}>Your browser cannot preview this audio.</audio>;
+    return <>
+      <audio ref={audioRef} controls preload="metadata">Your browser cannot preview this audio.</audio>
+      {playbackError && <p className="notice notice-error" role="alert">{playbackError}</p>}
+    </>;
   }
-  return <video ref={videoRef} controls preload="metadata" poster={`${apiUrl}/media/${encodeURIComponent(media.id)}/stream/thumbnail.jpg`} />;
+  return <>
+    <video ref={videoRef} controls preload="metadata" poster={`${apiUrl}/media/${encodeURIComponent(media.id)}/stream/thumbnail.jpg`} />
+    {playbackError && <p className="notice notice-error" role="alert">{playbackError}</p>}
+  </>;
 }
 
 export function MediaPage() {
@@ -136,7 +209,9 @@ export function MediaPage() {
   const [draft, setDraft] = useState(initialDraft);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const [startingUpload, setStartingUpload] = useState(false);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const startUploadRef = useRef(false);
   const [failedUploadId, setFailedUploadId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -242,8 +317,43 @@ export function MediaPage() {
   };
 
   const startUpload = async (publishImmediately = false) => {
+    if (startUploadRef.current || pendingUpload) return;
     if (!draft.title.trim() || !draft.courseId) {
       setErrorMessage('Enter a title and select a course.');
+      return;
+    }
+    if (draft.source === 'YOUTUBE') {
+      if (!validYouTubeUrl(draft.youtubeUrl.trim())) {
+        setErrorMessage('Enter a valid HTTPS YouTube watch, short, or embed URL.');
+        return;
+      }
+      startUploadRef.current = true;
+      setStartingUpload(true);
+      setErrorMessage('');
+      try {
+        await api<{ media: Media }>('/media', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: draft.title,
+            description: draft.description,
+            courseId: draft.courseId,
+            topicId: draft.topicId || null,
+            type: 'VIDEO',
+            source: 'YOUTUBE',
+            youtubeUrl: draft.youtubeUrl,
+            publishOnReady: publishImmediately,
+          }),
+        });
+        setToast(publishImmediately ? 'YouTube video added and published to the course.' : 'YouTube video saved as a draft.');
+        await refreshMedia();
+        setDraft(initialDraft);
+        setSelectedFile(null);
+      } catch (error) {
+        setErrorMessage(errorText(error));
+      } finally {
+        startUploadRef.current = false;
+        setStartingUpload(false);
+      }
       return;
     }
     if (!selectedFile) {
@@ -251,6 +361,8 @@ export function MediaPage() {
         setErrorMessage('Choose a video or audio file to upload before publishing.');
         return;
       }
+      startUploadRef.current = true;
+      setStartingUpload(true);
       try {
         const created = await api<{ media: Media }>('/media', {
           method: 'POST',
@@ -269,7 +381,19 @@ export function MediaPage() {
         setSelectedFile(null);
       } catch (error) {
         setErrorMessage(errorText(error));
+      } finally {
+        startUploadRef.current = false;
+        setStartingUpload(false);
       }
+      return;
+    }
+    const fileError = validateMediaFile(selectedFile, draft.type);
+    if (fileError) {
+      setErrorMessage(fileError);
+      return;
+    }
+    if (!configuredLimits.data) {
+      setErrorMessage('Upload limits could not be loaded. Refresh the page before uploading.');
       return;
     }
     const maximumBytes = draft.type === 'VIDEO'
@@ -279,6 +403,8 @@ export function MediaPage() {
       setErrorMessage(`This file exceeds the configured ${draft.type.toLowerCase()} size limit.`);
       return;
     }
+    startUploadRef.current = true;
+    setStartingUpload(true);
     try {
       const created = await api<{ media: Media }>('/media', {
         method: 'POST',
@@ -298,6 +424,9 @@ export function MediaPage() {
       await transmit(created.media.id, selectedFile);
     } catch (error) {
       setErrorMessage(errorText(error));
+    } finally {
+      startUploadRef.current = false;
+      setStartingUpload(false);
     }
   };
 
@@ -319,6 +448,12 @@ export function MediaPage() {
 
   const chooseFile = (file: File | undefined) => {
     if (!file) return;
+    const fileError = validateMediaFile(file, draft.type);
+    if (fileError) {
+      setSelectedFile(null);
+      setErrorMessage(fileError);
+      return;
+    }
     setSelectedFile(file);
     setErrorMessage('');
   };
@@ -326,6 +461,18 @@ export function MediaPage() {
   const retryUpload = async (event: ChangeEvent<HTMLInputElement>, media: Media) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    const fileError = validateMediaFile(file, media.type);
+    if (fileError) {
+      setErrorMessage(fileError);
+      event.target.value = '';
+      return;
+    }
+    const maximumBytes = media.type === 'VIDEO' ? configuredLimits.data?.limits.maxVideoBytes : configuredLimits.data?.limits.maxAudioBytes;
+    if (maximumBytes === undefined || file.size > maximumBytes) {
+      setErrorMessage('The selected file exceeds the configured upload limit.');
+      event.target.value = '';
+      return;
+    }
     if (media.sizeBytes > 0 && file.size !== media.sizeBytes) {
       setErrorMessage('Select the same file with its original size to retry this upload.');
       event.target.value = '';
@@ -372,8 +519,8 @@ export function MediaPage() {
     <div className="portal-layout">
       <PortalSidebar role={role} />
       <section className="portal-content media-page">
-        <PageHeader title="Upload Media" backTo={dashboardPath(role)} breadcrumbs={['Workspace', 'Media']} hasUnsavedChanges={!isUploading && (draft.title.length > 0 || Boolean(selectedFile))} />
-        <p className="muted">Upload video and audio resources for your organization’s courses. Your uploads will be available to manage here.</p>
+        <PageHeader title="Upload Media" backTo={dashboardPath(role)} breadcrumbs={['Workspace', 'Media']} hasUnsavedChanges={!isUploading && (draft.title.length > 0 || Boolean(selectedFile) || Boolean(draft.youtubeUrl))} />
+        <p className="muted">Add video and audio resources for your organization’s courses. Videos can be uploaded or linked from YouTube, and all media can be managed here.</p>
 
         {role === 'ORG_ADMIN' && adminStorage && (
           <section className="card media-storage" aria-label="Organization storage usage">
@@ -383,15 +530,18 @@ export function MediaPage() {
         )}
 
         <section className="card media-upload-card">
-          <h2>Upload a video or audio file</h2>
+          <h2>Add course media</h2>
           <div className="media-form-grid">
             <Field label="Title" value={draft.title} maxLength={160} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
-            <ControlField label="Media type"><select className="input" value={draft.type} disabled={isUploading} onChange={(event) => { setDraft({ ...draft, type: event.target.value as MediaType }); setSelectedFile(null); }}><option value="VIDEO">Video</option><option value="AUDIO">Audio</option></select></ControlField>
+            <ControlField label="Media type"><select className="input" value={draft.type} disabled={isUploading || startingUpload} onChange={(event) => { const type = event.target.value as MediaType; setDraft({ ...draft, type, source: 'UPLOAD', youtubeUrl: '' }); setSelectedFile(null); }}><option value="VIDEO">Video</option><option value="AUDIO">Audio</option></select></ControlField>
+            {draft.type === 'VIDEO' && <ControlField label="Video source"><select className="input" value={draft.source} disabled={isUploading || startingUpload} onChange={(event) => { setDraft({ ...draft, source: event.target.value as MediaSource }); setSelectedFile(null); setErrorMessage(''); }}><option value="UPLOAD">Upload a file</option><option value="YOUTUBE">YouTube link</option></select></ControlField>}
             <ControlField label="Course"><select className="input" value={draft.courseId} onChange={(event) => setDraft({ ...draft, courseId: event.target.value, topicId: '' })}><option value="">Select a course</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></ControlField>
             <ControlField label="Topic (optional)"><select className="input" value={draft.topicId} disabled={!draft.courseId} onChange={(event) => setDraft({ ...draft, topicId: event.target.value })}><option value="">No topic</option>{selectedCourseTopics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></ControlField>
             <label className="field media-description-field">Description<textarea className="input textarea" value={draft.description} maxLength={4000} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
           </div>
-          <label
+          {draft.source === 'YOUTUBE'
+            ? <Field label="YouTube video URL" value={draft.youtubeUrl} onChange={(event) => setDraft({ ...draft, youtubeUrl: event.target.value })} placeholder="https://www.youtube.com/watch?v=video-id" />
+            : <label
             className={`media-dropzone${dragging ? ' is-dragging' : ''}`}
             onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
@@ -401,13 +551,13 @@ export function MediaPage() {
               aria-label="Choose a media file"
               type="file"
               accept={draft.type === 'VIDEO' ? '.mp4,.mov,.webm,.mkv,video/mp4,video/quicktime,video/webm,video/x-matroska' : '.mp3,.m4a,.aac,.wav,.ogg,audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/ogg'}
-              disabled={isUploading}
+              disabled={isUploading || startingUpload}
               onChange={(event) => chooseFile(event.target.files?.[0])}
             />
             <strong>{selectedFile ? selectedFile.name : 'Drop a file here or browse'}</strong>
             <span>{selectedFile ? `${formatBytes(selectedFile.size)} · ${selectedFile.type || 'unknown MIME type'}` : draft.type === 'VIDEO' ? `MP4, MOV, WebM or MKV · max ${configuredLimits.data ? formatBytes(configuredLimits.data.limits.maxVideoBytes) : '…'}` : `MP3, M4A, AAC, WAV or OGG · max ${configuredLimits.data ? formatBytes(configuredLimits.data.limits.maxAudioBytes) : '…'}`}</span>
-          </label>
-          {selectedFile && uploadLimit !== undefined && selectedFile.size > uploadLimit && <p className="notice notice-error">This file is above the configured upload limit.</p>}
+          </label>}
+          {draft.source === 'UPLOAD' && selectedFile && uploadLimit !== undefined && selectedFile.size > uploadLimit && <p className="notice notice-error">This file is above the configured upload limit.</p>}
           {isUploading && (
             <div className="media-progress" aria-live="polite">
               <div><span>{(pendingUpload?.progress ?? 0) < 100 ? 'Uploading' : 'Waiting for processing queue'}</span><span>{pendingUpload?.progress ?? 0}%</span></div>
@@ -417,14 +567,15 @@ export function MediaPage() {
           )}
           {errorMessage && <p className="notice notice-error" role="alert">{errorMessage}</p>}
           <div className="row-actions media-form-actions">
-            {!isUploading && <Button type="button" disabled={!draft.title.trim() || !draft.courseId || courses.isLoading} onClick={() => void startUpload(false)}>Save as Draft</Button>}
-            {!isUploading && <Button type="button" variant="primary" disabled={!selectedFile || !draft.title.trim() || !draft.courseId || courses.isLoading} onClick={() => void startUpload(true)}>Upload & Publish</Button>}
+            {!isUploading && <Button type="button" disabled={startingUpload || !draft.title.trim() || !draft.courseId || courses.isLoading} onClick={() => void startUpload(false)}>Save as Draft</Button>}
+            {!isUploading && <Button type="button" variant="primary" disabled={startingUpload || (!selectedFile && draft.source === 'UPLOAD') || !draft.title.trim() || !draft.courseId || courses.isLoading} onClick={() => void startUpload(true)}>{startingUpload ? 'Starting…' : draft.source === 'YOUTUBE' ? 'Add & Publish' : 'Upload & Publish'}</Button>}
             {pendingUpload && failedUploadId === pendingUpload.id && <Button type="button" variant="secondary" onClick={() => void transmit(pendingUpload.id, pendingUpload.file)}>Retry upload</Button>}
           </div>
         </section>
 
         <section className="media-list-section">
           <div className="list-heading media-list-heading"><div><h2>My Uploads</h2><span>{role === 'ORG_ADMIN' ? 'All organization media' : 'Media uploaded by you'}</span></div><span>{list.data?.media.length ?? 0} items</span></div>
+          {list.isError && <p className="notice notice-error" role="alert">{errorText(list.error)}</p>}
           <div className="media-filters">
             <Field label="Search title" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search media" />
             <ControlField label="Course"><select className="input" value={courseFilter} onChange={(event) => setCourseFilter(event.target.value)}><option value="">All courses</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></ControlField>
@@ -441,7 +592,7 @@ export function MediaPage() {
                   <div className="media-card-title"><span className={`status-pill status-${media.status.toLowerCase()}`}>{media.status === 'PROCESSING' ? `PROCESSING · ${media.job?.progressPercent ?? 0}%` : media.status}</span><span className={`status-pill ${media.visibility === 'PUBLISHED' ? 'status-published' : 'status-draft'}`}>{media.visibility}</span></div>
                   <h3>{media.title}</h3>
                   <p className="muted">{media.course.code} — {media.course.title}{media.topic ? ` · ${media.topic.title}` : ''}</p>
-                  <p className="media-card-description">{media.description || 'No description'} · {media.type.toLowerCase()} · {formatBytes(media.sizeBytes)}{media.durationSeconds ? ` · ${Math.floor(media.durationSeconds / 60)}:${String(media.durationSeconds % 60).padStart(2, '0')}` : ''}</p>
+                  <p className="media-card-description">{media.description || 'No description'} · {media.source === 'YOUTUBE' ? 'YouTube video' : `${media.type.toLowerCase()} · ${formatBytes(media.sizeBytes)}`}{media.durationSeconds ? ` · ${Math.floor(media.durationSeconds / 60)}:${String(media.durationSeconds % 60).padStart(2, '0')}` : ''}</p>
                   {role === 'ORG_ADMIN' && <p className="media-uploader">Uploaded by {media.uploadedBy.name}</p>}
                   {media.status === 'PROCESSING' && <progress max={100} value={media.job?.progressPercent ?? 0} aria-label={`Processing ${media.title}`} />}
                   {media.status === 'FAILED' && <p className="notice notice-error">{media.job?.error ?? 'Processing failed.'}</p>}
