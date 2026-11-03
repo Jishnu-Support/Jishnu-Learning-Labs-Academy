@@ -40,3 +40,7 @@ The seeded `jll-demo` organization is the platform owner. A Super Admin can chan
 The intro respects `prefers-reduced-motion` with a two-second fade and no audio. Sound is synthesized locally by default. If autoplay is blocked, the intro remains usable and provides a “Tap for sound” action to resume only cues still ahead in the timeline. The mute setting is saved in `localStorage`; sound and audio resources are stopped on skip, completion, tab hiding, and unmount. An optional licensed `client/public/brand/intro-chime.mp3` can be selected in the intro config; an unavailable file falls back to synthesis.
 
 The intro logo is blended into its light background to reduce the white rectangle in the current raster asset. A transparent PNG or SVG logo would be preferable for future brand asset updates.
+
+## Brand wallpaper
+
+`client/public/brand/wallpaper.svg` is an original, transparent 480×480 education doodle tile using the shared navy, magenta, lime, and gray brand colors. `BrandWallpaper` renders it as a fixed, pointer-events-none layer behind the intro, authentication surfaces, and app shell; it never uses `background-attachment: fixed`. Keep the opacity tokens at approximately `.14` for the intro, `.10` for login and registration, and `.045` for app pages. The soft gradient fade keeps the pattern subordinate to headings. Cards, tables, forms, dialogs, and the sidebar retain solid surfaces for readable contrast. The intro uses opacity and small `translate3d` drift only; disable movement for `prefers-reduced-motion`.

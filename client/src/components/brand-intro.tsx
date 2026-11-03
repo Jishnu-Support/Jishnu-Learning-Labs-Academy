@@ -18,6 +18,7 @@ import {
 } from '../lib/brand-config';
 import { api } from '../lib/api';
 import { playIntroSound, type IntroSoundStop } from '../lib/intro-sound';
+import { BrandWallpaper } from './brand-wallpaper';
 import { Button } from './ui/button';
 
 const SESSION_KEY = 'jll-welcome-intro-shown';
@@ -279,6 +280,7 @@ export function BrandIntro({
       aria-label={welcomeText}
       data-testid="brand-intro"
     >
+      <BrandWallpaper variant="intro" />
       {started && (
         <>
           <div className="intro-stage" data-testid="intro-stage">

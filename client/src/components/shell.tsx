@@ -4,6 +4,7 @@ import { useAuth } from '../auth/auth-context';
 import { recordAppLocation } from '../lib/app-navigation';
 import { BrandIntroGate } from './brand-intro';
 import { BrandLogo } from './brand-logo';
+import { BrandWallpaper } from './brand-wallpaper';
 import { Button } from './ui/button';
 
 export function Shell() {
@@ -11,6 +12,8 @@ export function Shell() {
   const location = useLocation();
   const navigationType = useNavigationType();
   const navigate = useNavigate();
+  const isAuthSurface = /^\/(student|instructor|staff|org-admin|super-admin)\/(login|register)$/.test(location.pathname)
+    || location.pathname === '/organizations/register';
   useEffect(() => {
     recordAppLocation(`${location.pathname}${location.search}`, navigationType);
   }, [location.pathname, location.search, navigationType]);
@@ -49,6 +52,7 @@ export function Shell() {
   return (
     <BrandIntroGate>
       <div className="app-shell">
+        <BrandWallpaper variant={isAuthSurface ? 'auth' : 'app'} />
         <header className="topbar">
           <Link className="brand" to="/" aria-label="Jishnu Learning Labs home">
             <BrandLogo className="topbar-logo" />

@@ -13,6 +13,28 @@ a { color: inherit; }
 .footer a { color:#426b4b; font-weight:700; }
 html, body { overflow-x:hidden; }
 body { min-width:320px; }
+.app-shell { position:relative; isolation:isolate; }
+.page-wrap,.footer { position:relative; z-index:1; }
+.brand-wallpaper { position:fixed; z-index:0; inset:0; overflow:hidden; pointer-events:none; }
+.brand-wallpaper::before,.brand-wallpaper::after { position:absolute; inset:-8px; content:""; pointer-events:none; }
+.brand-wallpaper::before {
+  background-image:url("/brand/wallpaper.svg");
+  background-repeat:repeat;
+  background-size:480px 480px;
+  opacity:var(--wallpaper-opacity-app);
+}
+.brand-wallpaper::after {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--page-background) 48%, transparent), transparent 25% 72%, color-mix(in srgb, var(--page-background) 56%, transparent)),
+    radial-gradient(ellipse at center, transparent 50%, color-mix(in srgb, var(--page-background) 72%, transparent));
+}
+.brand-wallpaper--intro { position:absolute; }
+.brand-wallpaper--intro::before { opacity:0; animation:brand-wallpaper-drift var(--intro-duration, 7s) ease-in-out both; }
+.brand-wallpaper--auth::before { opacity:var(--wallpaper-opacity-auth); }
+.brand-wallpaper--app::before { opacity:var(--wallpaper-opacity-app); }
+.brand-intro { isolation:isolate; }
+.brand-intro .brand-wallpaper--intro { z-index:0; }
+.app-shell > .brand-wallpaper { z-index:0; }
 .auth-layout { display:grid; grid-template-columns:1fr minmax(320px, 420px); gap:clamp(40px, 9vw, 140px); align-items:center; min-height:480px; }.auth-story { max-width:550px; padding-bottom:24px; }.eyebrow { color:#58705c; font-size:10px; letter-spacing:.17em; font-weight:700; margin:0 0 18px; }.auth-story h1,.dashboard h1,.narrow-card h1 { font:800 clamp(38px, 5vw, 62px)/1.04 Manrope,sans-serif; letter-spacing:-.055em; margin:0 0 20px; }.auth-story>p:not(.eyebrow),.muted { color:#718078; line-height:1.7; }.story-rule { width:72px; height:3px; background:#c7794b; margin:34px 0 18px; }.story-note { font-size:13px; }
 .card { padding: clamp(16px, 2vw, 24px); background:#fffefa; border:1px solid #e3e5dd; border-radius:14px; box-shadow:0 12px 36px #2533260b; }
 .card > h2, .card h2 { margin:0 0 12px; font:700 22px/1.2 Manrope,sans-serif; letter-spacing:-.03em; }
@@ -94,6 +116,9 @@ body { min-width:320px; }
   --brand-magenta-50: #FBF1F8;
   --brand-lime-50: #F3F8E9;
   --page-background: #F7F7FC;
+  --wallpaper-opacity-intro: .14;
+  --wallpaper-opacity-auth: .10;
+  --wallpaper-opacity-app: .045;
   --text-primary: #1B1B2F;
   --text-secondary: #6B6B6B;
   --border-subtle: #E4E5EF;
@@ -441,6 +466,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   position: fixed;
   z-index: 1000;
   inset: 0;
+  isolation: isolate;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -546,6 +572,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @keyframes intro-exit { to { opacity: 0; transform: translateY(-10px); visibility: hidden; } }
 @keyframes intro-reduced-overlay { 0% { opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes intro-reduced-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes brand-wallpaper-drift {
+  0% { opacity:0; transform:translate3d(-4px, 2px, 0); }
+  12% { opacity:var(--wallpaper-opacity-intro); }
+  100% { opacity:var(--wallpaper-opacity-intro); transform:translate3d(4px, -3px, 0); }
+}
+@keyframes brand-wallpaper-reduced-fade {
+  from { opacity:0; transform:none; }
+  to { opacity:var(--wallpaper-opacity-intro); transform:none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-wallpaper--intro::before { animation:brand-wallpaper-reduced-fade .6s ease-out both; }
+}
 
 @media (max-width:760px) {
   .page-wrap { padding: 36px 0 58px; }
