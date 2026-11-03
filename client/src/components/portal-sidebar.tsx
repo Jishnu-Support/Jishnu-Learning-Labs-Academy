@@ -14,6 +14,8 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/org-admin/staff', label: 'Staff Details' },
     { href: '/org-admin/notes', label: 'Publish Notes' },
     { href: '/org-admin/media', label: 'Upload Media' },
+    { href: '/org-admin/learning/questions', label: 'Practice Q/A' },
+    { href: '/org-admin/learning/assessments', label: 'Assessments' },
   ],
   INSTRUCTOR: [
     { href: '/instructor', label: 'Overview' },
@@ -23,6 +25,8 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/instructor/staff', label: 'Staff Details' },
     { href: '/instructor/notes', label: 'Publish Notes' },
     { href: '/instructor/media', label: 'Upload Media' },
+    { href: '/instructor/learning/questions', label: 'Practice Q/A' },
+    { href: '/instructor/learning/assessments', label: 'Assessments' },
   ],
   STAFF: [
     { href: '/staff', label: 'Overview' },
@@ -34,6 +38,8 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/student', label: 'Overview' },
     { href: '/student/courses', label: 'My Courses' },
     { href: '/student/notes', label: 'Notes' },
+    { href: '/student/assessments', label: 'My Assessment' },
+    { href: '/student/practice', label: 'Practice Q/A' },
   ],
 };
 

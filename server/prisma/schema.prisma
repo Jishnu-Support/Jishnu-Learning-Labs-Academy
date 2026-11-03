@@ -54,6 +54,7 @@ enum AssessmentStatus {
   DRAFT
   PUBLISHED
   ARCHIVED
+  CLOSED
 }
 
 enum QuestionType {
@@ -63,12 +64,29 @@ enum QuestionType {
   SHORT_ANSWER
   MATCH
   FILL_IN_BLANK
+  FILL_BLANK
 }
 
 enum QuestionDifficulty {
   BEGINNER
   INTERMEDIATE
   ADVANCED
+}
+
+enum ResultReleaseMode {
+  IMMEDIATE
+  MANUAL
+}
+
+enum AssessmentAttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  EXPIRED
+}
+
+enum PracticeSessionStatus {
+  IN_PROGRESS
+  COMPLETED
 }
 
 enum MediaType {
@@ -132,6 +150,11 @@ model Organization {
   assessments              Assessment[]
   assessmentQuestions      AssessmentQuestion[]
   practiceQuestions        PracticeQuestion[]
+  assessmentAttempts      AssessmentAttempt[]
+  assessmentAttemptAnswers AssessmentAttemptAnswer[]
+  assessmentAttemptEvents AssessmentAttemptEvent[]
+  practiceSessions        PracticeSession[]
+  practiceSessionAnswers  PracticeSessionAnswer[]
   notes                    Note[]
   noteViews                NoteView[]
   mediaItems               MediaItem[]
@@ -184,6 +207,8 @@ model User {
   watchProgress            WatchProgress[]    @relation("WatchProgressStudent")
   noteViews                NoteView[]
   hostedExpertSessions     ExpertSession[]    @relation("ExpertSessionHost")
+  assessmentAttempts       AssessmentAttempt[] @relation("AssessmentAttemptStudent")
+  practiceSessions         PracticeSession[]   @relation("PracticeSessionStudent")
 
   @@unique([organizationId, email])
   @@unique([organizationId, id])
@@ -347,6 +372,7 @@ model Course {
   mediaItems               MediaItem[]
   assessments              Assessment[]
   practiceQuestions        PracticeQuestion[]
+  practiceSessions         PracticeSession[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, id])
@@ -417,6 +443,14 @@ model Assessment {
   durationMinutes Int
   opensAt         DateTime?
   closesAt        DateTime?
+  maxAttempts     Int                  @default(1)
+  shuffleQuestions Boolean             @default(false)
+  shuffleOptions  Boolean              @default(false)
+  resultReleaseMode ResultReleaseMode  @default(IMMEDIATE)
+  answerReviewAllowed Boolean           @default(true)
+  weight          Float?
+  publishedSnapshot Json?
+  resultsReleasedAt DateTime?
   status          AssessmentStatus     @default(DRAFT)
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
@@ -424,6 +458,7 @@ model Assessment {
   course          Course               @relation(fields: [courseId], references: [id], onDelete: Cascade)
   createdBy       User                 @relation("AssessmentCreator", fields: [createdById], references: [id], onDelete: Restrict)
   questions       AssessmentQuestion[]
+  attempts        AssessmentAttempt[]
 
   @@unique([organizationId, id])
   @@index([organizationId, courseId, status])
@@ -439,6 +474,10 @@ model AssessmentQuestion {
   correctAnswer  Json
   marks          Int
   explanation    String?
+  topic          String                @default("")
+  topicId        String?
+  difficulty     QuestionDifficulty @default(BEGINNER)
+  sourceQuestionId String?
   order          Int
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assessment     Assessment   @relation(fields: [organizationId, assessmentId], references: [organizationId, id], onDelete: Cascade)
@@ -460,6 +499,8 @@ model PracticeQuestion {
   topic          String
   difficulty     QuestionDifficulty
   explanation    String?
+  marks          Int                @default(1)
+  deletedAt      DateTime?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -468,6 +509,104 @@ model PracticeQuestion {
   createdBy      User               @relation("PracticeQuestionCreator", fields: [createdById], references: [id], onDelete: Restrict)
 
   @@index([organizationId, courseId, type, topic])
+}
+
+model AssessmentAttempt {
+  id              String                  @id @default(cuid())
+  organizationId  String
+  assessmentId    String
+  studentId       String
+  activeKey       String?
+  status          AssessmentAttemptStatus @default(IN_PROGRESS)
+  snapshot        Json
+  startedAt       DateTime                @default(now())
+  expiresAt       DateTime
+  submittedAt     DateTime?
+  score           Float?
+  percentage      Float?
+  passed           Boolean?
+  flagged          Boolean               @default(false)
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assessment       Assessment             @relation(fields: [organizationId, assessmentId], references: [organizationId, id], onDelete: Cascade)
+  student          User                   @relation("AssessmentAttemptStudent", fields: [organizationId, studentId], references: [organizationId, id], onDelete: Cascade)
+  answers          AssessmentAttemptAnswer[]
+  events           AssessmentAttemptEvent[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, studentId, activeKey])
+  @@index([organizationId, studentId, status, startedAt])
+  @@index([organizationId, assessmentId, status, submittedAt])
+}
+
+model AssessmentAttemptAnswer {
+  id              String            @id @default(cuid())
+  organizationId  String
+  attemptId       String
+  questionId      String
+  answer          Json
+  score           Float?
+  answeredAt      DateTime          @updatedAt
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  attempt         AssessmentAttempt @relation(fields: [organizationId, attemptId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, attemptId, questionId])
+  @@index([organizationId, attemptId])
+}
+
+model AssessmentAttemptEvent {
+  id              String            @id @default(cuid())
+  organizationId  String
+  attemptId       String
+  eventType       String
+  details         Json?
+  createdAt       DateTime          @default(now())
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  attempt         AssessmentAttempt @relation(fields: [organizationId, attemptId], references: [organizationId, id], onDelete: Cascade)
+
+  @@index([organizationId, attemptId, createdAt])
+}
+
+model PracticeSession {
+  id              String                @id @default(cuid())
+  organizationId  String
+  studentId       String
+  courseId        String
+  questionIds     Json
+  totalQuestions  Int
+  answeredCount   Int                   @default(0)
+  score           Float                 @default(0)
+  timeLimitSeconds Int?
+  expiresAt       DateTime?
+  status          PracticeSessionStatus @default(IN_PROGRESS)
+  startedAt       DateTime              @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  student         User                  @relation("PracticeSessionStudent", fields: [organizationId, studentId], references: [organizationId, id], onDelete: Cascade)
+  course          Course                @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Cascade)
+  answers         PracticeSessionAnswer[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, studentId, createdAt])
+}
+
+model PracticeSessionAnswer {
+  id              String          @id @default(cuid())
+  organizationId  String
+  sessionId       String
+  questionId      String
+  answer          Json
+  isCorrect       Boolean
+  score           Float
+  answeredAt      DateTime        @default(now())
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  session         PracticeSession @relation(fields: [organizationId, sessionId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, sessionId, questionId])
+  @@index([organizationId, sessionId])
 }
 
 model Note {

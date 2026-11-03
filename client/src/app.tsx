@@ -18,6 +18,10 @@ import { StaffDetailsPage, StaffManagementPage } from './pages/staff-page';
 import { StudentCourseDetailPage } from './pages/student-course-detail-page';
 import { StudentCoursesPage } from './pages/student-courses-page';
 import { StudentsPage } from './pages/students-page';
+import {
+  PracticeQuestionBankPage, StudentAssessmentAttemptPage, StudentAssessmentResultPage,
+  StudentAssessmentsPage, StudentPracticePage, TeacherAssessmentsPage,
+} from './pages/learning-pages';
 
 const authenticatedRoles = ['STUDENT', 'INSTRUCTOR', 'STAFF', 'ORG_ADMIN', 'SUPER_ADMIN'] as const;
 
@@ -48,6 +52,10 @@ export function App() {
           <Route path="/student/courses" element={<StudentCoursesPage />} />
           <Route path="/student/courses/:courseId" element={<StudentCourseDetailPage />} />
           <Route path="/student/notes" element={<NotesPage />} />
+          <Route path="/student/assessments" element={<StudentAssessmentsPage />} />
+          <Route path="/student/assessment/:attemptId" element={<StudentAssessmentAttemptPage />} />
+          <Route path="/student/assessment/:attemptId/result" element={<StudentAssessmentResultPage />} />
+          <Route path="/student/practice" element={<StudentPracticePage />} />
         </Route>
         <Route element={<RouteGuard roles={['INSTRUCTOR']} />}>
           <Route path="/instructor" element={<Dashboard role="INSTRUCTOR" />} />
@@ -56,6 +64,8 @@ export function App() {
           <Route path="/instructor/staff" element={<StaffDetailsPage />} />
           <Route path="/instructor/notes" element={<NotesPage />} />
           <Route path="/instructor/media" element={<MediaPage />} />
+          <Route path="/instructor/learning/questions" element={<PracticeQuestionBankPage />} />
+          <Route path="/instructor/learning/assessments" element={<TeacherAssessmentsPage />} />
           <Route path="/instructor/courses" element={<CoursesPage />} />
           <Route path="/instructor/courses/new" element={<CourseFormPage />} />
           <Route path="/instructor/courses/:courseId/edit" element={<CourseFormPage />} />
@@ -69,6 +79,8 @@ export function App() {
           <Route path="/org-admin/staff" element={<StaffDetailsPage />} />
           <Route path="/org-admin/notes" element={<NotesPage />} />
           <Route path="/org-admin/media" element={<MediaPage />} />
+          <Route path="/org-admin/learning/questions" element={<PracticeQuestionBankPage />} />
+          <Route path="/org-admin/learning/assessments" element={<TeacherAssessmentsPage />} />
           <Route path="/org-admin/courses" element={<CoursesPage />} />
           <Route path="/org-admin/courses/new" element={<CourseFormPage />} />
           <Route path="/org-admin/courses/:courseId/edit" element={<CourseFormPage />} />

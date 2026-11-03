@@ -655,6 +655,8 @@ export async function seedCourses(
             correctAnswer: example.answer,
             marks: 1,
             explanation: example.explanation,
+            topic: topic.title,
+            topicId: topic.id,
             order: nextAssessmentOrder,
           },
         });
@@ -680,6 +682,17 @@ export async function seedCourses(
           },
         });
       }
+    }
+    if (assessment.publishedSnapshot === null) {
+      const snapshotRows = await database.assessmentQuestion.findMany({
+        where: { organizationId: organization.id, assessmentId: assessment.id },
+        orderBy: { order: 'asc' },
+        select: { id: true, type: true, prompt: true, options: true, correctAnswer: true, explanation: true, marks: true, topic: true, difficulty: true },
+      });
+      await database.assessment.updateMany({
+        where: { id: assessment.id, organizationId: organization.id },
+        data: { publishedSnapshot: snapshotRows as Prisma.InputJsonValue[] },
+      });
     }
     seededCourseCodes.push(fixture.code);
   }

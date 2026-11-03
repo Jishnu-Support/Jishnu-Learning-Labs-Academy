@@ -1,6 +1,6 @@
 # Jishnu Learning Labs
 
-Jishnu Learning Labs is a multi-organization learning platform. Each organization has isolated users and data. Checkpoint 1A delivers the tenant-aware database/authentication foundation, organization registration, and approval flows. Checkpoint 1B adds staff management, student/staff directories, and protected notes. Checkpoint 2A adds tenant-scoped courses, topics, student enrollment, and course-linked notes. Assessment and practice records are seeded for future modules; assessment attempts are not included here.
+Jishnu Learning Labs is a multi-organization learning platform. Each organization has isolated users and data. Checkpoint 1A delivers the tenant-aware database/authentication foundation, organization registration, and approval flows. Checkpoint 1B adds staff management, student/staff directories, and protected notes. Checkpoint 2A adds tenant-scoped courses, topics, student enrollment, and course-linked notes. Student Portal SP1 adds question-bank management, practice history, published assessment snapshots, timed attempts, and results.
 
 ## Requirements
 
@@ -167,7 +167,14 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 - Course pages support instructor assignment, planned hours and completion rules, topic creation/reordering/coverage, publishing, archiving, student search, and linked notes.
 - Students can browse only published courses in their organization, enroll, view course progress and notes, and drop active enrollment. Enrollment approvals are optional and default off through `REQUIRE_ENROLLMENT_APPROVAL`.
 - The seed provides 12 published courses per demo organization: SAP101, ENG101, TAM101, MAT101, SOC101, SCI101, PY101, CPP101, JAV101, JS101, HTML101, and CSS101. Each has subject-specific practice questions for single- and multiple-answer MCQ, True/False, Match, and Fill in the blanks, plus a published assessment, linked notes, and demo enrollment/progress. Course fixture seeding is additive and idempotent: it preserves existing course, topic, enrollment, note, and user edits; an existing course's status alone is restored to PUBLISHED.
-- Student course pages show assessment titles and summary metadata only; assessment attempts and grading are not part of this checkpoint.
+
+## Student Portal SP1: Practice Q/A and assessments
+
+- Org Admins manage learning content for their organization; instructors can manage only their assigned courses. Staff and students cannot access teacher management APIs.
+- The question bank supports MCQ single/multiple, True/False, Match, Fill in the blanks, and short answers. CSV import reports errors per row; Match questions are entered in the form. Questions use soft deletion.
+- Students can practice only courses they are actively enrolled in. Practice is unlimited and never contributes to assessment grades. The server reveals the correct answer and explanation only after a practice answer is submitted.
+- Publishing an assessment stores an immutable question snapshot. Each student has a server-timed attempt with autosaved answers, attempt limits, availability dates, and randomized questions/options when configured. Assessment grading and result release are server-side.
+- Grading: MCQ single/multiple and True/False require an exact normalized answer; short answers and fill-in blanks are trimmed and case-insensitive. Fill-in blanks award equal partial credit per correctly answered blank. Match questions award equal partial credit per correctly matched pair. Practice feedback is immediate; assessment answers are withheld until results are released and answer review is allowed.
 
 ## API endpoints
 
@@ -229,7 +236,8 @@ Server tests use `TEST_DATABASE_URL`, create uniquely named fixtures, and remove
 
 - 1A: multi-tenant schema/migration, authentication, organization registration, approval flows, seed, and tests.
 - 1B: Create Staff with forced first-login password change, Student/Staff Details, and Publish Notes with private storage and student view-only protection.
-- 1C: Expert Sessions, Assessments, Practice Q/A, and final tests.
+- SP1: Practice Q/A and My Assessment (teacher question bank, assessment authoring/results, student practice and timed attempts).
+- 1C: Expert Sessions and remaining final tests.
 - 2A: tenant-scoped Courses, topics, enrollment, linked notes, and seeded assessment/practice examples. Course tests use the dedicated test database.
 
 The Jitsi implementation planned for 1C is a basic live-class integration; it is not DRM and cannot prevent screen recording or screenshots.
