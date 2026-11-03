@@ -15,7 +15,7 @@ const loginSchema = z.object({
   identifier: z.string().optional(),
   password: z.string().min(1, 'Enter your password'),
 });
-type Portal = 'student' | 'instructor' | 'staff' | 'org-admin' | 'super-admin';
+type Portal = 'student' | 'staff' | 'org-admin' | 'super-admin';
 type Props = { portal: Portal };
 
 const portalDetails: Record<Portal, {
@@ -33,14 +33,6 @@ const portalDetails: Record<Portal, {
     role: 'STUDENT',
     identifierLabel: 'Student ID',
     registration: '/student/register',
-  },
-  instructor: {
-    title: 'Guide the next generation.',
-    subtitle: 'Sign in with your organization code and email.',
-    endpoint: '/auth/instructors/login',
-    role: 'INSTRUCTOR',
-    identifierLabel: 'Email address',
-    registration: '/instructor/register',
   },
   staff: {
     title: 'Welcome to your organization.',
@@ -68,7 +60,6 @@ const portalDetails: Record<Portal, {
 
 const demoAccounts: Record<Portal, { identifier: string; organizationCode?: string }> = {
   student: { identifier: 'STU-1003', organizationCode: 'jll-demo' },
-  instructor: { identifier: 'instructor1@jll-demo.local', organizationCode: 'jll-demo' },
   staff: { identifier: 'STF-1001', organizationCode: 'jll-demo' },
   'org-admin': { identifier: 'orgadmin@jll-demo.local', organizationCode: 'jll-demo' },
   'super-admin': { identifier: import.meta.env.VITE_DEMO_SUPER_ADMIN_EMAIL ?? 'admin@jishnu.local' },
@@ -77,6 +68,7 @@ const demoAccounts: Record<Portal, { identifier: string; organizationCode?: stri
 function routeForRole(role: Role): string {
   if (role === 'SUPER_ADMIN') return '/super-admin/dashboard';
   if (role === 'ORG_ADMIN') return '/org-admin';
+  if (role === 'INSTRUCTOR' || role === 'STAFF') return '/staff';
   return `/${role.toLowerCase()}`;
 }
 
@@ -96,7 +88,7 @@ export function LoginPage({ portal }: Props) {
       }
       if (!values.identifier?.trim()) {
         context.addIssue({ code: 'custom', path: ['identifier'], message: `Enter your ${details.identifierLabel.toLowerCase()}` });
-      } else if (['instructor', 'org-admin', 'super-admin'].includes(portal) && !z.string().email().safeParse(values.identifier).success) {
+      } else if (['org-admin', 'super-admin'].includes(portal) && !z.string().email().safeParse(values.identifier).success) {
         context.addIssue({ code: 'custom', path: ['identifier'], message: 'Enter a valid email address' });
       }
     })),
@@ -184,9 +176,9 @@ export function LoginPage({ portal }: Props) {
         <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? 'Signing in…' : 'Sign in'}</Button>
         {details.registration && <p className="form-foot">New to the organization? <Link to={details.registration}>Register as {portal}</Link></p>}
         <p className="form-foot"><Link to="/organizations/register">Register an organization</Link></p>
+        {portal === 'staff' && <p className="form-foot">Teaching team? <Link to="/staff/register/instructor">Register as an instructor</Link></p>}
         <div className="portal-links">
           <Link to="/student/login">Student</Link>
-          <Link to="/instructor/login">Instructor</Link>
           <Link to="/staff/login">Staff</Link>
           <Link to="/org-admin/login">Org Admin</Link>
           <Link to="/super-admin/login">Super Admin</Link>

@@ -24,7 +24,7 @@ type Props = { role: Extract<Role, 'STUDENT' | 'INSTRUCTOR' | 'STAFF'> };
 
 const roleDetails = {
   STUDENT: { title: 'Student', endpoint: '/auth/students/register', login: '/student/login', approval: 'an instructor' },
-  INSTRUCTOR: { title: 'Instructor', endpoint: '/auth/instructors/register', login: '/instructor/login', approval: 'an organization admin' },
+  INSTRUCTOR: { title: 'Instructor', endpoint: '/auth/instructors/register', login: '/staff/login', approval: 'an organization admin' },
   STAFF: { title: 'Staff', endpoint: '/auth/staff/register', login: '/staff/login', approval: 'an organization admin' },
 } as const;
 
@@ -65,7 +65,7 @@ export function RegisterPage({ role }: Props) {
   }
   return (
     <section className="narrow-card card">
-      <p className="eyebrow">{details.title.toUpperCase()} PORTAL</p>
+      <p className="eyebrow">{role === 'INSTRUCTOR' ? 'STAFF PORTAL' : `${details.title.toUpperCase()} PORTAL`}</p>
       <PageHeader title="Create your account" backTo="/organizations/register" breadcrumbs={[details.title, 'Register']} hasUnsavedChanges={form.formState.isDirty} />
       <p className="muted">An {details.approval} must approve your registration before you can sign in.</p>
       <form className="form-stack" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>

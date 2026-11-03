@@ -75,27 +75,27 @@ function statusMessage(user: User): string {
   return `Your ${user.role.toLowerCase().replace('_', ' ')} account is suspended`;
 }
 
-async function findTenantAccount(role: Role, organizationId: string, identifier: string): Promise<User | null> {
-  if (role === Role.STUDENT) {
+async function findTenantAccount(roles: readonly Role[], organizationId: string, identifier: string): Promise<User | null> {
+  if (roles.length === 1 && roles[0] === Role.STUDENT) {
     return prisma.user.findFirst({
       where: {
         organizationId,
-        role,
+        role: Role.STUDENT,
         studentProfile: { is: { organizationId, studentId: identifier } },
       },
     });
   }
-  if (role === Role.STAFF && !identifier.includes('@')) {
+  if (roles.includes(Role.STAFF) && !identifier.includes('@')) {
     return prisma.user.findFirst({
-      where: { organizationId, role, staffProfile: { is: { organizationId, staffId: identifier } } },
+      where: { organizationId, role: Role.STAFF, staffProfile: { is: { organizationId, staffId: identifier } } },
     });
   }
   return prisma.user.findFirst({
-    where: { organizationId, role, email: identifier.toLowerCase() },
+    where: { organizationId, role: { in: [...roles] }, email: identifier.toLowerCase() },
   });
 }
 
-async function loginTenant(role: Role, input: TenantLogin, meta: RequestMeta): Promise<Credentials> {
+async function loginTenant(roles: readonly Role[], input: TenantLogin, meta: RequestMeta): Promise<Credentials> {
   const organization = await prisma.organization.findFirst({
     where: { code: input.organizationCode },
     select: { id: true, status: true },
@@ -115,7 +115,7 @@ async function loginTenant(role: Role, input: TenantLogin, meta: RequestMeta): P
     throw new HttpError(403, 'This organization registration was rejected.');
   }
 
-  const user = await findTenantAccount(role, organization.id, input.identifier);
+  const user = await findTenantAccount(roles, organization.id, input.identifier);
   if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) {
     await recordLogin(user?.id ?? null, organization.id, meta, false);
     throw new HttpError(401, 'ID/email or password is incorrect');
@@ -259,19 +259,19 @@ function requireStaffId(staffId: string | undefined): string {
 }
 
 export function loginStudent(input: { organizationCode: string; studentId: string; password: string }, meta: RequestMeta) {
-  return loginTenant(Role.STUDENT, { ...input, identifier: input.studentId }, meta);
+  return loginTenant([Role.STUDENT], { ...input, identifier: input.studentId }, meta);
 }
 
 export function loginInstructor(input: { organizationCode: string; email: string; password: string }, meta: RequestMeta) {
-  return loginTenant(Role.INSTRUCTOR, { ...input, identifier: input.email }, meta);
+  return loginTenant([Role.INSTRUCTOR], { ...input, identifier: input.email }, meta);
 }
 
 export function loginOrgAdmin(input: { organizationCode: string; email: string; password: string }, meta: RequestMeta) {
-  return loginTenant(Role.ORG_ADMIN, { ...input, identifier: input.email }, meta);
+  return loginTenant([Role.ORG_ADMIN], { ...input, identifier: input.email }, meta);
 }
 
 export function loginStaff(input: { organizationCode: string; identifier: string; password: string }, meta: RequestMeta) {
-  return loginTenant(Role.STAFF, input, meta);
+  return loginTenant([Role.STAFF, Role.INSTRUCTOR], input, meta);
 }
 
 export async function loginSuperAdmin(input: { email: string; password: string }, meta: RequestMeta): Promise<Credentials> {

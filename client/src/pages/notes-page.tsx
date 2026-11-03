@@ -30,7 +30,7 @@ type ViewerState = { blob?: Blob; note?: NoteViewerResponse['data']['note']; err
 
 function locationPathForRole(role: string): string {
   if (role === 'ORG_ADMIN') return '/org-admin/notes';
-  if (role === 'INSTRUCTOR') return '/instructor/notes';
+  if (role === 'INSTRUCTOR') return '/staff/notes';
   if (role === 'STAFF') return '/staff/notes';
   return '/student/notes';
 }
@@ -250,7 +250,7 @@ export function NotesPage() {
   const subjects = [...new Set(notesList.map((note) => note.subject))].sort();
   const canManage = (note: Note) => role === 'ORG_ADMIN' || note.author.id === user?.id;
   const isSaving = createMutation.isPending || updateMutation.isPending;
-  const currentDashboard = role === 'ORG_ADMIN' ? '/org-admin' : role === 'INSTRUCTOR' ? '/instructor' : role === 'STAFF' ? '/staff' : '/student';
+  const currentDashboard = role === 'ORG_ADMIN' ? '/org-admin' : role === 'INSTRUCTOR' || role === 'STAFF' ? '/staff' : '/student';
   const listQuery = new URLSearchParams();
   for (const key of ['search', 'subject', 'courseId']) {
     const value = searchParams.get(key);

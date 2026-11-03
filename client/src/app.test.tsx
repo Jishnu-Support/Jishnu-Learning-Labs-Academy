@@ -3,13 +3,25 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter, MemoryRouter } from 'react-router-dom';
 import { App } from './app';
 import { AuthProvider } from './auth/auth-provider';
+import { AuthContext, type CurrentUser } from './auth/auth-context';
 
 vi.mock('./components/brand-intro', () => ({
   BrandIntroGate: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
+
+function userForRole(role: CurrentUser['role']): CurrentUser {
+  return {
+    id: 'test-user',
+    organizationId: 'test-organization',
+    email: 'test@example.test',
+    name: 'Test User',
+    role,
+    organization: { name: 'Test Academy', code: 'test', isPlatformOwner: false },
+  };
+}
 
 describe('Phase 1 portal shell', () => {
   it('shows the student sign-in screen and registration link', async () => {
@@ -20,15 +32,41 @@ describe('Phase 1 portal shell', () => {
     expect(screen.getByRole('link', { name: /register as student/i })).toHaveAttribute('href', '/student/register');
   });
 
-  it('provides the instructor registration route with organization code and approval messaging', async () => {
+  it('redirects legacy instructor registration to the shared Staff Portal registration', async () => {
     window.history.pushState({}, '', '/instructor/register');
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
     expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
+    expect(screen.getByText('STAFF PORTAL')).toBeInTheDocument();
     expect(screen.getByText(/organization admin must approve/i)).toBeInTheDocument();
     expect(screen.getByLabelText('Organization Code')).toBeInTheDocument();
     expect(screen.getByLabelText('Full name')).toBeInTheDocument();
     expect(screen.queryByLabelText('Student ID')).not.toBeInTheDocument();
+  });
+
+  it('uses one Staff Portal login while retaining instructor registration', async () => {
+    window.history.pushState({}, '', '/staff/login');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Register as an instructor' })).toHaveAttribute('href', '/staff/register/instructor');
+    expect(screen.queryByRole('link', { name: /^Instructor$/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps instructor-only tools unavailable to Staff in the shared portal', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AuthContext.Provider value={{ user: userForRole('STAFF'), loading: false, logout: vi.fn() }}>
+          <MemoryRouter initialEntries={['/staff/courses']}>
+            <App />
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('You do not have access to that page')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Courses' })).not.toBeInTheDocument();
   });
 
   it('shows the public organization registration portal', async () => {

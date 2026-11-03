@@ -1,4 +1,5 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { useAuth } from './auth/auth-context';
 import { RouteGuard } from './components/route-guard';
 import { Shell } from './components/shell';
 import { PageHeader } from './components/page-header';
@@ -11,6 +12,20 @@ function NotFoundPage() {
     </section>
   );
 }
+
+function LegacyInstructorRedirect() {
+  const location = useLocation();
+  const targetPath = location.pathname === '/instructor/register'
+    ? '/staff/register/instructor'
+    : location.pathname.replace(/^\/instructor(?=\/|$)/, '/staff');
+  return <Navigate to={`${targetPath}${location.search}${location.hash}`} replace />;
+}
+
+function StaffDashboardRoute() {
+  const { user } = useAuth();
+  return <Dashboard role={user?.role === 'INSTRUCTOR' ? 'INSTRUCTOR' : 'STAFF'} />;
+}
+
 import { ApprovalsPage } from './pages/approvals-page';
 import { ChangePasswordPage } from './pages/change-password-page';
 import { CourseDetailPage } from './pages/course-detail-page';
@@ -47,10 +62,11 @@ export function App() {
         <Route path="/organizations/register" element={<OrganizationRegistrationPage />} />
         <Route path="/student/login" element={<LoginPage portal="student" />} />
         <Route path="/student/register" element={<RegisterPage role="STUDENT" />} />
-        <Route path="/instructor/login" element={<LoginPage portal="instructor" />} />
-        <Route path="/instructor/register" element={<RegisterPage role="INSTRUCTOR" />} />
+        <Route path="/instructor" element={<LegacyInstructorRedirect />} />
+        <Route path="/instructor/*" element={<LegacyInstructorRedirect />} />
         <Route path="/staff/login" element={<LoginPage portal="staff" />} />
         <Route path="/staff/register" element={<RegisterPage role="STAFF" />} />
+        <Route path="/staff/register/instructor" element={<RegisterPage role="INSTRUCTOR" />} />
         <Route path="/org-admin/login" element={<LoginPage portal="org-admin" />} />
         <Route path="/super-admin/login" element={<LoginPage portal="super-admin" />} />
         <Route path="/unauthorized" element={<Unauthorized />} />
@@ -69,20 +85,6 @@ export function App() {
           <Route path="/student/assessment/:attemptId/result" element={<StudentAssessmentResultPage />} />
           <Route path="/student/practice" element={<StudentPracticePage />} />
         </Route>
-        <Route element={<RouteGuard roles={['INSTRUCTOR']} />}>
-          <Route path="/instructor" element={<Dashboard role="INSTRUCTOR" />} />
-          <Route path="/instructor/approvals" element={<ApprovalsPage />} />
-          <Route path="/instructor/students" element={<StudentsPage />} />
-          <Route path="/instructor/staff" element={<StaffDetailsPage />} />
-          <Route path="/instructor/notes" element={<NotesPage />} />
-          <Route path="/instructor/media" element={<MediaPage />} />
-          <Route path="/instructor/learning/questions" element={<PracticeQuestionBankPage />} />
-          <Route path="/instructor/learning/assessments" element={<TeacherAssessmentsPage />} />
-          <Route path="/instructor/courses" element={<CoursesPage />} />
-          <Route path="/instructor/courses/new" element={<CourseFormPage />} />
-          <Route path="/instructor/courses/:courseId/edit" element={<CourseFormPage />} />
-          <Route path="/instructor/courses/:courseId" element={<CourseDetailPage />} />
-        </Route>
         <Route element={<RouteGuard roles={['ORG_ADMIN']} />}>
           <Route path="/org-admin" element={<Dashboard role="ORG_ADMIN" />} />
           <Route path="/org-admin/instructors" element={<InstructorApprovalsPage />} />
@@ -98,11 +100,21 @@ export function App() {
           <Route path="/org-admin/courses/:courseId/edit" element={<CourseFormPage />} />
           <Route path="/org-admin/courses/:courseId" element={<CourseDetailPage />} />
         </Route>
-        <Route element={<RouteGuard roles={['STAFF']} />}>
-          <Route path="/staff" element={<Dashboard role="STAFF" />} />
+        <Route element={<RouteGuard roles={['STAFF', 'INSTRUCTOR']} />}>
+          <Route path="/staff" element={<StaffDashboardRoute />} />
           <Route path="/staff/students" element={<StudentsPage />} />
           <Route path="/staff/notes" element={<NotesPage />} />
           <Route path="/staff/media" element={<MediaPage />} />
+        </Route>
+        <Route element={<RouteGuard roles={['INSTRUCTOR']} />}>
+          <Route path="/staff/approvals" element={<ApprovalsPage />} />
+          <Route path="/staff/staff" element={<StaffDetailsPage />} />
+          <Route path="/staff/learning/questions" element={<PracticeQuestionBankPage />} />
+          <Route path="/staff/learning/assessments" element={<TeacherAssessmentsPage />} />
+          <Route path="/staff/courses" element={<CoursesPage />} />
+          <Route path="/staff/courses/new" element={<CourseFormPage />} />
+          <Route path="/staff/courses/:courseId/edit" element={<CourseFormPage />} />
+          <Route path="/staff/courses/:courseId" element={<CourseDetailPage />} />
         </Route>
         <Route element={<RouteGuard roles={['SUPER_ADMIN']} />}>
           <Route path="/super-admin" element={<Navigate to="/super-admin/dashboard" replace />} />

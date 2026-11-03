@@ -20,15 +20,15 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/org-admin/learning/assessments', label: 'Assessments' },
   ],
   INSTRUCTOR: [
-    { href: '/instructor', label: 'Overview' },
-    { href: '/instructor/courses', label: 'Courses' },
-    { href: '/instructor/approvals', label: 'Pending Students' },
-    { href: '/instructor/students', label: 'Student Details' },
-    { href: '/instructor/staff', label: 'Staff Details' },
-    { href: '/instructor/notes', label: 'Publish Notes' },
-    { href: '/instructor/media', label: 'Upload Media' },
-    { href: '/instructor/learning/questions', label: 'Practice Q/A' },
-    { href: '/instructor/learning/assessments', label: 'Assessments' },
+    { href: '/staff', label: 'Overview' },
+    { href: '/staff/courses', label: 'Courses' },
+    { href: '/staff/approvals', label: 'Pending Students' },
+    { href: '/staff/students', label: 'Student Details' },
+    { href: '/staff/staff', label: 'Staff Details' },
+    { href: '/staff/notes', label: 'Publish Notes' },
+    { href: '/staff/media', label: 'Upload Media' },
+    { href: '/staff/learning/questions', label: 'Practice Q/A' },
+    { href: '/staff/learning/assessments', label: 'Assessments' },
   ],
   STAFF: [
     { href: '/staff', label: 'Overview' },
@@ -40,14 +40,9 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/student', label: 'Dashboard' },
     { href: '/student/courses', label: 'My Courses', group: 'LEARN' },
     { href: '/student/media', label: 'Videos & Audios', group: 'LEARN' },
-    { href: '/student/online-classes', label: 'Online Classes', group: 'LEARN' },
     { href: '/student/notes', label: 'Notes', group: 'LEARN' },
-    { href: '/student/library', label: 'Library', group: 'LEARN' },
     { href: '/student/practice', label: 'Practice Q/A', group: 'PRACTICE' },
     { href: '/student/assessments', label: 'My Assessment', group: 'PRACTICE' },
-    { href: '/student/attendance', label: 'My Attendance', group: 'PROGRESS' },
-    { href: '/student/track', label: 'My Track', group: 'PROGRESS' },
-    { href: '/student/certificates', label: 'My Certificates', group: 'PROGRESS' },
   ],
 };
 
@@ -70,13 +65,15 @@ export function PortalSidebar({ role }: { role: Role }) {
     }
   }
 
+  const homePath = role === 'INSTRUCTOR' || role === 'STAFF' ? '/staff' : `/${role.toLowerCase().replace('_', '-')}`;
+  const navigationLabel = role === 'INSTRUCTOR' ? 'STAFF' : role.replace('_', ' ');
   return (
     <>
       <button type="button" className="sidebar-toggle" aria-label="Open navigation" onClick={() => setIsOpen((current) => !current)}>
         <Menu size={18} aria-hidden="true" />
       </button>
       {isOpen && <button type="button" className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setIsOpen(false)} />}
-      <aside className={`portal-sidebar ${isOpen ? 'open' : ''}`} aria-label={`${role.replace('_', ' ')} navigation`}>
+      <aside className={`portal-sidebar ${isOpen ? 'open' : ''}`} aria-label={`${navigationLabel} navigation`}>
         <div className="sidebar-header">
           <BrandLogo className="sidebar-logo" />
           <button type="button" className="sidebar-close" aria-label="Close navigation" onClick={() => setIsOpen(false)}>
@@ -86,7 +83,7 @@ export function PortalSidebar({ role }: { role: Role }) {
         <p className="eyebrow">WORKSPACE</p>
         <nav>
           {ungroupedLinks.map((link) => (
-            <NavLink key={link.href} end={link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href} onClick={() => setIsOpen(false)}>
+            <NavLink key={link.href} end={link.href === homePath} to={link.href} onClick={() => setIsOpen(false)}>
               <span>{link.label}</span>
             </NavLink>
           ))}
@@ -94,7 +91,7 @@ export function PortalSidebar({ role }: { role: Role }) {
             <div key={group} className="sidebar-group">
               <span className="sidebar-group-label">{group}</span>
               {groupLinks.map((link) => (
-                <NavLink key={link.href} end={link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href} onClick={() => setIsOpen(false)}>
+                <NavLink key={link.href} end={link.href === homePath} to={link.href} onClick={() => setIsOpen(false)}>
                   <span>{link.label}</span>
                 </NavLink>
               ))}

@@ -52,7 +52,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function dashboardPath(role?: string) {
-  return role === 'ORG_ADMIN' ? '/org-admin' : role === 'INSTRUCTOR' ? '/instructor' : '/student';
+  return role === 'ORG_ADMIN' ? '/org-admin' : role === 'INSTRUCTOR' ? '/staff' : '/student';
 }
 
 function parseJsonOrText(input: string): unknown {

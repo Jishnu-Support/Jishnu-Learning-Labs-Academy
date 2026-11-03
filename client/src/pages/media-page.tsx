@@ -44,7 +44,6 @@ function ControlField({ label, children }: { label: string; children: ReactNode 
 
 function dashboardPath(role: string) {
   if (role === 'ORG_ADMIN') return '/org-admin';
-  if (role === 'INSTRUCTOR') return '/instructor';
   return '/staff';
 }
 
