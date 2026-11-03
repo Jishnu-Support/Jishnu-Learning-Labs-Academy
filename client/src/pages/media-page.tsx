@@ -10,7 +10,7 @@ import { Button } from '../components/ui/button';
 import { api, apiUrl, ApiError } from '../lib/api';
 
 type MediaType = 'VIDEO' | 'AUDIO';
-type MediaStatus = 'UPLOADING' | 'PROCESSING' | 'READY' | 'FAILED';
+type MediaStatus = 'UPLOADING' | 'AWAITING_FILE' | 'PROCESSING' | 'READY' | 'FAILED';
 type Media = {
   id: string;
   title: string;
@@ -242,13 +242,35 @@ export function MediaPage() {
     }
   };
 
-  const startUpload = async () => {
-    if (!selectedFile) {
-      setErrorMessage('Choose a video or audio file to upload.');
-      return;
-    }
+  const startUpload = async (publishImmediately = false) => {
     if (!draft.title.trim() || !draft.courseId) {
       setErrorMessage('Enter a title and select a course.');
+      return;
+    }
+    if (!selectedFile) {
+      if (publishImmediately) {
+        setErrorMessage('Choose a video or audio file to upload before publishing.');
+        return;
+      }
+      try {
+        const created = await api<{ media: Media }>('/media', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: draft.title,
+            description: draft.description,
+            courseId: draft.courseId,
+            topicId: draft.topicId || null,
+            type: draft.type,
+            publishOnReady: false,
+          }),
+        });
+        setToast(`Draft saved for ${created.media.title}.`);
+        await refreshMedia();
+        setDraft(initialDraft);
+        setSelectedFile(null);
+      } catch (error) {
+        setErrorMessage(errorText(error));
+      }
       return;
     }
     const maximumBytes = draft.type === 'VIDEO'
@@ -271,6 +293,7 @@ export function MediaPage() {
           extension: extensionFor(selectedFile),
           mimeType: selectedFile.type,
           fileName: selectedFile.name,
+          publishOnReady: publishImmediately,
         }),
       });
       await transmit(created.media.id, selectedFile);
@@ -304,7 +327,7 @@ export function MediaPage() {
   const retryUpload = async (event: ChangeEvent<HTMLInputElement>, media: Media) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (file.size !== media.sizeBytes) {
+    if (media.sizeBytes > 0 && file.size !== media.sizeBytes) {
       setErrorMessage('Select the same file with its original size to retry this upload.');
       event.target.value = '';
       return;
@@ -329,6 +352,16 @@ export function MediaPage() {
   const uploadLimit = draft.type === 'VIDEO' ? configuredLimits.data?.limits.maxVideoBytes : configuredLimits.data?.limits.maxAudioBytes;
   const isUploading = Boolean(pendingUpload);
   const uploadMutationInFlight = updateMutation.isPending || visibilityMutation.isPending || deleteMutation.isPending || retryMutation.isPending;
+
+  useEffect(() => {
+    if (!pendingUpload) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [pendingUpload]);
 
   const dropFile = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
@@ -385,7 +418,8 @@ export function MediaPage() {
           )}
           {errorMessage && <p className="notice notice-error" role="alert">{errorMessage}</p>}
           <div className="row-actions media-form-actions">
-            {!isUploading && <Button type="button" disabled={!selectedFile || courses.isLoading} onClick={() => void startUpload()}>Upload media</Button>}
+            {!isUploading && <Button type="button" disabled={!draft.title.trim() || !draft.courseId || courses.isLoading} onClick={() => void startUpload(false)}>Save as Draft</Button>}
+            {!isUploading && <Button type="button" variant="primary" disabled={!selectedFile || !draft.title.trim() || !draft.courseId || courses.isLoading} onClick={() => void startUpload(true)}>Upload & Publish</Button>}
             {pendingUpload && failedUploadId === pendingUpload.id && <Button type="button" variant="secondary" onClick={() => void transmit(pendingUpload.id, pendingUpload.file)}>Retry upload</Button>}
           </div>
         </section>
@@ -414,10 +448,10 @@ export function MediaPage() {
                   {media.status === 'FAILED' && <p className="notice notice-error">{media.job?.error ?? 'Processing failed.'}</p>}
                 </div>
                 <div className="media-card-actions">
-                  {media.status === 'UPLOADING' && (
+                  {(media.status === 'UPLOADING' || media.status === 'AWAITING_FILE') && (
                     <>
-                      <label className="button button-secondary media-retry-file">Retry upload<input type="file" onChange={(event) => void retryUpload(event, media)} /></label>
-                      <Button type="button" variant="secondary" onClick={() => void api(`/media/${media.id}/cancel`, { method: 'POST' }).then(refreshMedia).catch((error: unknown) => setErrorMessage(errorText(error)))}>Cancel</Button>
+                      <label className="button button-secondary media-retry-file">{media.status === 'AWAITING_FILE' ? 'Upload file' : 'Retry upload'}<input type="file" onChange={(event) => void retryUpload(event, media)} /></label>
+                      {media.status === 'UPLOADING' && <Button type="button" variant="secondary" onClick={() => void api(`/media/${media.id}/cancel`, { method: 'POST' }).then(refreshMedia).catch((error: unknown) => setErrorMessage(errorText(error)))}>Cancel</Button>}
                     </>
                   )}
                   {media.status === 'FAILED' && <Button type="button" variant="secondary" disabled={uploadMutationInFlight} onClick={() => retryMutation.mutate(media.id)}>Retry processing</Button>}

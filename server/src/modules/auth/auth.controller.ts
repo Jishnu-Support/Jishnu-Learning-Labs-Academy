@@ -85,33 +85,42 @@ export const me: RequestHandler = async (req, res) => {
     res.status(401).json({ error: { message: 'Authentication required' } });
     return;
   }
-  const user = await prisma.user.findFirst({
-    where: { id: req.auth.userId, organizationId: req.auth.organizationId },
-    select: {
-      id: true,
-      organizationId: true,
-      email: true,
-      name: true,
-      role: true,
-      status: true,
-      mustChangePassword: true,
-      organization: { select: { name: true, code: true, isPlatformOwner: true } },
-      studentProfile: { select: { studentId: true } },
-    },
-  });
-  if (!user) {
-    res.status(401).json({ error: { message: 'Session expired. Please sign in again.' } });
-    return;
-  }
-  const { studentProfile, ...safeUser } = user;
-  res.json({
-    data: {
-      user: {
-        ...safeUser,
-        studentId: user.role === 'STUDENT' ? studentProfile?.studentId : undefined,
+
+  try {
+    const user = await prisma.user.findFirst({
+      where: { id: req.auth.userId, organizationId: req.auth.organizationId },
+      select: {
+        id: true,
+        organizationId: true,
+        email: true,
+        name: true,
+        role: true,
+        status: true,
+        mustChangePassword: true,
+        organization: { select: { name: true, code: true, isPlatformOwner: true } },
+        studentProfile: { select: { studentId: true } },
       },
-    },
-  });
+    });
+
+    if (!user) {
+      res.status(401).json({ error: { message: 'Session expired. Please sign in again.' } });
+      return;
+    }
+
+    const { studentProfile, ...safeUser } = user;
+    res.json({
+      data: {
+        user: {
+          ...safeUser,
+          organization: safeUser.organization ?? null,
+          studentId: user.role === 'STUDENT' ? studentProfile?.studentId : undefined,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('auth/me failed', error);
+    res.status(500).json({ error: { message: 'Unable to load your session' } });
+  }
 };
 
 export const changePassword: RequestHandler = async (req, res) => {

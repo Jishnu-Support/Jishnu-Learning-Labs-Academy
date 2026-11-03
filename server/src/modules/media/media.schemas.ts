@@ -29,11 +29,15 @@ export const createMediaSchema = z.object({
   courseId: mediaId,
   topicId: mediaId.nullable().optional(),
   type: z.nativeEnum(MediaType),
-  sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  extension,
-  mimeType: z.string().trim().min(3).max(100),
-  fileName: z.string().min(1).max(255).refine((value) => !/[\\/]/.test(value), 'File name must not contain a path'),
+  sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  extension: extension.optional(),
+  mimeType: z.string().trim().min(3).max(100).optional(),
+  fileName: z.string().min(1).max(255).refine((value) => !/[\\/]/.test(value), 'File name must not contain a path').optional(),
+  publishOnReady: z.boolean().optional().default(false),
 }).superRefine((value, context) => {
+  if (!value.sizeBytes || !value.extension || !value.mimeType || !value.fileName) {
+    return;
+  }
   const allowedMimeTypes = extensionMimeTypes[value.type][value.extension];
   if (!allowedMimeTypes || !allowedMimeTypes.includes(value.mimeType.toLowerCase())) {
     context.addIssue({ code: 'custom', path: ['extension'], message: 'File extension and MIME type do not match the selected media type' });
@@ -72,9 +76,23 @@ export const mediaRenditionParamsSchema = z.object({
   asset: z.string().regex(/^[a-zA-Z0-9._-]{1,120}$/),
 });
 
+export const studentMediaListQuerySchema = z.object({
+  type: z.nativeEnum(MediaType).optional(),
+  courseId: mediaId.optional(),
+  search: z.string().trim().max(100).optional(),
+});
+
+export const studentMediaProgressSchema = z.object({
+  positionSeconds: z.number().finite().nonnegative().max(60 * 60 * 24),
+  watchedSeconds: z.number().finite().nonnegative().max(60 * 60 * 24),
+  completed: z.boolean().optional().default(false),
+});
+
 export type CreateMediaInput = z.infer<typeof createMediaSchema>;
 export type UpdateMediaInput = z.infer<typeof updateMediaSchema>;
 export type MediaListInput = z.infer<typeof mediaListQuerySchema>;
+export type StudentMediaListInput = z.infer<typeof studentMediaListQuerySchema>;
+export type StudentMediaProgressInput = z.infer<typeof studentMediaProgressSchema>;
 
 export function expectedMediaMimeTypes(type: MediaType, fileExtension: string): string[] {
   return extensionMimeTypes[type][fileExtension] ?? [];

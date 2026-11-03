@@ -12,6 +12,7 @@ const envSchema = z.object({
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(7),
   REQUIRE_ORG_APPROVAL: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   REQUIRE_ENROLLMENT_APPROVAL: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  SHOW_PARTNER_ORG_NAME: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   NOTE_STORAGE_DIR: z.string().default('storage/notes'),
   MEDIA_STORAGE_DIR: z.string().default('storage/media'),
   MEDIA_STORAGE_QUOTA_GB: z.coerce.number().positive().default(10),

@@ -13,6 +13,7 @@ type Organization = {
   contactNumber: string;
   city: string;
   country: string;
+  isPlatformOwner: boolean;
   status: 'ACTIVE' | 'APPROVED' | 'PENDING' | 'REJECTED' | 'SUSPENDED';
   createdAt: string;
   counts: { students: number; staff: number; instructors: number };
@@ -25,6 +26,7 @@ export function OrganizationApprovalsPage() {
   const [search, setSearch] = useState(searchParams.get('search') ?? '');
   const [debouncedSearch, setDebouncedSearch] = useState(searchParams.get('search') ?? '');
   const [selected, setSelected] = useState<{ organization: Organization; action: Action } | null>(null);
+  const [ownerCandidate, setOwnerCandidate] = useState<Organization | null>(null);
   const [reason, setReason] = useState('');
   const [notice, setNotice] = useState('');
   useEffect(() => {
@@ -67,6 +69,17 @@ export function OrganizationApprovalsPage() {
       await queryClient.invalidateQueries({ queryKey: ['platform-organizations'] });
     },
   });
+  const ownerMutation = useMutation({
+    mutationFn: (organization: Organization) => api<{ organization: Organization }>(
+      `/super-admin/organizations/${encodeURIComponent(organization.id)}/platform-owner`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+    onSuccess: async (_data, organization) => {
+      setOwnerCandidate(null);
+      setNotice(`${organization.name} is now the platform owner.`);
+      await queryClient.invalidateQueries({ queryKey: ['platform-organizations'] });
+    },
+  });
   const requestAction = (organization: Organization, action: Action) => {
     setSelected({ organization, action });
     setReason('');
@@ -95,8 +108,14 @@ export function OrganizationApprovalsPage() {
               <p>{organization.headName} · {organization.email}</p>
               <p className="muted">{organization.contactNumber} · {organization.city}, {organization.country}</p>
               <p className="muted">Registered {new Date(organization.createdAt).toLocaleDateString()} · {organization.counts.students} students · {organization.counts.staff} staff · {organization.counts.instructors} instructors</p>
+              {organization.isPlatformOwner && <span className="status-pill status-published">Platform owner</span>}
             </div>
             <div className="row-actions">
+              {!organization.isPlatformOwner && (
+                <Button variant="secondary" disabled={ownerMutation.isPending} onClick={() => setOwnerCandidate(organization)}>
+                  Set as platform owner
+                </Button>
+              )}
               {organization.status === 'PENDING' && <Button disabled={mutation.isPending} onClick={() => requestAction(organization, 'approve')}>Approve</Button>}
               {organization.status === 'ACTIVE' || organization.status === 'APPROVED'
                 ? <Button variant="danger" disabled={mutation.isPending} onClick={() => requestAction(organization, 'suspend')}>Suspend</Button>
@@ -115,6 +134,26 @@ export function OrganizationApprovalsPage() {
                 <span>Reason (required)</span>
                 <textarea className="input textarea" value={reason} maxLength={1000} onChange={(event) => setReason(event.target.value)} />
               </label>
+            )}
+            {ownerCandidate && (
+              <div className="dialog-backdrop">
+                <section className="dialog card" role="dialog" aria-modal="true" aria-labelledby="platform-owner-title">
+                  <p className="eyebrow">PLATFORM BRANDING</p>
+                  <h2 id="platform-owner-title">Set {ownerCandidate.name} as platform owner?</h2>
+                  <p className="muted">This changes the welcome intro shown to users. The current platform owner will be unset.</p>
+                  {ownerMutation.error && (
+                    <p className="notice notice-error" role="alert">
+                      {ownerMutation.error instanceof ApiError ? ownerMutation.error.message : 'The platform owner could not be changed.'}
+                    </p>
+                  )}
+                  <div className="row-actions">
+                    <Button variant="secondary" onClick={() => setOwnerCandidate(null)}>Cancel</Button>
+                    <Button disabled={ownerMutation.isPending} onClick={() => ownerMutation.mutate(ownerCandidate)}>
+                      {ownerMutation.isPending ? 'Updating…' : 'Confirm'}
+                    </Button>
+                  </div>
+                </section>
+              </div>
             )}
             <div className="row-actions">
               <Button variant="secondary" onClick={() => setSelected(null)}>Cancel</Button>

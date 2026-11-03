@@ -7,13 +7,14 @@ import { app } from '../src/app.js';
 import { env } from '../src/config/env.js';
 import * as approvalService from '../src/modules/approvals/approvals.service.js';
 import * as organizationService from '../src/modules/organizations/organizations.service.js';
-import { createOrganizationRegistrationLimiter } from '../src/modules/organizations/organizations.routes.js';
+import { createOrganizationRegistrationLimiter, createPublicBrandLimiter, publicBrandRouter } from '../src/modules/organizations/organizations.routes.js';
 
 const prisma = new PrismaClient();
 const password = 'TestPass!1234';
 const prefix = `phase1a-${Date.now()}`;
 const createdUserIds: string[] = [];
 const createdOrganizationIds: string[] = [];
+let previousPlatformOwnerId: string | null = null;
 
 async function makeOrganization(name: string, code: string) {
   const organization = await prisma.organization.create({
@@ -120,6 +121,13 @@ async function registerStudent(organizationCode: string, studentId: string, suff
 beforeAll(async () => prisma.$connect());
 
 afterAll(async () => {
+  if (previousPlatformOwnerId) {
+    await prisma.organization.updateMany({ where: { isPlatformOwner: true }, data: { isPlatformOwner: false } });
+    await prisma.organization.update({
+      where: { id: previousPlatformOwnerId },
+      data: { isPlatformOwner: true },
+    });
+  }
   const organizationIds = [...new Set(createdOrganizationIds)];
   const userIds = [...new Set(createdUserIds)];
   if (organizationIds.length) {
@@ -249,6 +257,82 @@ describe('multi-organization authentication and approvals', () => {
     expect((await request(limiterTestApp).post('/register')).status).toBe(429);
   });
 
+  it('returns minimal public brand variants with identical unknown-code response shapes', async () => {
+    const organization = await makeOrganization(`${prefix} Public Brand`, `${prefix}-public-brand`);
+    const previousSetting = env.SHOW_PARTNER_ORG_NAME;
+    try {
+      env.SHOW_PARTNER_ORG_NAME = false;
+      const partner = await request(app).get(`/api/public/brand?orgCode=${organization.code}`);
+      const unknown = await request(app).get(`/api/public/brand?orgCode=${prefix}-unknown`);
+      expect(partner.status).toBe(200);
+      expect(partner.body.data).toEqual({ variant: 'PARTNER' });
+      expect(unknown.body.data).toEqual({ variant: 'OWNER' });
+      expect(Object.keys(partner.body.data)).toEqual(Object.keys(unknown.body.data));
+
+      env.SHOW_PARTNER_ORG_NAME = true;
+      const namedPartner = await request(app).get(`/api/public/brand?orgCode=${organization.code}`);
+      const namedUnknown = await request(app).get(`/api/public/brand?orgCode=${prefix}-unknown`);
+      expect(namedPartner.body.data).toEqual({ variant: 'PARTNER', organizationName: organization.name });
+      expect(namedUnknown.body.data).toEqual({ variant: 'OWNER', organizationName: null });
+      expect(Object.keys(namedPartner.body.data)).toEqual(Object.keys(namedUnknown.body.data));
+      expect(namedPartner.body.data).not.toHaveProperty('code');
+      expect(namedPartner.body.data).not.toHaveProperty('email');
+    } finally {
+      env.SHOW_PARTNER_ORG_NAME = previousSetting;
+    }
+
+    const limiterTestApp = express();
+    limiterTestApp.use('/api/public', createPublicBrandLimiter(2), publicBrandRouter);
+    expect((await request(limiterTestApp).get('/api/public/brand')).status).toBe(200);
+    expect((await request(limiterTestApp).get('/api/public/brand')).status).toBe(200);
+    expect((await request(limiterTestApp).get('/api/public/brand')).status).toBe(429);
+  });
+
+  it('allows only one platform owner and audits changes made by Super Admin', async () => {
+    const previousOwner = await prisma.organization.findFirst({
+      where: { isPlatformOwner: true },
+      select: { id: true },
+    });
+    previousPlatformOwnerId = previousOwner?.id ?? null;
+    const firstOwner = await makeOrganization(`${prefix} First Platform Owner`, `${prefix}-owner-first`);
+    const secondOwner = await makeOrganization(`${prefix} Second Platform Owner`, `${prefix}-owner-second`);
+    const tenantAdmin = await makeUser(firstOwner.id, Role.ORG_ADMIN, 'platform-owner-tenant-admin');
+    const superAdmin = await makeUser(null, Role.SUPER_ADMIN, 'platform-owner-super-admin');
+    const superAdminLogin = await request(app).post('/api/auth/super-admin/login')
+      .send({ email: superAdmin.email, password });
+    const tenantAdminLogin = await orgAdminLogin(firstOwner.code!, tenantAdmin.email);
+
+    const denied = await request(app)
+      .post(`/api/super-admin/organizations/${secondOwner.id}/platform-owner`)
+      .set('Cookie', cookieHeader(tenantAdminLogin))
+      .send({});
+    expect(denied.status).toBe(403);
+
+    const firstChange = await request(app)
+      .post(`/api/super-admin/organizations/${firstOwner.id}/platform-owner`)
+      .set('Cookie', cookieHeader(superAdminLogin))
+      .send({});
+    expect(firstChange.status).toBe(200);
+    expect(firstChange.body.data.organization.isPlatformOwner).toBe(true);
+    expect(await prisma.auditLog.count({
+      where: { organizationId: firstOwner.id, action: 'PLATFORM_OWNER_SET', actorId: superAdmin.id },
+    })).toBe(1);
+
+    const secondChange = await request(app)
+      .post(`/api/super-admin/organizations/${secondOwner.id}/platform-owner`)
+      .set('Cookie', cookieHeader(superAdminLogin))
+      .send({});
+    expect(secondChange.status).toBe(200);
+    expect(await prisma.organization.count({ where: { isPlatformOwner: true } })).toBe(1);
+    expect(await prisma.organization.findUnique({ where: { id: firstOwner.id }, select: { isPlatformOwner: true } }))
+      .toEqual({ isPlatformOwner: false });
+    expect(await prisma.organization.findUnique({ where: { id: secondOwner.id }, select: { isPlatformOwner: true } }))
+      .toEqual({ isPlatformOwner: true });
+    expect(await prisma.auditLog.count({
+      where: { organizationId: secondOwner.id, action: 'PLATFORM_OWNER_SET', actorId: superAdmin.id },
+    })).toBe(1);
+  });
+
   it('keeps Super Admin login isolated from tenant roles', async () => {
     const organization = await makeOrganization(`${prefix} Role Isolation`, `${prefix}-role-isolation`);
     const orgAdmin = await makeUser(organization.id, Role.ORG_ADMIN, 'role-isolation-admin');
@@ -376,6 +460,7 @@ describe('multi-organization authentication and approvals', () => {
     expect((await request(app).get('/api/auth/me').set('Cookie', oldCookie)).status).toBe(401);
     expect(await prisma.session.count({ where: { userId: active.id, revokedAt: null } })).toBe(1);
   });
+
   it('returns a safe current-user profile for every role and rejects invalid, expired, and revoked sessions', async () => {
     expect((await request(app).get('/api/auth/me')).status).toBe(401);
     expect((await request(app).get('/api/auth/me').set('Cookie', 'accessToken=invalid')).status).toBe(401);
@@ -434,7 +519,6 @@ describe('multi-organization authentication and approvals', () => {
     await prisma.session.update({ where: { id: revokedSession.id }, data: { revokedAt: new Date() } });
     expect((await request(app).get('/api/auth/me').set('Cookie', cookieHeader(revokedLogin))).status).toBe(401);
   });
-
 
   it('applies approval permissions and isolates student records by organization', async () => {
     const first = await makeOrganization(`${prefix} Tenant A`, `${prefix}-tenant-a`);

@@ -96,6 +96,7 @@ enum MediaType {
 
 enum MediaStatus {
   UPLOADING
+  AWAITING_FILE
   PROCESSING
   READY
   FAILED
@@ -663,6 +664,7 @@ model MediaItem {
   originalKey     String?
   streamKey       String?
   thumbnailKey    String?
+  publishOnReady  Boolean         @default(false)
   uploadedById    String
   publishedAt     DateTime?
   deletedAt       DateTime?

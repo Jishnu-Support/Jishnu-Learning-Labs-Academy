@@ -18,3 +18,11 @@ export function validateParams(schema: ZodType): RequestHandler {
     return next();
   };
 }
+
+export function validateQuery(schema: ZodType): RequestHandler {
+  return (req, _res, next) => {
+    const parsed = schema.safeParse(req.query);
+    if (!parsed.success) return next(parsed.error);
+    return next();
+  };
+}

@@ -9,6 +9,7 @@ import {
   mediaAssetParamsSchema,
   mediaIdSchema,
   mediaRenditionParamsSchema,
+  studentMediaProgressSchema,
   updateMediaSchema,
 } from './media.schemas.js';
 
@@ -37,3 +38,10 @@ mediaRouter.post('/:mediaId/unpublish', validateParams(mediaIdSchema), controlle
 mediaRouter.post('/:mediaId/retry', validateParams(mediaIdSchema), controller.retry);
 mediaRouter.post('/:mediaId/cancel', validateParams(mediaIdSchema), controller.cancel);
 mediaRouter.delete('/:mediaId', validateParams(mediaIdSchema), controller.remove);
+
+export const studentMediaRouter = Router();
+studentMediaRouter.use(authenticate, requireOrganization, requireRoles(Role.STUDENT));
+studentMediaRouter.get('/', controller.listStudentMedia);
+studentMediaRouter.get('/:mediaId', validateParams(mediaIdSchema), controller.getStudentMedia);
+studentMediaRouter.post('/:mediaId/progress', validateParams(mediaIdSchema), validateBody(studentMediaProgressSchema), controller.recordStudentProgress);
+studentMediaRouter.get('/:mediaId/stream/:asset', validateParams(mediaAssetParamsSchema), controller.streamStudentAsset);

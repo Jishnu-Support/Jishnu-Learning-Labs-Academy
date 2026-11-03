@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcrypt';
-import { AccountStatus, OrganizationStatus, Role, StudentStatus, type User } from '@prisma/client';
+import { AccountStatus, OrganizationStatus, Prisma, Role, StudentStatus, type User } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
@@ -19,29 +19,44 @@ async function recordLogin(
   await prisma.loginLog.create({ data: { userId, organizationId, ip: meta.ip, userAgent: meta.userAgent, success } });
 }
 
+async function withRetryableTransaction<T>(operation: () => Promise<T>): Promise<T> {
+  let attempts = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      const retryable = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
+      if (!retryable || attempts >= 3) throw error;
+      attempts += 1;
+    }
+  }
+}
+
 async function issueCredentials(user: User, meta: RequestMeta): Promise<Credentials> {
   const sessionId = randomUUID();
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * env.REFRESH_TOKEN_TTL_DAYS);
   const refreshToken = makeRefreshToken(user.id, user.role, sessionId, user.organizationId);
-  await prisma.$transaction(async (tx) => {
-    if (user.role === Role.STUDENT) {
-      await tx.session.updateMany({
-        where: { userId: user.id, organizationId: user.organizationId, revokedAt: null },
-        data: { revokedAt: new Date() },
+  await withRetryableTransaction(async () => {
+    await prisma.$transaction(async (tx) => {
+      if (user.role === Role.STUDENT) {
+        await tx.session.updateMany({
+          where: { userId: user.id, organizationId: user.organizationId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+      await tx.session.create({
+        data: {
+          id: sessionId,
+          userId: user.id,
+          organizationId: user.organizationId,
+          refreshTokenHash: hashToken(refreshToken),
+          ip: meta.ip,
+          userAgent: meta.userAgent,
+          expiresAt,
+        },
       });
-    }
-    await tx.session.create({
-      data: {
-        id: sessionId,
-        userId: user.id,
-        organizationId: user.organizationId,
-        refreshTokenHash: hashToken(refreshToken),
-        ip: meta.ip,
-        userAgent: meta.userAgent,
-        expiresAt,
-      },
-    });
-  }, { isolationLevel: 'Serializable' });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  });
   return {
     user,
     accessToken: makeAccessToken(user.id, user.role, sessionId, user.organizationId),

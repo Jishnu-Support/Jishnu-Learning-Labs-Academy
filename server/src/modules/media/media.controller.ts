@@ -2,7 +2,7 @@ import type { Request, RequestHandler } from 'express';
 import { getOrganizationId } from '../../middleware/authenticate.js';
 import { HttpError } from '../../utils/http-error.js';
 import * as mediaService from './media.service.js';
-import { createMediaSchema, mediaListQuerySchema, updateMediaSchema } from './media.schemas.js';
+import { createMediaSchema, mediaListQuerySchema, studentMediaListQuerySchema, studentMediaProgressSchema, updateMediaSchema } from './media.schemas.js';
 
 function actor(req: Request) {
   if (!req.auth) throw new HttpError(401, 'Authentication required');
@@ -33,6 +33,22 @@ function assetMimeType(asset: string): string {
 export const list: RequestHandler = async (req, res) => {
   const filters = mediaListQuerySchema.parse(req.query);
   res.json({ data: await mediaService.listMedia(actor(req), filters) });
+};
+
+export const listStudentMedia: RequestHandler = async (req, res) => {
+  const filters = studentMediaListQuerySchema.parse(req.query);
+  res.json({ data: await mediaService.listStudentMedia(actor(req), filters) });
+};
+
+export const getStudentMedia: RequestHandler = async (req, res) => {
+  const media = await mediaService.getStudentMedia(actor(req), mediaId(req));
+  res.json({ data: { media } });
+};
+
+export const recordStudentProgress: RequestHandler = async (req, res) => {
+  const input = studentMediaProgressSchema.parse(req.body);
+  const media = await mediaService.recordWatchProgress(actor(req), mediaId(req), input);
+  res.json({ data: { media } });
 };
 
 export const courses: RequestHandler = async (req, res) => {
@@ -121,6 +137,21 @@ export const key: RequestHandler = async (req, res) => {
   res.setHeader('Cache-Control', 'private, no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.send(buffer);
+};
+
+export const streamStudentAsset: RequestHandler = (req, res, next) => {
+  const asset = req.params.asset;
+  if (typeof asset !== 'string') throw new HttpError(400, 'Invalid media asset');
+  void (async () => {
+    const result = await mediaService.previewStudentAsset(actor(req), mediaId(req), asset);
+    streamHeaders(res, assetMimeType(asset));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Content-Length', result.file.size);
+    result.file.stream.on('error', next);
+    result.file.stream.pipe(res);
+  })().catch(next);
 };
 
 export const storage: RequestHandler = async (req, res) => {

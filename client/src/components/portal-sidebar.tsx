@@ -4,7 +4,7 @@ import { NavLink } from 'react-router-dom';
 import type { Role } from '../types';
 import { BrandLogo } from './brand-logo';
 
-type PortalLink = { href: string; label: string };
+type PortalLink = { href: string; label: string; group?: string };
 
 const linksByRole: Partial<Record<Role, PortalLink[]>> = {
   ORG_ADMIN: [
@@ -38,10 +38,16 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
   ],
   STUDENT: [
     { href: '/student', label: 'Dashboard' },
-    { href: '/student/courses', label: 'My Courses' },
-    { href: '/student/notes', label: 'Notes' },
-    { href: '/student/assessments', label: 'My Assessment' },
-    { href: '/student/practice', label: 'Practice Q/A' },
+    { href: '/student/courses', label: 'My Courses', group: 'LEARN' },
+    { href: '/student/media', label: 'Videos & Audios', group: 'LEARN' },
+    { href: '/student/online-classes', label: 'Online Classes', group: 'LEARN' },
+    { href: '/student/notes', label: 'Notes', group: 'LEARN' },
+    { href: '/student/library', label: 'Library', group: 'LEARN' },
+    { href: '/student/practice', label: 'Practice Q/A', group: 'PRACTICE' },
+    { href: '/student/assessments', label: 'My Assessment', group: 'PRACTICE' },
+    { href: '/student/attendance', label: 'My Attendance', group: 'PROGRESS' },
+    { href: '/student/track', label: 'My Track', group: 'PROGRESS' },
+    { href: '/student/certificates', label: 'My Certificates', group: 'PROGRESS' },
   ],
 };
 
@@ -54,6 +60,15 @@ export function PortalSidebar({ role }: { role: Role }) {
   }, [role]);
 
   if (!links) return null;
+
+  const ungroupedLinks = links.filter((link) => !link.group);
+  const groupedLinks = new Map<string, PortalLink[]>();
+  for (const link of links) {
+    if (link.group) {
+      if (!groupedLinks.has(link.group)) groupedLinks.set(link.group, []);
+      groupedLinks.get(link.group)?.push(link);
+    }
+  }
 
   return (
     <>
@@ -70,10 +85,20 @@ export function PortalSidebar({ role }: { role: Role }) {
         </div>
         <p className="eyebrow">WORKSPACE</p>
         <nav>
-          {links.map((link) => (
+          {ungroupedLinks.map((link) => (
             <NavLink key={link.href} end={link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href} onClick={() => setIsOpen(false)}>
               <span>{link.label}</span>
             </NavLink>
+          ))}
+          {Array.from(groupedLinks.entries()).map(([group, groupLinks]) => (
+            <div key={group} className="sidebar-group">
+              <span className="sidebar-group-label">{group}</span>
+              {groupLinks.map((link) => (
+                <NavLink key={link.href} end={link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href} onClick={() => setIsOpen(false)}>
+                  <span>{link.label}</span>
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
       </aside>

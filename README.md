@@ -105,7 +105,11 @@ Video processing uses bundled FFmpeg to create encrypted HLS renditions and a th
 
 ## Brand theme and welcome intro
 
-The client uses the Jishnu Learning Labs brand palette, shared logo, responsive portal styling, and a seven-second welcome intro. The intro appears once per browser session on the first root or login page visit; it is skipped for authenticated users and is not replayed on later routes. The Skip control appears after one second, and Escape also skips it.
+The client uses the Jishnu Learning Labs brand palette, shared logo, responsive portal styling, and a seven-second welcome intro. `VITE_INTRO_MODE` in `client/.env` controls when it plays: `every-load` (default) plays on each full page load and after every successful login, `once-per-session` plays only once in the browser session, and `after-login-only` plays only after successful login. It does not replay on in-app route changes, API calls, or tab refocus. The app and authentication checks continue loading behind the intro. Skip appears after one second, and Escape also skips it.
+
+The intro uses the OWNER copy (“Welcome to Jishnu Learning Labs”) for Super Admin, the platform-owner organization, unknown organization codes, and as the fallback. Other organizations see the PARTNER copy (“Powered by Jishnu Learning Labs”). The organization is selected from the current user's organization, the `?org=code` URL query, the last tenant organization saved in `localStorage` (`jll-last-org-code`), then the default OWNER variant. To optionally show “Welcome to {organization name}” on partner intros, set `SHOW_PARTNER_ORG_NAME=true` in `server/.env` and `VITE_SHOW_PARTNER_ORG_NAME=true` in `client/.env`. The public `/api/public/brand` response discloses only the variant and, when enabled, the partner name; unknown codes return the default OWNER response shape.
+
+The forward-only platform-owner migration adds a unique owner flag. The seed marks `jll-demo` as platform owner when no conflicting owner is set; it stops rather than changing a different organization's owner. To change it, sign in as Super Admin, open **Organizations**, choose **Set as platform owner**, and confirm. The transaction unsets the previous owner and records audit entries.
 
 Sound is synthesized locally with the Web Audio API by default. `client/src/lib/brand-config.ts` contains the intro copy, shared animation/sound cue timings, and these options:
 

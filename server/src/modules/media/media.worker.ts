@@ -105,6 +105,7 @@ export async function processNextJob(processor: MediaProcessor, organizationId?:
       if ((currentUsage._sum.storageBytes ?? 0n) + BigInt(finalStorageBytes) > BigInt(Math.floor(env.MEDIA_STORAGE_QUOTA_GB * 1024 ** 3))) {
         throw new HttpError(413, 'Processed media would exceed the organization storage quota');
       }
+      const publishOnReady = job.media.publishOnReady;
       const updatedMedia = await tx.mediaItem.updateMany({
         where: { id: job.media.id, organizationId: job.organizationId, deletedAt: null },
         data: {
@@ -113,6 +114,8 @@ export async function processNextJob(processor: MediaProcessor, organizationId?:
           streamKey: result.streamKey,
           thumbnailKey: result.thumbnailKey,
           storageBytes: BigInt(finalStorageBytes),
+          visibility: publishOnReady ? 'PUBLISHED' : job.media.visibility,
+          publishedAt: publishOnReady ? new Date() : job.media.publishedAt,
         },
       });
       if (updatedMedia.count !== 1) throw new HttpError(404, 'Media was deleted before processing completed');

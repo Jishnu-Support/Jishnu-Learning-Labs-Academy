@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import type { ReactNode } from 'react';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './app';
 import { AuthProvider } from './auth/auth-provider';
+
+vi.mock('./components/brand-intro', () => ({
+  BrandIntroGate: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
 
 describe('Phase 1 portal shell', () => {
   it('shows the student sign-in screen and registration link', async () => {

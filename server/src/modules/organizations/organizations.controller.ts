@@ -1,6 +1,6 @@
 import type { RequestHandler } from 'express';
 import * as service from './organizations.service.js';
-import { organizationSearchSchema } from './organizations.schemas.js';
+import { organizationSearchSchema, publicBrandQuerySchema } from './organizations.schemas.js';
 
 export const register: RequestHandler = async (req, res) => {
   const organization = await service.register(req.body);
@@ -26,6 +26,13 @@ export const listPending: RequestHandler = async (_req, res) => {
   res.json({ data: { organizations } });
 };
 
+export const publicBrand: RequestHandler = async (req, res) => {
+  const parsed = publicBrandQuerySchema.safeParse(req.query);
+  if (!parsed.success) throw parsed.error;
+  const result = await service.getPublicBrand(parsed.data.orgCode);
+  res.json({ data: result });
+};
+
 export const approve: RequestHandler = async (req, res) => {
   const organization = await service.approve(req.params.organizationId as string, req.auth!.userId);
   res.json({ data: { organization } });
@@ -43,5 +50,10 @@ export const reactivate: RequestHandler = async (req, res) => {
 
 export const reject: RequestHandler = async (req, res) => {
   const organization = await service.reject(req.params.organizationId as string, req.auth!.userId, req.body.reason);
+  res.json({ data: { organization } });
+};
+
+export const setPlatformOwner: RequestHandler = async (req, res) => {
+  const organization = await service.setPlatformOwner(req.params.organizationId as string, req.auth!.userId);
   res.json({ data: { organization } });
 };

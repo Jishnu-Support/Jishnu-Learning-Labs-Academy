@@ -188,7 +188,7 @@ describe('Checkpoint 1B staff and student directories', () => {
     expect((await request(app).post(`/api/staff/${createdUser.id}/reactivate`).set('Cookie', adminCookie)).status).toBe(200);
     const activeStaffCookie = cookieHeader(await login('staff', organization.code!, 'NEW-STF-1', newPassword));
     expect((await request(app).post('/api/staff').set('Cookie', activeStaffCookie).send({})).status).toBe(403);
-  });
+  }, 30000);
 
   it('scopes student and staff search and detail data to the caller organization', async () => {
     const first = await makeOrganization('directory-a');

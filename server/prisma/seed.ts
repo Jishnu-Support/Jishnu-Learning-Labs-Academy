@@ -751,6 +751,19 @@ async function main() {
   if (!primaryOrganization.code || !secondOrganization.code) {
     throw new Error('Approved seed organizations must have organization codes');
   }
+  await prisma.$transaction(async (tx) => {
+    const currentOwner = await tx.organization.findFirst({
+      where: { isPlatformOwner: true },
+      select: { id: true },
+    });
+    if (currentOwner && currentOwner.id !== primaryOrganization.id) {
+      throw new Error('Another organization is already the platform owner. Change it in Super Admin before running the seed.');
+    }
+    await tx.organization.update({
+      where: { id: primaryOrganization.id },
+      data: { isPlatformOwner: true },
+    });
+  }, { isolationLevel: 'Serializable' });
 
   const primarySeed = await seedTenant({ ...primaryOrganization, code: primaryOrganization.code }, passwordHash, {
     adminEmail: 'orgadmin@jll-demo.local',

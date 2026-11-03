@@ -79,7 +79,7 @@ describe('MediaPage', () => {
 
   it('shows the selected file and permits switching the picker to audio', async () => {
     vi.mocked(api).mockImplementation(async (path) => {
-      if (path === '/media/courses') return { courses: [] };
+      if (path === '/media/courses') return { courses: [{ id: 'course-1', title: 'Python', code: 'PY101', topics: [{ id: 'topic-1', title: 'Basics', order: 1 }] }] };
       if (path === '/media/limits') return { limits: { maxVideoBytes: 500 * 1024 * 1024, maxAudioBytes: 100 * 1024 * 1024 } };
       if (path.startsWith('/media?')) return { media: [], storage: null };
       throw new Error(`Unexpected API request: ${path}`);
@@ -87,11 +87,13 @@ describe('MediaPage', () => {
     renderMediaPage();
     const typeSelect = await screen.findByLabelText('Media type');
     fireEvent.change(typeSelect, { target: { value: 'AUDIO' } });
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Audio lesson' } });
+    fireEvent.change(screen.getAllByLabelText('Course')[0], { target: { value: 'course-1' } });
     const file = new File([new Uint8Array(1024)], 'lesson.mp3', { type: 'audio/mpeg' });
     fireEvent.change(screen.getByLabelText('Choose a media file'), { target: { files: [file] } });
 
     await waitFor(() => expect(screen.getByText('lesson.mp3')).toBeInTheDocument());
     expect(screen.getByText('1 KB · audio/mpeg')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Upload media' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Upload & Publish' })).toBeEnabled();
   });
 });

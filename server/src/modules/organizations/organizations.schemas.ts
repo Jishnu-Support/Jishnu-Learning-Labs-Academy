@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { emailSchema, phoneSchema } from '../../utils/validation-schemas.js';
+import { emailSchema, organizationCodeSchema, phoneSchema } from '../../utils/validation-schemas.js';
 
 export const organizationRegistrationSchema = z.object({
   organizationName: z.string().trim().min(2).max(160),
@@ -22,6 +22,12 @@ export const organizationParamSchema = z.object({
 export const organizationSearchSchema = z.object({
   search: z.string().trim().max(120).optional(),
 });
+
+export const publicBrandQuerySchema = z.object({
+  orgCode: organizationCodeSchema.optional(),
+});
+
+export const platformOwnerActionSchema = z.object({}).strict();
 
 export const rejectionSchema = z.object({
   reason: z.string().trim().min(1, 'Provide a rejection reason').max(1000),

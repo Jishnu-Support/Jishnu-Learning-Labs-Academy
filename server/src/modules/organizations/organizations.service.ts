@@ -130,6 +130,7 @@ export async function listOrganizations(search?: string) {
       city: true,
       country: true,
       status: true,
+      isPlatformOwner: true,
       createdAt: true,
       users: { select: { role: true } },
     },
@@ -142,6 +143,78 @@ export async function listOrganizations(search?: string) {
       instructors: users.filter(({ role }) => role === Role.INSTRUCTOR).length,
     },
   }));
+}
+
+export async function getPublicBrand(orgCode?: string) {
+  const organization = orgCode
+    ? await prisma.organization.findUnique({
+      where: { code: orgCode },
+      select: { name: true, isPlatformOwner: true },
+    })
+    : null;
+  const isPartner = organization !== null && !organization.isPlatformOwner;
+  const variant = isPartner ? 'PARTNER' : 'OWNER';
+  if (!env.SHOW_PARTNER_ORG_NAME) return { variant };
+  return {
+    variant,
+    organizationName: isPartner ? organization.name : null,
+  };
+}
+
+export async function setPlatformOwner(organizationId: string, actorId: string) {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.findUnique({
+        where: { id: organizationId },
+        select: { id: true, name: true, isPlatformOwner: true },
+      });
+      if (!organization) throw new HttpError(404, 'Organization not found');
+      if (organization.isPlatformOwner) return organization;
+
+      const previousOwner = await tx.organization.findFirst({
+        where: { isPlatformOwner: true },
+        select: { id: true, name: true },
+      });
+      if (previousOwner) {
+        await tx.organization.update({
+          where: { id: previousOwner.id },
+          data: { isPlatformOwner: false },
+        });
+        await tx.auditLog.create({
+          data: {
+            organizationId: previousOwner.id,
+            actorId,
+            action: 'PLATFORM_OWNER_UNSET',
+            targetType: 'Organization',
+            targetId: previousOwner.id,
+            metadata: { newOwnerId: organization.id },
+          },
+        });
+      }
+
+      const updated = await tx.organization.update({
+        where: { id: organizationId },
+        data: { isPlatformOwner: true },
+        select: { id: true, name: true, isPlatformOwner: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorId,
+          action: 'PLATFORM_OWNER_SET',
+          targetType: 'Organization',
+          targetId: organizationId,
+          metadata: { previousOwnerId: previousOwner?.id ?? null },
+        },
+      });
+      return updated;
+    }, { isolationLevel: 'Serializable' });
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && (error.code === 'P2002' || error.code === 'P2034')) {
+      throw new HttpError(409, 'Another platform owner was set at the same time. Refresh and try again.');
+    }
+    throw error;
+  }
 }
 
 export async function approve(organizationId: string, actorId: string) {
