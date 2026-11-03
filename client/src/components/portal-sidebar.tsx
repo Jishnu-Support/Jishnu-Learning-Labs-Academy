@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { Menu, X } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import type { Role } from '../types';
 import { BrandLogo } from './brand-logo';
@@ -35,7 +37,7 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/staff/media', label: 'Upload Media' },
   ],
   STUDENT: [
-    { href: '/student', label: 'Overview' },
+    { href: '/student', label: 'Dashboard' },
     { href: '/student/courses', label: 'My Courses' },
     { href: '/student/notes', label: 'Notes' },
     { href: '/student/assessments', label: 'My Assessment' },
@@ -45,18 +47,36 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
 
 export function PortalSidebar({ role }: { role: Role }) {
   const links = linksByRole[role];
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    setIsOpen(false);
+  }, [role]);
+
   if (!links) return null;
+
   return (
-    <aside className="portal-sidebar" aria-label={`${role.replace('_', ' ')} navigation`}>
-      <BrandLogo className="sidebar-logo" />
-      <p className="eyebrow">WORKSPACE</p>
-      <nav>
-        {links.map((link) => (
-          <NavLink key={link.href} end={link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href}>
-            {link.label}
-          </NavLink>
-        ))}
-      </nav>
-    </aside>
+    <>
+      <button type="button" className="sidebar-toggle" aria-label="Open navigation" onClick={() => setIsOpen((current) => !current)}>
+        <Menu size={18} aria-hidden="true" />
+      </button>
+      {isOpen && <button type="button" className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setIsOpen(false)} />}
+      <aside className={`portal-sidebar ${isOpen ? 'open' : ''}`} aria-label={`${role.replace('_', ' ')} navigation`}>
+        <div className="sidebar-header">
+          <BrandLogo className="sidebar-logo" />
+          <button type="button" className="sidebar-close" aria-label="Close navigation" onClick={() => setIsOpen(false)}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <p className="eyebrow">WORKSPACE</p>
+        <nav>
+          {links.map((link) => (
+            <NavLink key={link.href} end={link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href} onClick={() => setIsOpen(false)}>
+              <span>{link.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+      </aside>
+    </>
   );
 }

@@ -50,7 +50,11 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 - Use a bold serif for headings and a clean sans-serif for body copy, with Noto Sans Tamil in the body font fallback stack. Prefer optional/preloaded fonts or system fallbacks to avoid layout shift.
 - Keep the logo in the shared shell and portal navigation. Every portal login and organization registration surface must show the logo and platform-brand chrome without replacing an organization's own identity.
 - Preserve `PageHeader` on every non-login, non-dashboard page and keep its explicit `backTo` route.
-- The welcome intro is a one-time-per-browser-session overlay on the first root or login visit only. Keep its 7-second duration and sound cues in the shared intro configuration, respect reduced motion, autoplay restrictions, mute preference, and cleanup rules. Do not replay it on route changes or after authentication.
+- Responsive layout standards: build the app shell with a sticky header, sticky full-height sidebar, fluid content spacing, and no horizontal page scroll at 360x640, 390x844, 768x1024, 1024x768, 1280x720, 1366x768, 1536x864, 1920x1080, 2560x1440, landscape phone 844x390, and browser zoom 125%/150%. Sidebars must collapse to a rail or drawer below the wide desktop breakpoint without covering core content.
+- Card, form, table, and empty/loading/error states must share the same design language: padded cards, consistent section headings, 44px control heights, connected spacing tokens, and clear empty states instead of blank gaps.
+- The welcome intro uses `INTRO_MODE` (`every-load` by default, `once-per-session`, or `after-login-only`). It may run on full page loads and successful login events, but never on normal route changes, API calls, or tab refocus. Keep its 7-second duration and sound cues in the shared intro configuration, respect reduced motion, autoplay restrictions, mute preference, and cleanup rules.
+- Choose the intro variant from the authenticated user's organization first, then `?org=code`, then `jll-last-org-code`, and finally default to OWNER. Super Admin and the platform-owner organization use OWNER; other organizations use PARTNER. Keep partner organization-name display opt-in.
+- Only one organization may be the platform owner. Change it through the audited Super Admin action; the development seed may set `jll-demo` only when there is no conflicting platform owner.
 
 ## Security and privacy
 - Never commit secrets; use environment variables and keep `.env.example` aligned.
