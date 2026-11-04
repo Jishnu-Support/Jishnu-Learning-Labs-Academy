@@ -10,49 +10,44 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
   ORG_ADMIN: [
     { href: '/org-admin', label: 'Overview' },
     { href: '/org-admin/courses', label: 'Courses' },
-    { href: '/org-admin/instructors', label: 'Pending Instructors & Staff' },
-    { href: '/org-admin/create-staff', label: 'Create Staff' },
+    { href: '/org-admin/tutors/pending', label: 'Pending Tutors' },
+    { href: '/org-admin/create-tutor', label: 'Create Tutor' },
     { href: '/org-admin/students', label: 'Student Details' },
-    { href: '/org-admin/staff', label: 'Staff Details' },
+    { href: '/org-admin/tutors', label: 'Tutor Details' },
     { href: '/org-admin/notes', label: 'Publish Notes' },
     { href: '/org-admin/media', label: 'Upload Media' },
     { href: '/org-admin/learning/questions', label: 'Practice Q/A' },
     { href: '/org-admin/learning/assessments', label: 'Assessments' },
   ],
   INSTRUCTOR: [
-    { href: '/instructor', label: 'Overview' },
-    { href: '/instructor/courses', label: 'Courses' },
-    { href: '/instructor/approvals', label: 'Pending Students' },
-    { href: '/instructor/students', label: 'Student Details' },
-    { href: '/instructor/staff', label: 'Staff Details' },
-    { href: '/instructor/notes', label: 'Publish Notes' },
-    { href: '/instructor/media', label: 'Upload Media' },
-    { href: '/instructor/learning/questions', label: 'Practice Q/A' },
-    { href: '/instructor/learning/assessments', label: 'Assessments' },
+    { href: '/tutor', label: 'Overview' },
+    { href: '/tutor/courses', label: 'Courses' },
+    { href: '/tutor/approvals', label: 'Pending Students' },
+    { href: '/tutor/students', label: 'Student Details' },
+    { href: '/tutor/tutors', label: 'Tutor Details' },
+    { href: '/tutor/notes', label: 'Publish Notes' },
+    { href: '/tutor/media', label: 'Upload Media' },
+    { href: '/tutor/learning/questions', label: 'Practice Q/A' },
+    { href: '/tutor/learning/assessments', label: 'Assessments' },
   ],
-  STAFF: [
-    { href: '/staff', label: 'Overview' },
-    { href: '/staff/students', label: 'Student Details' },
-    { href: '/staff/notes', label: 'Notes' },
-    { href: '/staff/media', label: 'Upload Media' },
+  TUTOR: [
+    { href: '/tutor', label: 'Overview' },
+    { href: '/tutor/students', label: 'Student Details' },
+    { href: '/tutor/notes', label: 'Notes' },
+    { href: '/tutor/media', label: 'Upload Media' },
   ],
   STUDENT: [
     { href: '/student', label: 'Dashboard' },
     { href: '/student/courses', label: 'My Courses', group: 'LEARN' },
     { href: '/student/media', label: 'Videos & Audios', group: 'LEARN' },
-    { href: '/student/online-classes', label: 'Online Classes', group: 'LEARN' },
     { href: '/student/notes', label: 'Notes', group: 'LEARN' },
-    { href: '/student/library', label: 'Library', group: 'LEARN' },
     { href: '/student/practice', label: 'Practice Q/A', group: 'PRACTICE' },
     { href: '/student/assessments', label: 'My Assessment', group: 'PRACTICE' },
-    { href: '/student/attendance', label: 'My Attendance', group: 'PROGRESS' },
-    { href: '/student/track', label: 'My Track', group: 'PROGRESS' },
-    { href: '/student/certificates', label: 'My Certificates', group: 'PROGRESS' },
   ],
 };
 
 export function PortalSidebar({ role }: { role: Role }) {
-  const links = linksByRole[role];
+  const links = [...(linksByRole[role] ?? []), { href: '/notifications', label: 'Notifications' }, { href: '/my-profile', label: 'My Profile' }];
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
@@ -76,7 +71,7 @@ export function PortalSidebar({ role }: { role: Role }) {
         <Menu size={18} aria-hidden="true" />
       </button>
       {isOpen && <button type="button" className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setIsOpen(false)} />}
-      <aside className={`portal-sidebar ${isOpen ? 'open' : ''}`} aria-label={`${role.replace('_', ' ')} navigation`}>
+      <aside className={`portal-sidebar ${isOpen ? 'open' : ''}`} aria-label={`${role === 'INSTRUCTOR' || role === 'TUTOR' ? 'Tutor' : role.replace('_', ' ')} navigation`}>
         <div className="sidebar-header">
           <BrandLogo className="sidebar-logo" />
           <button type="button" className="sidebar-close" aria-label="Close navigation" onClick={() => setIsOpen(false)}>
@@ -86,7 +81,7 @@ export function PortalSidebar({ role }: { role: Role }) {
         <p className="eyebrow">WORKSPACE</p>
         <nav>
           {ungroupedLinks.map((link) => (
-            <NavLink key={link.href} end={link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href} onClick={() => setIsOpen(false)}>
+            <NavLink key={link.href} end={link.href === '/tutor' || link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href} onClick={() => setIsOpen(false)}>
               <span>{link.label}</span>
             </NavLink>
           ))}
@@ -94,7 +89,7 @@ export function PortalSidebar({ role }: { role: Role }) {
             <div key={group} className="sidebar-group">
               <span className="sidebar-group-label">{group}</span>
               {groupLinks.map((link) => (
-                <NavLink key={link.href} end={link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href} onClick={() => setIsOpen(false)}>
+                <NavLink key={link.href} end={link.href === '/tutor' || link.href === `/${role.toLowerCase().replace('_', '-')}`} to={link.href} onClick={() => setIsOpen(false)}>
                   <span>{link.label}</span>
                 </NavLink>
               ))}

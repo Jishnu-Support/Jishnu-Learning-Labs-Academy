@@ -35,7 +35,7 @@ type Enrollment = {
 };
 
 function courseListPath(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/instructor/courses';
+  return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/tutor/courses';
 }
 
 function safeReturnTo(value: string | null, base: string) {
@@ -43,7 +43,7 @@ function safeReturnTo(value: string | null, base: string) {
 }
 
 function notesPath(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin/notes' : '/instructor/notes';
+  return role === 'ORG_ADMIN' ? '/org-admin/notes' : '/tutor/notes';
 }
 
 export function CourseDetailPage() {
@@ -141,7 +141,7 @@ export function CourseDetailPage() {
               <span><strong>Dates</strong>{new Date(course.startDate).toLocaleDateString()} – {new Date(course.endDate).toLocaleDateString()}</span>
               <span><strong>Minimum attendance</strong>{course.minimumAttendancePercent}%</span>
               <span><strong>Assessment pass required</strong>{course.requiresAssessmentPass ? 'Yes' : 'No'}</span>
-              <span><strong>Instructors</strong>{course.instructors.map(({ instructor }) => instructor.name).join(', ')}</span>
+              <span><strong>Tutors</strong>{course.instructors.map(({ instructor }) => instructor.name).join(', ')}</span>
             </div>
             <div className="course-actions">
               {course.status !== 'ARCHIVED' && <Link className="button button-secondary" to={`${base}/${course.id}/edit?returnTo=${encodeURIComponent(returnTo)}`}>Edit course</Link>}

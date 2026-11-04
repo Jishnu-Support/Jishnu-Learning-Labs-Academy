@@ -18,7 +18,7 @@ export function hasSafeAppHistory(): boolean {
   const previous = navigationRecords.get(index - 1);
   if (!previous) return false;
   const pathname = previous.split(/[?#]/, 1)[0];
-  return !/^\/(student|instructor|staff|org-admin|super-admin)\/login\/?$/.test(pathname);
+  return !/^\/(student|instructor|staff|tutor|org-admin|super-admin)\/login\/?$/.test(pathname);
 }
 
 export function resetAppNavigationForTests(): void {

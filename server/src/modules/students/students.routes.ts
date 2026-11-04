@@ -7,7 +7,7 @@ import { studentParamSchema } from './students.schemas.js';
 
 export const studentsRouter = Router();
 studentsRouter.use(authenticate, requireOrganization);
-studentsRouter.get('/', requireRoles(Role.ORG_ADMIN, Role.INSTRUCTOR, Role.STAFF), controller.list);
-studentsRouter.get('/:studentId', requireRoles(Role.ORG_ADMIN, Role.INSTRUCTOR, Role.STAFF), validateParams(studentParamSchema), controller.get);
+studentsRouter.get('/', requireRoles(Role.ORG_ADMIN, Role.INSTRUCTOR, Role.TUTOR), controller.list);
+studentsRouter.get('/:studentId', requireRoles(Role.ORG_ADMIN, Role.INSTRUCTOR, Role.TUTOR), validateParams(studentParamSchema), controller.get);
 studentsRouter.post('/:studentId/suspend', requireRoles(Role.ORG_ADMIN, Role.INSTRUCTOR), validateParams(studentParamSchema), controller.suspend);
 studentsRouter.post('/:studentId/reactivate', requireRoles(Role.ORG_ADMIN, Role.INSTRUCTOR), validateParams(studentParamSchema), controller.reactivate);

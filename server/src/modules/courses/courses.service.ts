@@ -60,7 +60,7 @@ function isoDate(value: string): Date {
 
 async function validateInstructors(organizationId: string, instructorIds: string[]) {
   const distinctIds = [...new Set(instructorIds)];
-  if (distinctIds.length !== instructorIds.length) throw new HttpError(400, 'Instructor IDs must be unique');
+  if (distinctIds.length !== instructorIds.length) throw new HttpError(400, 'Tutor IDs must be unique');
   const instructors = await prisma.user.findMany({
     where: {
       id: { in: distinctIds },
@@ -72,7 +72,7 @@ async function validateInstructors(organizationId: string, instructorIds: string
     select: { id: true },
   });
   if (instructors.length !== distinctIds.length) {
-    throw new HttpError(400, 'Select only active, approved instructors from your organization');
+    throw new HttpError(400, 'Select only active, approved Tutors from your organization');
   }
 }
 
@@ -132,7 +132,7 @@ export async function getManagedCourse(organizationId: string, userId: string, r
 export async function createCourse(organizationId: string, actorId: string, role: Role, input: CourseInput) {
   if (isoDate(input.endDate) < isoDate(input.startDate)) throw new HttpError(400, 'End date must be on or after the start date');
   if (role === Role.INSTRUCTOR && input.instructorIds.some((id) => id !== actorId)) {
-    throw new HttpError(403, 'Only an organization administrator can assign other instructors');
+    throw new HttpError(403, 'Only an organization administrator can assign other Tutors');
   }
   await validateInstructors(organizationId, input.instructorIds);
   try {
@@ -177,7 +177,7 @@ export async function updateCourse(
   const existing = await managedCourse(organizationId, actorId, role, courseId);
   if (existing.status === CourseStatus.ARCHIVED) throw new HttpError(409, 'Archived courses cannot be edited');
   if (role !== Role.ORG_ADMIN && input.instructorIds !== undefined) {
-    throw new HttpError(403, 'Only an organization administrator can reassign course instructors');
+    throw new HttpError(403, 'Only an organization administrator can reassign course Tutors');
   }
   const nextStartDate = input.startDate ? isoDate(input.startDate) : existing.startDate;
   const nextEndDate = input.endDate ? isoDate(input.endDate) : existing.endDate;

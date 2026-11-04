@@ -15,7 +15,7 @@ const loginSchema = z.object({
   identifier: z.string().optional(),
   password: z.string().min(1, 'Enter your password'),
 });
-type Portal = 'student' | 'instructor' | 'staff' | 'org-admin' | 'super-admin';
+type Portal = 'student' | 'tutor' | 'org-admin' | 'super-admin';
 type Props = { portal: Portal };
 
 const portalDetails: Record<Portal, {
@@ -34,21 +34,13 @@ const portalDetails: Record<Portal, {
     identifierLabel: 'Student ID',
     registration: '/student/register',
   },
-  instructor: {
-    title: 'Guide the next generation.',
-    subtitle: 'Sign in with your organization code and email.',
-    endpoint: '/auth/instructors/login',
-    role: 'INSTRUCTOR',
-    identifierLabel: 'Email address',
-    registration: '/instructor/register',
-  },
-  staff: {
+  tutor: {
     title: 'Welcome to your organization.',
-    subtitle: 'Sign in with your organization code and Staff ID or email.',
-    endpoint: '/auth/staff/login',
-    role: 'STAFF',
-    identifierLabel: 'Staff ID or email',
-    registration: '/staff/register',
+    subtitle: 'Sign in with your organization code and Tutor ID or email.',
+    endpoint: '/auth/tutors/login',
+    role: 'TUTOR',
+    identifierLabel: 'Tutor ID or email',
+    registration: '/tutor/register',
   },
   'org-admin': {
     title: 'Manage your organization.',
@@ -68,8 +60,7 @@ const portalDetails: Record<Portal, {
 
 const demoAccounts: Record<Portal, { identifier: string; organizationCode?: string }> = {
   student: { identifier: 'STU-1003', organizationCode: 'jll-demo' },
-  instructor: { identifier: 'instructor1@jll-demo.local', organizationCode: 'jll-demo' },
-  staff: { identifier: 'STF-1001', organizationCode: 'jll-demo' },
+  tutor: { identifier: 'STF-1001', organizationCode: 'jll-demo' },
   'org-admin': { identifier: 'orgadmin@jll-demo.local', organizationCode: 'jll-demo' },
   'super-admin': { identifier: import.meta.env.VITE_DEMO_SUPER_ADMIN_EMAIL ?? 'admin@jishnu.local' },
 };
@@ -77,6 +68,7 @@ const demoAccounts: Record<Portal, { identifier: string; organizationCode?: stri
 function routeForRole(role: Role): string {
   if (role === 'SUPER_ADMIN') return '/super-admin/dashboard';
   if (role === 'ORG_ADMIN') return '/org-admin';
+  if (role === 'INSTRUCTOR' || role === 'TUTOR') return '/tutor';
   return `/${role.toLowerCase()}`;
 }
 
@@ -96,7 +88,7 @@ export function LoginPage({ portal }: Props) {
       }
       if (!values.identifier?.trim()) {
         context.addIssue({ code: 'custom', path: ['identifier'], message: `Enter your ${details.identifierLabel.toLowerCase()}` });
-      } else if (['instructor', 'org-admin', 'super-admin'].includes(portal) && !z.string().email().safeParse(values.identifier).success) {
+      } else if (['org-admin', 'super-admin'].includes(portal) && !z.string().email().safeParse(values.identifier).success) {
         context.addIssue({ code: 'custom', path: ['identifier'], message: 'Enter a valid email address' });
       }
     })),
@@ -119,7 +111,7 @@ export function LoginPage({ portal }: Props) {
       const body: Record<string, string> = { password: values.password };
       if (portal !== 'super-admin' && values.organizationCode) body.organizationCode = values.organizationCode;
       if (portal === 'student' && values.identifier) body.studentId = values.identifier;
-      else if (portal === 'staff' && values.identifier) body.identifier = values.identifier;
+      else if (portal === 'tutor' && values.identifier) body.identifier = values.identifier;
       else if (values.identifier) body.email = values.identifier;
       return api<{ user: { role: Role; mustChangePassword: boolean } }>(details.endpoint, { method: 'POST', body: JSON.stringify(body) });
     },
@@ -186,8 +178,7 @@ export function LoginPage({ portal }: Props) {
         <p className="form-foot"><Link to="/organizations/register">Register an organization</Link></p>
         <div className="portal-links">
           <Link to="/student/login">Student</Link>
-          <Link to="/instructor/login">Instructor</Link>
-          <Link to="/staff/login">Staff</Link>
+          <Link to="/tutor/login">Tutor</Link>
           <Link to="/org-admin/login">Org Admin</Link>
           <Link to="/super-admin/login">Super Admin</Link>
         </div>

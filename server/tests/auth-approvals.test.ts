@@ -63,12 +63,12 @@ async function makeUser(
           },
         },
       } : {}),
-      ...(role === Role.STAFF && organizationId ? {
-        staffProfile: {
-          create: { organizationId, staffId: identifier ?? `${prefix}-${suffix}` },
+      ...(role === Role.TUTOR && organizationId ? {
+        tutorProfile: {
+          create: { organizationId, tutorId: identifier ?? `${prefix}-${suffix}` },
         },
       } : {}),
-      ...((role === Role.INSTRUCTOR || role === Role.STAFF) && organizationId ? {
+      ...((role === Role.INSTRUCTOR || role === Role.TUTOR) && organizationId ? {
         accountRegistration: {
           create: {
             organizationId,
@@ -93,8 +93,8 @@ function studentLogin(organizationCode: string, studentId: string) {
   return request(app).post('/api/auth/students/login').send({ organizationCode, studentId, password });
 }
 
-function staffLogin(organizationCode: string, staffId: string) {
-  return request(app).post('/api/auth/staff/login').send({ organizationCode, identifier: staffId, password });
+function tutorLogin(organizationCode: string, tutorId: string) {
+  return request(app).post('/api/auth/tutors/login').send({ organizationCode, identifier: tutorId, password });
 }
 
 function instructorLogin(organizationCode: string, email: string) {
@@ -204,7 +204,7 @@ describe('multi-organization authentication and approvals', () => {
     const monitored = await request(app).get('/api/super-admin/organizations').set('Cookie', adminCookie);
     expect(monitored.status).toBe(200);
     const monitoredOrg = monitored.body.data.organizations.find((item: { id: string }) => item.id === organizationId);
-    expect(monitoredOrg.counts).toEqual({ students: 0, staff: 0, instructors: 0 });
+    expect(monitoredOrg.counts).toEqual({ students: 0, tutors: 0 });
 
     const oldAdminSessionCookie = cookieHeader(orgAdmin);
     const suspension = await request(app).post(`/api/super-admin/organizations/${organizationId}/suspend`).set('Cookie', adminCookie);
@@ -342,6 +342,28 @@ describe('multi-organization authentication and approvals', () => {
     expect((await request(app).post('/api/auth/super-admin/login').send({ email: superAdmin.email, password })).status).toBe(200);
   });
 
+  it('allows Instructors and Tutors to sign in through the Tutor portal', async () => {
+    const organization = await makeOrganization(`${prefix} Tutor Portal`, `${prefix}-tutor-portal`);
+    const instructor = await makeUser(organization.id, Role.INSTRUCTOR, 'tutor-portal-instructor');
+    const tutor = await makeUser(organization.id, Role.TUTOR, 'tutor-portal-tutor', AccountStatus.APPROVED, 'TUT-PORTAL-EMAIL');
+
+    const instructorLogin = await request(app).post('/api/auth/tutors/login').send({
+      organizationCode: organization.code,
+      identifier: instructor.email,
+      password,
+    });
+    const tutorLogin = await request(app).post('/api/auth/tutors/login').send({
+      organizationCode: organization.code,
+      identifier: tutor.email,
+      password,
+    });
+
+    expect(instructorLogin.status, JSON.stringify(instructorLogin.body)).toBe(200);
+    expect(instructorLogin.body.data.user.role).toBe(Role.INSTRUCTOR);
+    expect(tutorLogin.status, JSON.stringify(tutorLogin.body)).toBe(200);
+    expect(tutorLogin.body.data.user.role).toBe(Role.TUTOR);
+  });
+
   it('rejects organization approval attempts by tenant administrators', async () => {
     const superAdmin = await makeUser(null, Role.SUPER_ADMIN, 'unauthorized-super-admin');
     const superAdminLogin = await request(app).post('/api/auth/super-admin/login').send({ email: superAdmin.email, password });
@@ -397,7 +419,7 @@ describe('multi-organization authentication and approvals', () => {
     expect(await prisma.user.findFirst({ where: { organizationId: pending.id, role: Role.ORG_ADMIN } })).toBeNull();
   });
 
-  it('allows the same Student ID and Staff ID in separate organizations, but rejects duplicates within one', async () => {
+  it('allows the same Student ID and Tutor ID in separate organizations, but rejects duplicates within one', async () => {
     const first = await makeOrganization(`${prefix} First`, `${prefix}-first`);
     const second = await makeOrganization(`${prefix} Second`, `${prefix}-second`);
 
@@ -408,23 +430,23 @@ describe('multi-organization authentication and approvals', () => {
     expect(secondStudent.status).toBe(201);
     expect(duplicateStudent.status).toBe(409);
 
-    const staffA = await request(app).post('/api/auth/staff/register').send({
-      organizationCode: first.code, staffId: 'SHARED-STAFF', name: 'Staff A',
-      email: `${prefix}-staff-a@example.test`, phone: '+15555550127', password,
+    const tutorA = await request(app).post('/api/auth/tutors/register').send({
+      organizationCode: first.code, tutorId: 'TUT-SHARED-1', name: 'Tutor A',
+      email: `${prefix}-tutor-a@example.test`, phone: '+15555550127', password,
     });
-    const staffB = await request(app).post('/api/auth/staff/register').send({
-      organizationCode: second.code, staffId: 'SHARED-STAFF', name: 'Staff B',
-      email: `${prefix}-staff-b@example.test`, phone: '+15555550128', password,
+    const tutorB = await request(app).post('/api/auth/tutors/register').send({
+      organizationCode: second.code, tutorId: 'TUT-SHARED-1', name: 'Tutor B',
+      email: `${prefix}-tutor-b@example.test`, phone: '+15555550128', password,
     });
-    const duplicateStaff = await request(app).post('/api/auth/staff/register').send({
-      organizationCode: first.code, staffId: 'SHARED-STAFF', name: 'Staff Duplicate',
-      email: `${prefix}-staff-duplicate@example.test`, phone: '+15555550129', password,
+    const duplicateTutor = await request(app).post('/api/auth/tutors/register').send({
+      organizationCode: first.code, tutorId: 'TUT-SHARED-1', name: 'Tutor Duplicate',
+      email: `${prefix}-tutor-duplicate@example.test`, phone: '+15555550129', password,
     });
-    for (const response of [staffA, staffB]) {
+    for (const response of [tutorA, tutorB]) {
       expect(response.status).toBe(201);
       createdUserIds.push(response.body.data.user.id as string);
     }
-    expect(duplicateStaff.status).toBe(409);
+    expect(duplicateTutor.status).toBe(409);
   });
 
   it('enforces pending, rejected, and suspended login states and revokes older student sessions', async () => {
@@ -432,20 +454,20 @@ describe('multi-organization authentication and approvals', () => {
     const pending = await makeUser(organization.id, Role.STUDENT, 'pending', AccountStatus.PENDING, 'PENDING-ID');
     const rejected = await makeUser(organization.id, Role.STUDENT, 'rejected', AccountStatus.REJECTED, 'REJECTED-ID');
     const suspended = await makeUser(organization.id, Role.STUDENT, 'suspended', AccountStatus.SUSPENDED, 'SUSPENDED-ID');
-    await makeUser(organization.id, Role.STAFF, 'rejected-staff', AccountStatus.REJECTED, 'REJECTED-STAFF');
+    await makeUser(organization.id, Role.TUTOR, 'rejected-tutor', AccountStatus.REJECTED, 'REJECTED-TUTOR');
     const suspendedInstructor = await makeUser(organization.id, Role.INSTRUCTOR, 'suspended-instructor', AccountStatus.SUSPENDED);
     const pendingLogin = await studentLogin(organization.code!, 'PENDING-ID');
     expect(pendingLogin.status).toBe(403);
-    expect(pendingLogin.body.error.message).toContain('pending instructor approval');
+    expect(pendingLogin.body.error.message).toContain('pending Tutor approval');
     const rejectedLogin = await studentLogin(organization.code!, 'REJECTED-ID');
     expect(rejectedLogin.status).toBe(403);
     expect(rejectedLogin.body.error.message).toContain('Review the submitted information.');
     const suspendedLogin = await studentLogin(organization.code!, 'SUSPENDED-ID');
     expect(suspendedLogin.status).toBe(403);
     expect(suspendedLogin.body.error.message).toContain('suspended');
-    const rejectedStaffLogin = await staffLogin(organization.code!, 'REJECTED-STAFF');
-    expect(rejectedStaffLogin.status).toBe(403);
-    expect(rejectedStaffLogin.body.error.message).toContain('Review the submitted information.');
+    const rejectedTutorLogin = await tutorLogin(organization.code!, 'REJECTED-TUTOR');
+    expect(rejectedTutorLogin.status).toBe(403);
+    expect(rejectedTutorLogin.body.error.message).toContain('Review the submitted information.');
     const suspendedInstructorLogin = await instructorLogin(organization.code!, suspendedInstructor.email);
     expect(suspendedInstructorLogin.status).toBe(403);
     expect(suspendedInstructorLogin.body.error.message).toContain('suspended');
@@ -470,7 +492,7 @@ describe('multi-organization authentication and approvals', () => {
       { user: await makeUser(null, Role.SUPER_ADMIN, 'me-super-admin'), role: Role.SUPER_ADMIN },
       { user: await makeUser(organization.id, Role.ORG_ADMIN, 'me-org-admin'), role: Role.ORG_ADMIN },
       { user: await makeUser(organization.id, Role.INSTRUCTOR, 'me-instructor'), role: Role.INSTRUCTOR },
-      { user: await makeUser(organization.id, Role.STAFF, 'me-staff', AccountStatus.APPROVED, 'ME-STAFF'), role: Role.STAFF },
+      { user: await makeUser(organization.id, Role.TUTOR, 'me-tutor', AccountStatus.APPROVED, 'ME-TUTOR'), role: Role.TUTOR },
       { user: await makeUser(organization.id, Role.STUDENT, 'me-student', AccountStatus.APPROVED, 'ME-STUDENT'), role: Role.STUDENT },
     ];
 
@@ -481,8 +503,8 @@ describe('multi-organization authentication and approvals', () => {
           ? await orgAdminLogin(organization.code!, user.email)
           : role === Role.INSTRUCTOR
             ? await instructorLogin(organization.code!, user.email)
-            : role === Role.STAFF
-              ? await staffLogin(organization.code!, 'ME-STAFF')
+            : role === Role.TUTOR
+              ? await tutorLogin(organization.code!, 'ME-TUTOR')
               : await studentLogin(organization.code!, 'ME-STUDENT');
       expect(login.status).toBe(200);
 
@@ -523,12 +545,16 @@ describe('multi-organization authentication and approvals', () => {
   it('applies approval permissions and isolates student records by organization', async () => {
     const first = await makeOrganization(`${prefix} Tenant A`, `${prefix}-tenant-a`);
     const second = await makeOrganization(`${prefix} Tenant B`, `${prefix}-tenant-b`);
+    await makeUser(first.id, Role.TUTOR, 'legacy-tutor', AccountStatus.APPROVED, 'STF-1001');
     const adminA = await makeUser(first.id, Role.ORG_ADMIN, 'admin-a');
     const adminB = await makeUser(second.id, Role.ORG_ADMIN, 'admin-b');
     const instructorB = await makeUser(second.id, Role.INSTRUCTOR, 'instructor-b');
     const studentA = await makeUser(first.id, Role.STUDENT, 'student-a', AccountStatus.APPROVED, 'DUPLICATE-ID');
     const studentB = await makeUser(second.id, Role.STUDENT, 'student-b', AccountStatus.APPROVED, 'DUPLICATE-ID');
     const pendingStudentB = await makeUser(second.id, Role.STUDENT, 'pending-student-b', AccountStatus.PENDING, 'B-ONLY-PENDING');
+
+    const legacyTutorLogin = await tutorLogin(first.code!, 'STF-1001');
+    expect(legacyTutorLogin.status, JSON.stringify(legacyTutorLogin.body)).toBe(200);
 
     const pendingInstructorRegistration = await request(app).post('/api/auth/instructors/register').send({
       organizationCode: first.code,
@@ -540,17 +566,18 @@ describe('multi-organization authentication and approvals', () => {
     expect(pendingInstructorRegistration.status).toBe(201);
     const pendingInstructorId = pendingInstructorRegistration.body.data.user.id as string;
     createdUserIds.push(pendingInstructorId);
-    const pendingStaffRegistration = await request(app).post('/api/auth/staff/register').send({
+    const pendingTutorIdentifier = `TUT-PENDING-${Date.now()}`;
+    const pendingTutorRegistration = await request(app).post('/api/auth/tutors/register').send({
       organizationCode: first.code,
-      staffId: `${prefix}-pending-staff-a`,
-      name: 'Pending Staff A',
-      email: `${prefix}-pending-staff-a@example.test`,
+      tutorId: pendingTutorIdentifier,
+      name: 'Pending Tutor A',
+      email: `${prefix}-pending-tutor-a@example.test`,
       phone: '+15555550127',
       password,
     });
-    expect(pendingStaffRegistration.status).toBe(201);
-    const pendingStaffId = pendingStaffRegistration.body.data.user.id as string;
-    createdUserIds.push(pendingStaffId);
+    expect(pendingTutorRegistration.status).toBe(201);
+    const pendingTutorId = pendingTutorRegistration.body.data.user.id as string;
+    createdUserIds.push(pendingTutorId);
     const pendingStudentRegistration = await registerStudent(first.code!, `${prefix}-pending-student-a`, 'pending-student-a');
     expect(pendingStudentRegistration.status).toBe(201);
     const pendingStudentUserId = pendingStudentRegistration.body.data.user.id as string;
@@ -584,30 +611,30 @@ describe('multi-organization authentication and approvals', () => {
     expect(studentDenial.status).toBe(403);
 
     const instructorCookie = cookieHeader(instructor);
-    const instructorStaffApprovalAttempt = await request(app)
-      .post(`/api/org-admin/staff/${pendingStaffId}/approve`)
+    const instructorTutorApprovalAttempt = await request(app)
+      .post(`/api/org-admin/tutor/${pendingTutorId}/approve`)
       .set('Cookie', instructorCookie)
       .send({});
-    expect(instructorStaffApprovalAttempt.status).toBe(403);
+    expect(instructorTutorApprovalAttempt.status).toBe(403);
     const approveStudent = await request(app)
       .post(`/api/instructor/registrations/${encodeURIComponent(pendingStudentId)}/approve`)
       .set('Cookie', instructorCookie)
       .send({});
     expect(approveStudent.status).toBe(200);
-    const approveStaff = await request(app)
-      .post(`/api/org-admin/staff/${pendingStaffId}/approve`)
+    const approveTutor = await request(app)
+      .post(`/api/org-admin/tutor/${pendingTutorId}/approve`)
       .set('Cookie', cookieHeader(orgAdmin))
       .send({});
-    expect(approveStaff.status).toBe(200);
+    expect(approveTutor.status).toBe(200);
     expect((await studentLogin(first.code!, `${prefix}-pending-student-a`)).status).toBe(200);
-    expect((await staffLogin(first.code!, `${prefix}-pending-staff-a`)).status).toBe(200);
+    expect((await tutorLogin(first.code!, pendingTutorIdentifier)).status).toBe(200);
 
-    const staffCookie = cookieHeader(await staffLogin(first.code!, `${prefix}-pending-staff-a`));
-    const staffApprovalAttempt = await request(app)
+    const tutorCookie = cookieHeader(await tutorLogin(first.code!, pendingTutorIdentifier));
+    const tutorApprovalAttempt = await request(app)
       .post(`/api/instructor/registrations/${prefix}-student-a/approve`)
-      .set('Cookie', staffCookie)
+      .set('Cookie', tutorCookie)
       .send({});
-    expect(staffApprovalAttempt.status).toBe(403);
+    expect(tutorApprovalAttempt.status).toBe(403);
     const studentCookie = cookieHeader(await studentLogin(first.code!, `${prefix}-pending-student-a`));
     const studentApprovalAttempt = await request(app)
       .post(`/api/instructor/registrations/${prefix}-student-a/approve`)

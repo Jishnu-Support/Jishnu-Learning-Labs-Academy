@@ -12,10 +12,11 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 - Tests: Vitest and Supertest. Use the existing lint, formatting, and type-check commands.
 
 ## Tenancy and roles
-- Roles: `SUPER_ADMIN`, `ORG_ADMIN`, `INSTRUCTOR`, `STAFF`, and `STUDENT`.
+- Roles: `SUPER_ADMIN`, `ORG_ADMIN`, `INSTRUCTOR`, `TUTOR`, and `STUDENT`. `INSTRUCTOR` accounts use the Tutor portal.
 - Every tenant-owned record must be associated with an `organizationId`. Derive tenant scope from the authenticated identity; never trust a client-supplied organization ID for authorization.
 - Every tenant-scoped read and write must enforce organization ownership on the backend. Data belonging to one organization must never be visible or mutable by another.
-- Student IDs and Staff IDs are unique within an organization, not globally.
+- Student IDs and Tutor IDs are unique within an organization, not globally. Existing Tutor IDs such as `STF-1001` remain valid.
+- Tutor web routes use `/tutor/*`; preserve the legacy `/staff/*` web redirects. New Tutor IDs use the `TUT-` prefix, while existing `STF-` IDs remain valid for login.
 - Organization codes are unique, URL-safe, and required at login for tenant accounts. `SUPER_ADMIN` does not use an organization code.
 - Account statuses are `PENDING`, `APPROVED`, `REJECTED`, and `SUSPENDED`. Only `APPROVED` accounts may log in; return a clear status-specific message otherwise.
 - Organization registration activates immediately by default, generates a unique organization code, and creates its approved `ORG_ADMIN` in one transaction. `REQUIRE_ORG_APPROVAL=true` is the explicit opt-in exception.
@@ -25,11 +26,12 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 
 ## Approval rules
 - Only `SUPER_ADMIN` may monitor and suspend/reactivate organizations; organization registration does not require approval unless `REQUIRE_ORG_APPROVAL=true`.
-- Only an organization's `ORG_ADMIN` may approve or reject its instructor and self-registered staff registrations.
+- Only an organization's `ORG_ADMIN` may approve or reject its instructor and self-registered Tutor registrations.
 - Only an organization's `INSTRUCTOR` may approve or reject student registrations.
-- `ORG_ADMIN` can create approved staff accounts with a temporary password that must be changed on first login.
-- Staff and students cannot approve accounts. Enforce all approval rules in backend authorization, including 403 responses for disallowed actions.
+- `ORG_ADMIN` can create approved Tutor accounts with a temporary password that must be changed on first login.
+- Tutors and students cannot approve accounts. Enforce all approval rules in backend authorization, including 403 responses for disallowed actions.
 - Record an `AuditLog` entry, including `organizationId` when applicable, for approvals, rejections, suspensions, account creation, and other sensitive actions.
+- Keep notifications tenant-scoped to their recipient, with authenticated SSE delivery and polling fallback. Run reminders and expiry checks through node-cron with a database lock; multi-server production deployments require a distributed queue. Keep email disabled unless the user approves configuring a provider.
 
 ## Architecture and implementation
 - Keep the layering: route -> controller -> service -> database. Do not put business logic in routes.
@@ -40,7 +42,7 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 - Keep changes focused, follow existing naming and formatting, and add or update tests for each feature.
 - Every new non-login page must use the shared `PageHeader` component with an explicit `backTo` route. Keep login pages and role dashboard home pages free of back navigation.
 - Keep upload storage behind an abstraction. Local files must be outside the web root and available only through authenticated routes.
-- For Checkpoint 1B notes, allow only PDF and PNG/JPG/WEBP attachments up to 20 MB, checking extension and MIME type. Staff, instructors, and org admins can create and publish notes; non-admin authors can edit, unpublish, or soft-delete only their own notes.
+- For Checkpoint 1B notes, allow only PDF and PNG/JPG/WEBP attachments up to 20 MB, checking extension and MIME type. Tutors, instructors, and org admins can create and publish notes; non-admin authors can edit, unpublish, or soft-delete only their own notes.
 - Students have read-only access to published notes through the authenticated inline viewer. Never expose a student download route or direct file URL; watermark each viewer page and document that browser controls are a deterrent, not DRM.
 - Keep the live-class integration behind a provider abstraction. The initial Jitsi Meet iframe integration is a basic live-class version, not a claim of full conferencing or DRM security.
 
@@ -62,7 +64,7 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 - Never log or return passwords, password hashes, tokens, or temporary credentials beyond the one-time development seed output.
 - Use secure httpOnly cookies, helmet, CORS, and rate limiting on authentication and submission endpoints.
 - Never expose assessment correct answers to clients; grading belongs on the server.
-- Enforce staff field-level access on the backend. Do not expose passwords, tokens, or hidden sensitive fields.
+- Enforce Tutor field-level access on the backend. Do not expose passwords, tokens, or hidden sensitive fields.
 - `SUPER_ADMIN` monitors organization summaries and manages organization activation; it cannot access organizations' internal student data without an explicit, recorded audit entry.
 - Protected uploads are served only through authenticated routes.
 
@@ -76,7 +78,7 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 
 ## Scope for the current phases
 - 1A: multi-tenant schema/migration, authentication, organization registration, approval flows, seed script, and tests.
-- 1B: Create Staff with a one-time temporary password and forced change on first login; tenant-scoped Student Details and Staff Details; and Publish Notes with private storage and a student view-only viewer.
+- 1B: Create Tutor with a one-time temporary password and forced change on first login; tenant-scoped Student Details and Tutor Details; and Publish Notes with private storage and a student view-only viewer.
 - 1C: Expert Sessions, Assessments, Practice Q/A, and final tests.
 - 2A: tenant-scoped Courses, instructors, topics, student enrollment, and course-linked notes. Assessment and practice records may be seeded for future modules; do not build assessment attempts or expand into unrelated later-phase functionality.
 - No videos, payments, certificates, or reports in these phases.

@@ -98,9 +98,9 @@ export function StudentsPage() {
   });
 
   const canManage = user?.role === 'ORG_ADMIN' || user?.role === 'INSTRUCTOR';
-  const role = user?.role ?? 'STAFF';
+  const role = user?.role ?? 'TUTOR';
   const result = students.data;
-  const listRoute = role === 'ORG_ADMIN' ? '/org-admin/students' : role === 'INSTRUCTOR' ? '/instructor/students' : '/staff/students';
+  const listRoute = role === 'ORG_ADMIN' ? '/org-admin/students' : '/tutor/students';
   const openStudent = (student: Student) => {
     setSelected(student);
     setSearchParams((current) => {

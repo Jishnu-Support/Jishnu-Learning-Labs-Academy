@@ -31,7 +31,7 @@ async function makeUser(organizationId: string, role: Role, name: string) {
       organizationId, email: `${prefix}-${name}@example.test`, passwordHash: await bcrypt.hash(password, 4),
       name, role, status: AccountStatus.APPROVED, isActive: true,
       ...(role === Role.STUDENT ? { studentProfile: { create: { organizationId, studentId: `${prefix}-${name}`, status: StudentStatus.APPROVED } } } : {}),
-      ...(role === Role.STAFF ? { staffProfile: { create: { organizationId, staffId: `${prefix}-${name}` } } } : {}),
+      ...(role === Role.TUTOR ? { tutorProfile: { create: { organizationId, tutorId: `${prefix}-${name}` } } } : {}),
     },
   });
 }
@@ -41,14 +41,18 @@ function cookie(response: { headers: { 'set-cookie'?: string | string[] } }) {
   return (Array.isArray(values) ? values : values ? [values] : []).map((value) => value.split(';')[0]).join('; ');
 }
 
-async function login(role: 'org-admin' | 'instructors' | 'students' | 'staff', code: string, user: Awaited<ReturnType<typeof makeUser>>) {
-  const path = role === 'org-admin' ? '/api/auth/org-admin/login' : `/api/auth/${role}/login`;
-  const identifier = role === 'staff'
-    ? (await prisma.staffProfile.findUniqueOrThrow({ where: { userId: user.id }, select: { staffId: true } })).staffId
+async function login(role: 'org-admin' | 'instructors' | 'students' | 'tutor', code: string, user: Awaited<ReturnType<typeof makeUser>>) {
+  const path = role === 'org-admin'
+    ? '/api/auth/org-admin/login'
+    : role === 'tutor'
+      ? '/api/auth/tutors/login'
+      : `/api/auth/${role}/login`;
+  const identifier = role === 'tutor'
+    ? (await prisma.tutorProfile.findUniqueOrThrow({ where: { userId: user.id }, select: { tutorId: true } })).tutorId
     : '';
   const payload = role === 'students'
     ? { organizationCode: code, studentId: `${prefix}-${user.name}`, password }
-    : role === 'staff'
+    : role === 'tutor'
       ? { organizationCode: code, identifier, password }
       : { organizationCode: code, email: user.email, password };
   const response = await request(app).post(path).send(payload);
@@ -63,13 +67,13 @@ let instructor: Awaited<ReturnType<typeof makeUser>>;
 let unassignedInstructor: Awaited<ReturnType<typeof makeUser>>;
 let student: Awaited<ReturnType<typeof makeUser>>;
 let otherStudent: Awaited<ReturnType<typeof makeUser>>;
-let staff: Awaited<ReturnType<typeof makeUser>>;
+let tutor: Awaited<ReturnType<typeof makeUser>>;
 let courseId: string;
 let adminCookie = '';
 let instructorCookie = '';
 let studentCookie = '';
 let otherStudentCookie = '';
-let staffCookie = '';
+let tutorCookie = '';
 
 beforeAll(async () => {
   await prisma.$connect();
@@ -80,7 +84,7 @@ beforeAll(async () => {
   unassignedInstructor = await makeUser(organization.id, Role.INSTRUCTOR, 'unassigned');
   student = await makeUser(organization.id, Role.STUDENT, 'student');
   otherStudent = await makeUser(otherOrganization.id, Role.STUDENT, 'other-student');
-  staff = await makeUser(organization.id, Role.STAFF, 'staff');
+  tutor = await makeUser(organization.id, Role.TUTOR, 'tutor');
   const course = await prisma.course.create({
     data: {
       organizationId: organization.id, code: `${prefix}-COURSE`, title: 'Learning test course',
@@ -96,7 +100,7 @@ beforeAll(async () => {
   instructorCookie = await login('instructors', organization.code!, instructor);
   studentCookie = await login('students', organization.code!, student);
   otherStudentCookie = await login('students', otherOrganization.code!, otherStudent);
-  staffCookie = await login('staff', organization.code!, staff);
+  tutorCookie = await login('tutor', organization.code!, tutor);
 });
 
 afterAll(async () => {
@@ -133,7 +137,7 @@ describe('SP1 practice and assessment workflows', () => {
     const created = await request(app).post('/api/learning/teacher/questions').set('Cookie', instructorCookie).send(question());
     expect(created.status).toBe(201);
     expect((await request(app).get('/api/learning/teacher/questions').set('Cookie', studentCookie)).status).toBe(403);
-    expect((await request(app).get('/api/learning/teacher/questions').set('Cookie', staffCookie)).status).toBe(403);
+    expect((await request(app).get('/api/learning/teacher/questions').set('Cookie', tutorCookie)).status).toBe(403);
 
     const otherCourse = await prisma.course.create({
       data: {

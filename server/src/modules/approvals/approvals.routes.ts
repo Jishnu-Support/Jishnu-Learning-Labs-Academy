@@ -21,11 +21,14 @@ orgAdminApprovalsRouter.post(
   validateBody(decisionSchema),
   controller.rejectInstructor,
 );
-orgAdminApprovalsRouter.get('/staff/pending', controller.listPendingStaff);
-orgAdminApprovalsRouter.post('/staff/:userId/approve', validateParams(userParamSchema), controller.approveStaff);
+orgAdminApprovalsRouter.get('/tutors/pending', controller.listPendingTutor);
+orgAdminApprovalsRouter.post('/tutors/:userId/approve', validateParams(userParamSchema), controller.approveTutor);
 orgAdminApprovalsRouter.post(
-  '/staff/:userId/reject',
+  '/tutors/:userId/reject',
   validateParams(userParamSchema),
   validateBody(decisionSchema),
-  controller.rejectStaff,
+  controller.rejectTutor,
 );
+orgAdminApprovalsRouter.get('/tutor/pending', controller.listPendingTutor);
+orgAdminApprovalsRouter.post('/tutor/:userId/approve', validateParams(userParamSchema), controller.approveTutor);
+orgAdminApprovalsRouter.post('/tutor/:userId/reject', validateParams(userParamSchema), validateBody(decisionSchema), controller.rejectTutor);

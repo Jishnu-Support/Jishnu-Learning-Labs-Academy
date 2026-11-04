@@ -13,7 +13,7 @@ import {
   updateMediaSchema,
 } from './media.schemas.js';
 
-const mediaManagers = [Role.STAFF, Role.INSTRUCTOR, Role.ORG_ADMIN] as const;
+const mediaManagers = [Role.TUTOR, Role.INSTRUCTOR, Role.ORG_ADMIN] as const;
 const uploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: env.NODE_ENV === 'test' ? 1000 : 20,

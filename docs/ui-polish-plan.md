@@ -16,7 +16,7 @@ From a screenshot of the student Practice Q/A page at 1920x1080:
 
 ### 1. App shell for all roles and authentication pages
 
-Applies to Student, Instructor, Staff, Org Admin, Super Admin, and the login and register pages.
+Applies to Student, Instructor, Tutor, Org Admin, Super Admin, and the login and register pages.
 
 - Sticky header; sticky full-height sidebar (260px on wide screens, a collapsible icon rail between 1024 and 1279px, a drawer with a hamburger button below 1024px).
 - Content area is fluid with padding `clamp(16px, 2.5vw, 40px)`; only form-heavy pages have a max width, while tables and dashboards use the full width.

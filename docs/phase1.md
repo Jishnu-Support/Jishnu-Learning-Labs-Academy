@@ -9,7 +9,7 @@ Phase 1 provides registration, approval-gated student login, instructor approval
 - Each successful student login revokes that student’s prior active sessions in a serializable transaction.
 - Approval actions require the instructor role and enforce batch ownership in the service layer. Unassigned pending students can be reviewed by instructors.
 - Approval and rejection decisions create `AuditLog` entries in the same transaction as the status change.
-- Staff and Super Admin can list all students, but staff responses omit email. Student accounts can only list their own profile.
+- Tutors and Super Admin can list all students, but Tutor responses omit email. Student accounts can only list their own profile.
 - Cookie `Secure` is enabled in production and disabled for local HTTP development; use HTTPS in production.
 
 ## Database

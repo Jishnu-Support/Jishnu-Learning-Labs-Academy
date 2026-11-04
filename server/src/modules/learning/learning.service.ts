@@ -1,9 +1,10 @@
 import {
   AssessmentAttemptStatus, AssessmentStatus, EnrollmentStatus, PracticeSessionStatus,
-  Prisma, QuestionDifficulty, QuestionType, ResultReleaseMode, Role,
+  NotificationType, Prisma, QuestionDifficulty, QuestionType, ResultReleaseMode, Role,
 } from '@prisma/client';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
+import { notifyAfterCommit, notifyCourseStudents, notifyUsers } from '../notifications/notifications.service.js';
 import { questionSchema } from './learning.schemas.js';
 
 type Actor = { organizationId: string; userId: string; role: Role };
@@ -406,7 +407,7 @@ export async function publishAssessment(actor: Actor, assessmentId: string) {
   const total = assessment.questions.reduce((sum, question) => sum + question.marks, 0);
   if (total !== assessment.totalMarks || assessment.passMark > total) throw new HttpError(400, 'Question marks must equal total marks and include the pass mark');
   const snapshot = assessment.questions.map(questionSnapshot);
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const result = await tx.assessment.update({
       where: { id: assessment.id },
       data: { status: AssessmentStatus.PUBLISHED, publishedSnapshot: json(snapshot) },
@@ -414,6 +415,14 @@ export async function publishAssessment(actor: Actor, assessmentId: string) {
     await audit(tx, actor, 'ASSESSMENT_PUBLISHED', 'Assessment', assessment.id, { totalMarks: total });
     return result;
   });
+  await notifyAfterCommit(() => notifyCourseStudents(actor.organizationId, assessment.courseId, {
+    type: NotificationType.ASSESSMENT_PUBLISHED,
+    title: 'New assessment available',
+    body: `${assessment.title} is ready for you.`,
+    link: '/student/assessments',
+    dedupeKey: `assessment:${assessment.id}:published`,
+  }), 'assessment publication');
+  return result;
 }
 
 export async function duplicateAssessment(actor: Actor, assessmentId: string) {
@@ -769,11 +778,25 @@ export async function listResults(actor: Actor, assessmentId: string) {
 export async function releaseResults(actor: Actor, assessmentId: string) {
   const assessment = await managedAssessment(actor, assessmentId);
   if (assessment.resultReleaseMode !== ResultReleaseMode.MANUAL) throw new HttpError(409, 'Results release is only needed for MANUAL mode');
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.assessment.update({ where: { id: assessment.id }, data: { resultsReleasedAt: new Date() } });
     await audit(tx, actor, 'ASSESSMENT_RESULTS_RELEASED', 'Assessment', assessment.id);
     return updated;
   });
+  await notifyAfterCommit(async () => {
+    const students = await prisma.assessmentAttempt.findMany({
+      where: { organizationId: actor.organizationId, assessmentId: assessment.id, status: { not: AssessmentAttemptStatus.IN_PROGRESS } },
+      select: { studentId: true },
+    });
+    await notifyUsers(actor.organizationId, students.map(({ studentId }) => studentId), {
+      type: NotificationType.ASSESSMENT_RESULTS,
+      title: 'Assessment results released',
+      body: `Results for ${assessment.title} are available.`,
+      link: '/student/assessments',
+      dedupeKey: `assessment:${assessment.id}:results-released`,
+    });
+  }, 'assessment results release');
+  return result;
 }
 
 export async function regradeQuestion(actor: Actor, assessmentId: string, questionId: string, correctAnswer: unknown) {

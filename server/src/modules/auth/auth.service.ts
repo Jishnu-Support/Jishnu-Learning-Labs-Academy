@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcrypt';
-import { AccountStatus, OrganizationStatus, Prisma, Role, StudentStatus, type User } from '@prisma/client';
+import { AccountStatus, NotificationType, OrganizationStatus, Prisma, Role, StudentStatus, type User } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { hashToken, makeAccessToken, makeRefreshToken, verifyRefreshToken } from '../../utils/tokens.js';
+import { notifyAfterCommit, notifyUsers } from '../notifications/notifications.service.js';
 
 type RequestMeta = { ip: string | undefined; userAgent: string | undefined };
 type Credentials = { user: User; accessToken: string; refreshToken: string };
@@ -66,8 +67,9 @@ async function issueCredentials(user: User, meta: RequestMeta): Promise<Credenti
 
 function statusMessage(user: User): string {
   if (user.status === AccountStatus.PENDING) {
-    const approver = user.role === Role.STUDENT ? 'instructor' : 'organization admin';
-    return `Your ${user.role.toLowerCase().replace('_', ' ')} registration is pending ${approver} approval`;
+    const roleLabel = user.role === Role.TUTOR || user.role === Role.INSTRUCTOR ? 'Tutor' : user.role.toLowerCase().replace('_', ' ');
+    const approver = user.role === Role.STUDENT ? 'Tutor' : 'organization admin';
+    return `Your ${roleLabel} registration is pending ${approver} approval`;
   }
   if (user.status === AccountStatus.REJECTED) {
     return user.rejectionReason ? `Your registration was rejected: ${user.rejectionReason}` : 'Your registration was rejected';
@@ -85,9 +87,14 @@ async function findTenantAccount(role: Role, organizationId: string, identifier:
       },
     });
   }
-  if (role === Role.STAFF && !identifier.includes('@')) {
+  if (role === Role.TUTOR && identifier.includes('@')) {
     return prisma.user.findFirst({
-      where: { organizationId, role, staffProfile: { is: { organizationId, staffId: identifier } } },
+      where: { organizationId, role: { in: [Role.TUTOR, Role.INSTRUCTOR] }, email: identifier.toLowerCase() },
+    });
+  }
+  if (role === Role.TUTOR && !identifier.includes('@')) {
+    return prisma.user.findFirst({
+      where: { organizationId, role, tutorProfile: { is: { organizationId, tutorId: identifier } } },
     });
   }
   return prisma.user.findFirst({
@@ -143,7 +150,7 @@ export async function registerStudent(input: {
   if (!organization) throw new HttpError(404, 'Active organization not found');
   const passwordHash = await bcrypt.hash(input.password, 12);
   try {
-    return await prisma.$transaction(async (tx) => {
+    const user = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
           organizationId: organization.id,
@@ -170,6 +177,20 @@ export async function registerStudent(input: {
       });
       return user;
     });
+    await notifyAfterCommit(async () => {
+      const approvers = await prisma.user.findMany({
+        where: { organizationId: organization.id, role: Role.INSTRUCTOR, status: AccountStatus.APPROVED, isActive: true },
+        select: { id: true },
+      });
+      await notifyUsers(organization.id, approvers.map(({ id }) => id), {
+        type: NotificationType.ACCOUNT_PENDING,
+        title: 'Student registration pending',
+        body: `${user.name} submitted a registration for approval.`,
+        link: '/tutor/approvals',
+        dedupeKey: `student-registration:${user.id}`,
+      });
+    }, 'student registration');
+    return user;
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'P2002') {
       throw new HttpError(409, 'Email or Student ID is already registered in this organization');
@@ -188,21 +209,20 @@ export async function registerInstructor(input: {
   return registerPendingAccount(input, Role.INSTRUCTOR);
 }
 
-export async function registerStaff(input: {
+export async function registerTutor(input: {
   organizationCode: string;
-  staffId: string;
+  tutorId: string;
   name: string;
   email: string;
   phone: string;
   password: string;
 }) {
-  const user = await registerPendingAccount(input, Role.STAFF);
-  return user;
+  return registerPendingAccount(input, Role.TUTOR);
 }
 
 async function registerPendingAccount(
-  input: { organizationCode: string; name: string; email: string; phone: string; password: string; staffId?: string },
-  role: typeof Role.INSTRUCTOR | typeof Role.STAFF,
+  input: { organizationCode: string; name: string; email: string; phone: string; password: string; tutorId?: string },
+  role: typeof Role.INSTRUCTOR | typeof Role.TUTOR,
 ) {
   const organization = await prisma.organization.findFirst({
     where: { code: input.organizationCode, status: { in: [OrganizationStatus.ACTIVE, OrganizationStatus.APPROVED] } },
@@ -210,7 +230,7 @@ async function registerPendingAccount(
   if (!organization) throw new HttpError(404, 'Active organization not found');
   const passwordHash = await bcrypt.hash(input.password, 12);
   try {
-    return await prisma.$transaction(async (tx) => {
+    const user = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
           organizationId: organization.id,
@@ -220,11 +240,11 @@ async function registerPendingAccount(
           passwordHash,
           role,
           status: AccountStatus.PENDING,
-          ...(role === Role.STAFF ? {
-            staffProfile: {
+          ...(role === Role.TUTOR ? {
+            tutorProfile: {
               create: {
                 organizationId: organization.id,
-                staffId: requireStaffId(input.staffId),
+                tutorId: requireTutorId(input.tutorId),
               },
             },
           } : {}),
@@ -232,7 +252,7 @@ async function registerPendingAccount(
             create: { organizationId: organization.id, status: StudentStatus.PENDING },
           },
         },
-        select: { id: true, email: true, name: true, role: true, status: true, staffProfile: { select: { staffId: true } } },
+        select: { id: true, email: true, name: true, role: true, status: true, tutorProfile: { select: { tutorId: true } } },
       });
       await tx.auditLog.create({
         data: {
@@ -245,17 +265,31 @@ async function registerPendingAccount(
       });
       return user;
     });
+    await notifyAfterCommit(async () => {
+      const approvers = await prisma.user.findMany({
+        where: { organizationId: organization.id, role: Role.ORG_ADMIN, status: AccountStatus.APPROVED, isActive: true },
+        select: { id: true },
+      });
+      await notifyUsers(organization.id, approvers.map(({ id }) => id), {
+        type: NotificationType.ACCOUNT_PENDING,
+        title: 'Tutor registration pending',
+        body: `${user.name} submitted a registration for approval.`,
+        link: '/org-admin/tutors/pending',
+        dedupeKey: `account-registration:${user.id}`,
+      });
+    }, 'Tutor registration');
+    return user;
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'P2002') {
-      throw new HttpError(409, 'Email or staff ID is already registered in this organization');
+      throw new HttpError(409, 'Email or Tutor ID is already registered in this organization');
     }
     throw error;
   }
 }
 
-function requireStaffId(staffId: string | undefined): string {
-  if (!staffId) throw new HttpError(400, 'Staff ID is required');
-  return staffId;
+function requireTutorId(tutorId: string | undefined): string {
+  if (!tutorId || !/^TUT-[A-Z0-9-]+$/i.test(tutorId)) throw new HttpError(400, 'Use a Tutor ID starting with TUT-');
+  return tutorId;
 }
 
 export function loginStudent(input: { organizationCode: string; studentId: string; password: string }, meta: RequestMeta) {
@@ -270,8 +304,36 @@ export function loginOrgAdmin(input: { organizationCode: string; email: string; 
   return loginTenant(Role.ORG_ADMIN, { ...input, identifier: input.email }, meta);
 }
 
-export function loginStaff(input: { organizationCode: string; identifier: string; password: string }, meta: RequestMeta) {
-  return loginTenant(Role.STAFF, input, meta);
+export async function loginTutor(input: { organizationCode: string; identifier: string; password: string }, meta: RequestMeta): Promise<Credentials> {
+  const organization = await prisma.organization.findFirst({
+    where: { code: input.organizationCode },
+    select: { id: true, status: true },
+  });
+  if (!organization) {
+    await recordLogin(null, null, meta, false);
+    throw new HttpError(401, 'Organization code or credentials are incorrect');
+  }
+  if (organization.status !== OrganizationStatus.ACTIVE && organization.status !== OrganizationStatus.APPROVED) {
+    await recordLogin(null, organization.id, meta, false);
+    if (organization.status === OrganizationStatus.SUSPENDED) throw new HttpError(403, 'This organization is suspended. Contact the platform administrator.');
+    if (organization.status === OrganizationStatus.PENDING) throw new HttpError(403, 'This organization is pending Super Admin approval.');
+    throw new HttpError(403, 'This organization registration was rejected.');
+  }
+  const user = input.identifier.includes('@')
+    ? await prisma.user.findFirst({
+      where: { organizationId: organization.id, email: input.identifier.toLowerCase(), role: { in: [Role.TUTOR, Role.INSTRUCTOR] } },
+    })
+    : await findTenantAccount(Role.TUTOR, organization.id, input.identifier);
+  if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) {
+    await recordLogin(user?.id ?? null, organization.id, meta, false);
+    throw new HttpError(401, 'Tutor ID/email or password is incorrect');
+  }
+  if (!user.isActive || user.status !== AccountStatus.APPROVED) {
+    await recordLogin(user.id, organization.id, meta, false);
+    throw new HttpError(403, statusMessage(user));
+  }
+  await recordLogin(user.id, organization.id, meta, true);
+  return issueCredentials(user, meta);
 }
 
 export async function loginSuperAdmin(input: { email: string; password: string }, meta: RequestMeta): Promise<Credentials> {

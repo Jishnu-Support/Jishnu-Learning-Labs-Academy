@@ -35,7 +35,7 @@ function loginResponse(res: Response, credentials: Awaited<ReturnType<typeof aut
 
 export const registerStudent: RequestHandler = async (req, res) => {
   const user = await authService.registerStudent(req.body);
-  res.status(201).json({ data: { user, message: 'Registration submitted. An instructor must approve your account before you can sign in.' } });
+  res.status(201).json({ data: { user, message: 'Registration submitted. A Tutor must approve your account before you can sign in.' } });
 };
 
 export const registerInstructor: RequestHandler = async (req, res) => {
@@ -43,9 +43,9 @@ export const registerInstructor: RequestHandler = async (req, res) => {
   res.status(201).json({ data: { user, message: 'Registration submitted. An organization admin must approve your account before you can sign in.' } });
 };
 
-export const registerStaff: RequestHandler = async (req, res) => {
-  const user = await authService.registerStaff(req.body);
-  res.status(201).json({ data: { user, message: 'Registration submitted. An instructor must approve your account before you can sign in.' } });
+export const registerTutor: RequestHandler = async (req, res) => {
+  const user = await authService.registerTutor(req.body);
+  res.status(201).json({ data: { user, message: 'Tutor registration submitted. An organization admin must approve your account before you can sign in.' } });
 };
 
 export const studentLogin: RequestHandler = async (req, res) => {
@@ -60,8 +60,8 @@ export const orgAdminLogin: RequestHandler = async (req, res) => {
   loginResponse(res, await authService.loginOrgAdmin(req.body, requestMeta(req)));
 };
 
-export const staffLogin: RequestHandler = async (req, res) => {
-  loginResponse(res, await authService.loginStaff(req.body, requestMeta(req)));
+export const tutorLogin: RequestHandler = async (req, res) => {
+  loginResponse(res, await authService.loginTutor(req.body, requestMeta(req)));
 };
 
 export const superAdminLogin: RequestHandler = async (req, res) => {

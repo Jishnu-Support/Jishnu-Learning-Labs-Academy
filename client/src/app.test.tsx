@@ -20,14 +20,15 @@ describe('Phase 1 portal shell', () => {
     expect(screen.getByRole('link', { name: /register as student/i })).toHaveAttribute('href', '/student/register');
   });
 
-  it('provides the instructor registration route with organization code and approval messaging', async () => {
+  it('redirects legacy instructor registration to Tutor registration', async () => {
     window.history.pushState({}, '', '/instructor/register');
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
     expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
-    expect(screen.getByText(/organization admin must approve/i)).toBeInTheDocument();
+    expect(screen.getByText(/an org admin must approve/i)).toBeInTheDocument();
     expect(screen.getByLabelText('Organization Code')).toBeInTheDocument();
     expect(screen.getByLabelText('Full name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Tutor ID')).toBeInTheDocument();
     expect(screen.queryByLabelText('Student ID')).not.toBeInTheDocument();
   });
 

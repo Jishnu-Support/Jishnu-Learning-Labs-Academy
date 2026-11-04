@@ -16,7 +16,7 @@ type Organization = {
   isPlatformOwner: boolean;
   status: 'ACTIVE' | 'APPROVED' | 'PENDING' | 'REJECTED' | 'SUSPENDED';
   createdAt: string;
-  counts: { students: number; staff: number; instructors: number };
+  counts: { students: number; tutors: number };
 };
 type Action = 'suspend' | 'reactivate' | 'approve' | 'reject';
 
@@ -107,7 +107,7 @@ export function OrganizationApprovalsPage() {
               <h2>{organization.name}</h2>
               <p>{organization.headName} · {organization.email}</p>
               <p className="muted">{organization.contactNumber} · {organization.city}, {organization.country}</p>
-              <p className="muted">Registered {new Date(organization.createdAt).toLocaleDateString()} · {organization.counts.students} students · {organization.counts.staff} staff · {organization.counts.instructors} instructors</p>
+              <p className="muted">Registered {new Date(organization.createdAt).toLocaleDateString()} · {organization.counts.students} students · {organization.counts.tutors} Tutors</p>
               {organization.isPlatformOwner && <span className="status-pill status-published">Platform owner</span>}
             </div>
             <div className="row-actions">

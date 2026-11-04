@@ -1,6 +1,6 @@
 # Jishnu Learning Labs
 
-Jishnu Learning Labs is a multi-organization learning platform. Each organization has isolated users and data. Checkpoint 1A delivers the tenant-aware database/authentication foundation, organization registration, and approval flows. Checkpoint 1B adds staff management, student/staff directories, and protected notes. Checkpoint 2A adds tenant-scoped courses, topics, student enrollment, and course-linked notes. Student Portal SP1 adds question-bank management, practice history, published assessment snapshots, timed attempts, and results.
+Jishnu Learning Labs is a multi-organization learning platform. Each organization has isolated users and data. Checkpoint 1A delivers the tenant-aware database/authentication foundation, organization registration, and approval flows. Checkpoint 1B adds Tutor management, student/Tutor directories, and protected notes. Checkpoint 2A adds tenant-scoped courses, topics, student enrollment, and course-linked notes. Student Portal SP1 adds question-bank management, practice history, published assessment snapshots, timed attempts, and results.
 
 ## Requirements
 
@@ -27,13 +27,13 @@ if (-not (Test-Path .\server\.env)) { Copy-Item .\server\.env.example .\server\.
 if (-not (Test-Path .\client\.env)) { Copy-Item .\client\.env.example .\client\.env }
 ```
 
-Edit `server/.env` with the local PostgreSQL connection strings. Set `DATABASE_URL` to `jishnu_learning_labs` and `TEST_DATABASE_URL` to `jishnu_learning_labs_test`. Keep both URLs and JWT secrets private. `REQUIRE_ENROLLMENT_APPROVAL=false` allows students to enroll immediately; set it to `true` to create pending enrollments for course staff to approve. Generate two different JWT secrets (at least 32 characters) with:
+Edit `server/.env` with the local PostgreSQL connection strings. Set `DATABASE_URL` to `jishnu_learning_labs` and `TEST_DATABASE_URL` to `jishnu_learning_labs_test`. Keep both URLs and JWT secrets private. `REQUIRE_ENROLLMENT_APPROVAL=false` allows students to enroll immediately; set it to `true` to create pending enrollments for Instructors to approve. Generate two different JWT secrets (at least 32 characters) with:
 
 ```powershell
 node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
 ```
 
-Put each result in a different JWT secret variable. Set `REQUIRE_ORG_APPROVAL=false` for immediate activation (the default); set it to `true` only when organization registrations should wait for Super Admin approval. Set `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` for the seeded platform administrator. `SEED_PASSWORD` controls the other development accounts. `NOTE_STORAGE_DIR` defaults to `storage/notes` under the server working directory; configure an absolute private directory if needed. The example values are local development credentials only.
+Put each result in a different JWT secret variable. Set `REQUIRE_ORG_APPROVAL=false` for immediate activation (the default); set it to `true` only when organization registrations should wait for Super Admin approval. Set `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` for the seeded platform administrator. `SEED_PASSWORD` controls the other development accounts. `NOTE_STORAGE_DIR` defaults to `storage/notes` and `TUTOR_STORAGE_DIR` to `storage/tutors` under the server working directory; configure private absolute directories if needed. The example values are local development credentials only.
 
 ## Install, migrate, and seed
 
@@ -68,16 +68,15 @@ npm run dev:client
 Open `http://localhost:5173`. All portals share that host:
 
 - Student: `/student/login`
-- Instructor: `/instructor/login`
-- Staff: `/staff/login`
+- Tutor: `/tutor/login` (existing Instructor and Tutor accounts use this shared portal)
 - Org Admin: `/org-admin/login`
 - Super Admin: `/super-admin/login`
 
-The client uses the same-origin `/api` path. Vite proxies it to the local API on port 4000 during development, so browser login and API requests stay on the frontend host. For a single-domain deployment, configure the platform's reverse proxy to serve the frontend and forward `/api` to the backend; keep `VITE_API_URL=/api`. The API health endpoint is available at `http://localhost:4000/api/health` during local development.
+The old `/instructor/*` and `/staff/*` web routes redirect to the corresponding `/tutor/*` route. The client uses the same-origin `/api` path. Vite proxies it to the local API on port 4000 during development, so browser login and API requests stay on the frontend host. For a single-domain deployment, configure the platform's reverse proxy to serve the frontend and forward `/api` to the backend; keep `VITE_API_URL=/api`. The API health endpoint is available at `http://localhost:4000/api/health` during local development.
 
 ## Video and audio media (Part B)
 
-Staff and instructors can upload and manage their own course media; Org Admins can manage all media for their organization. Uploads are streamed to private storage outside the client web root, validated by extension, MIME type and file signature, then processed by the server's background worker. The uploader can preview, edit, publish, unpublish and soft-delete media. Student playback is not part of Part B.
+Tutors, including existing Instructor accounts, can upload and manage their own course media; Org Admins can manage all media for their organization. Uploads are streamed to private storage outside the client web root, validated by extension, MIME type and file signature, then processed by the server's background worker. The uploader can preview, edit, publish, unpublish and soft-delete media. Student playback is not part of Part B.
 
 `server/.env.example` documents the media configuration:
 
@@ -86,6 +85,7 @@ Staff and instructors can upload and manage their own course media; Org Admins c
 - `MAX_VIDEO_MB` defaults to 500 MB and `MAX_AUDIO_MB` to 100 MB.
 - `KEEP_ORIGINAL_MEDIA` defaults to `true`; set it to `false` to remove the source after successful processing.
 - `MEDIA_PROCESSING_MAX_ATTEMPTS` defaults to 3.
+- `TUTOR_STORAGE_DIR` defaults to `storage/tutors`; profile photos remain outside the web root and are served only through authenticated routes.
 
 Install dependencies and apply the forward-only schema migration before starting the server:
 
@@ -102,6 +102,10 @@ npm run dev:server
 In another PowerShell terminal, start the frontend with `npm run dev:client`. To generate and queue small local video/audio samples for the seeded `jll-demo` courses, run `npm run media:sample` after seeding. The script is safe to rerun and does not delete media or other database data.
 
 Video processing uses bundled FFmpeg to create encrypted HLS renditions and a thumbnail; audio is normalized to AAC/M4A. Production deployments need a compatible FFmpeg binary on the server or a managed media service such as Mux, Cloudflare Stream, or AWS MediaConvert. The media storage adapter is isolated behind a streaming-capable interface so a private object-storage adapter can replace local disk. Do not expose the media storage directory through a static web server; playback and encryption keys are available only through authenticated API routes.
+
+## CP-5 Tutor profile and notifications
+
+The Tutor portal uses the `/tutor/*` web routes. Existing `/staff/*` and `/instructor/*` web routes redirect to the matching Tutor route. Org Admins review Tutor registrations at `/org-admin/tutors/pending`; the separate Instructor approval routes remain available. Existing Tutor IDs such as `STF-1001` are retained and continue to work for login; newly created Tutor IDs use the `TUT-` prefix. Tutor profiles support a bio, expertise, and a private photo. In-app notifications are available from the bell and `/notifications`; the authenticated event stream has polling fallback. Notification preferences are configurable in My Profile. The scheduler uses node-cron and a database lock; multi-server production deployments need a distributed queue. Email delivery is disabled; ask before configuring SMTP.
 
 ## Brand theme and welcome intro
 
@@ -131,36 +135,36 @@ For local development only, set `VITE_SHOW_DEMO_LOGINS=true` in `client/.env` to
 |---|---|---|
 | Super Admin | `SUPER_ADMIN_EMAIL` (default `admin@jishnu.local`) | Not required |
 | Org Admin | `orgadmin@jll-demo.local` | `jll-demo` |
-| Instructor | `instructor1@jll-demo.local`, `instructor2@jll-demo.local` | `jll-demo` |
-| Staff | `STF-1001`, `STF-1002` | `jll-demo` |
+| Instructor (uses Tutor portal) | `instructor1@jll-demo.local`, `instructor2@jll-demo.local` | `jll-demo` |
+| Tutor | `tutor1@jll-demo.local` (`STF-1001`), `tutor2@jll-demo.local` (`STF-1002`) | `jll-demo` |
 | Student | `STU-1001` through `STU-1006` | `jll-demo` |
 | Northstar Org Admin | `orgadmin@northstar.local` | `northstar-academy` |
-| Northstar Instructor | `instructor@northstar.local` | `northstar-academy` |
-| Northstar Staff | `STF-2001`, `STF-2002` | `northstar-academy` |
+| Northstar Instructor (uses Tutor portal) | `instructor@northstar.local` | `northstar-academy` |
+| Northstar Tutor | `tutor@northstar.local` (`STF-2001`), `tutor2@northstar.local` (`STF-2002`) | `northstar-academy` |
 | Northstar Students | `STU-1001`, `NST-2002` | `northstar-academy` |
 
-The same `STU-1001` exists in both organizations to demonstrate tenant-scoped IDs. Both demo organizations are active and have two instructors and two staff accounts. Existing records from earlier seed versions are preserved.
+The same `STU-1001` exists in both organizations to demonstrate tenant-scoped IDs. Both demo organizations are active and have Tutor accounts; Instructor accounts also sign in through the Tutor portal. Tutor seed email identifiers changed from `staff1@jll-demo.local`, `staff2@jll-demo.local`, and `pending-staff@jll-demo.local` to the `tutor1@jll-demo.local`, `tutor2@jll-demo.local`, and `pending-tutor@jll-demo.local` addresses shown in the seed output. Northstar Tutor emails changed from `staff@northstar.local` and `staff2@northstar.local` to `tutor@northstar.local` and `tutor2@northstar.local`. Rerunning the seed updates these matching accounts in place; it preserves their records, passwords, and existing `STF-` IDs.
 
 ## Registration and approval flow
 
 - An organization registers at `/organizations/register`. By default, registration activates it immediately, creates its Org Admin, and displays its unique organization code. `REQUIRE_ORG_APPROVAL=true` restores a pending Super Admin approval flow.
 - Super Admin monitors organizations at `/super-admin/organizations` and can suspend or reactivate them. Organization summaries show role counts only, not internal student records.
-- Instructor and self-registering staff accounts are approved by the Org Admin of the same organization.
-- Students are approved by an instructor in the same organization.
-- Instructors are approved by the Org Admin of the same organization.
+- Instructor and self-registering Tutor accounts are approved by the Org Admin of the same organization.
+- Students are approved by an Instructor account in the same organization.
+- Instructor accounts are approved by the Org Admin of the same organization.
 - Only approved accounts can sign in. Pending, rejected (including the reason), and suspended accounts receive distinct messages.
 - Super Admin accounts are created only by the seed script.
 - Students have one active session; signing in again revokes the earlier session.
 - Approval, rejection, and account creation actions are written to `AuditLog`.
-- Staff and student approval routes are backend-protected; Staff and Students receive 403 responses.
+- Tutor and student approval routes are backend-protected; Tutors and Students receive 403 responses.
 - Organization registration is rate-limited per IP and rejects duplicate organization email. Add email verification and CAPTCHA before production use.
 
 ## Checkpoint 1B organization modules
 
-- **Create Staff** is Org Admin-only. Created accounts are approved, receive a temporary password once, and are required to change it at first sign-in. The API blocks other authenticated actions until the password is changed.
-- **Student Details** is available to Org Admins, instructors, and staff. Search matches Student ID and name; results are tenant-scoped, filterable, and paginated. Student detail shows safe profile fields plus the last 10 successful login timestamps. Org Admins and instructors can suspend/reactivate students; staff are read-only.
-- **Staff Details** is available to Org Admins and instructors. Search matches Staff ID and name; results are tenant-scoped, filterable, and paginated. Org Admins can edit, suspend, and reactivate staff.
-- **Publish Notes** is available to Org Admins, instructors, and staff. Each can create and publish notes; Org Admins can manage any organization note, while instructors/staff can edit, unpublish, or soft-delete only their own notes. Staff and instructors see published notes and their own drafts.
+- **Create Tutor** is Org Admin-only. Created accounts are approved, receive a temporary password once, and are required to change it at first sign-in. The API blocks other authenticated actions until the password is changed.
+- **Student Details** is available to Org Admins, Instructors, and Tutors. Search matches Student ID and name; results are tenant-scoped, filterable, and paginated. Student detail shows safe profile fields plus the last 10 successful login timestamps. Org Admins and Instructors can suspend/reactivate students; Tutors are read-only.
+- **Tutor Details** is available to Org Admins and Instructors. Search matches Tutor ID and name; results are tenant-scoped, filterable, and paginated. Org Admins can edit, suspend, and reactivate Tutors.
+- **Publish Notes** is available to Org Admins, Instructors, and Tutors. Each can create and publish notes; Org Admins can manage any organization note, while non-admin authors can edit, unpublish, or soft-delete only their own notes. Tutors and Instructors see published notes and their own drafts.
 - Note attachments are limited to PDF, PNG, JPG, and WEBP, at most 20 MB, and the extension must match the MIME type. DOC/DOCX/PPT/PPTX files must be converted to PDF before uploading.
 - Local files are stored outside the client web root in `NOTE_STORAGE_DIR`; all views and downloads use authenticated routes. The `StorageService` abstraction is the replacement point for a private S3 or Cloudflare R2 adapter.
 - Students see only published notes. Their viewer streams attachments inline through an authenticated endpoint, renders PDFs with PDF.js and images in-page, overlays the student's name and ID on every page, and omits download/print controls. View events are recorded. Browser controls cannot fully prevent screenshots or saving; the watermark and viewer restrictions are deterrents. DRM would be a stronger future option.
@@ -174,7 +178,7 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 
 ## Student Portal SP1: Practice Q/A and assessments
 
-- Org Admins manage learning content for their organization; instructors can manage only their assigned courses. Staff and students cannot access teacher management APIs.
+- Org Admins manage learning content for their organization; Instructors can manage only their assigned courses. Tutors and students cannot access teacher management APIs.
 - The question bank supports MCQ single/multiple, True/False, Match, Fill in the blanks, and short answers. CSV import reports errors per row; Match questions are entered in the form. Questions use soft deletion.
 - Students can practice only courses they are actively enrolled in. Practice is unlimited and never contributes to assessment grades. The server reveals the correct answer and explanation only after a practice answer is submitted.
 - Publishing an assessment stores an immutable question snapshot. Each student has a server-timed attempt with autosaved answers, attempt limits, availability dates, and randomized questions/options when configured. Assessment grading and result release are server-side.
@@ -188,27 +192,27 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 - `POST /api/super-admin/organizations/:organizationId/approve`
 - `POST /api/super-admin/organizations/:organizationId/reject`
 - `POST /api/super-admin/organizations/:organizationId/suspend` and `/reactivate`
-- `POST /api/auth/students/register`, `/api/auth/instructors/register`, `/api/auth/staff/register`
-- `POST /api/auth/students/login`, `/api/auth/instructors/login`, `/api/auth/staff/login`
+- `POST /api/auth/students/register`, `/api/auth/instructors/register`, `/api/auth/tutors/register`
+- `POST /api/auth/students/login`, `/api/auth/instructors/login`, `/api/auth/tutors/login`
 - `POST /api/auth/org-admin/login`, `/api/auth/super-admin/login`
 - `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`
-- `GET /api/org-admin/instructors/pending` and `/api/org-admin/staff/pending`
+- `GET /api/org-admin/instructors/pending` and `/api/org-admin/tutors/pending`
 - `POST /api/org-admin/instructors/:userId/approve` and `/reject`
-- `POST /api/org-admin/staff/:userId/approve` and `/reject`
+- `POST /api/org-admin/tutors/:userId/approve` and `/reject`
 - `GET /api/instructor/registrations/pending`
 - `POST /api/instructor/registrations/:studentId/approve` and `/reject`
 - `GET /api/students` (scoped to the authenticated organization)
 - `GET /api/students?search=&status=&page=&pageSize=`
 - `GET /api/students/:studentId` (safe profile and last 10 successful login timestamps)
 - `POST /api/students/:studentId/suspend` and `/reactivate` (Org Admin or Instructor)
-- `GET /api/staff?search=&status=&page=&pageSize=` and `GET /api/staff/:userId`
-- `POST /api/staff` (Org Admin creates an approved staff account; temporary password returned once)
-- `PATCH /api/staff/:userId`, `POST /api/staff/:userId/suspend`, and `/reactivate` (Org Admin)
-- `POST /api/auth/change-password` (required for staff created with temporary passwords)
+- `GET /api/tutors?search=&status=&page=&pageSize=` and `GET /api/tutors/:userId`
+- `POST /api/tutors` (Org Admin creates an approved Tutor account; temporary password returned once)
+- `PATCH /api/tutors/:userId`, `POST /api/tutors/:userId/suspend`, and `/reactivate` (Org Admin)
+- `POST /api/auth/change-password` (required for Tutors created with temporary passwords)
 - `GET /api/notes?search=&subject=`, `POST /api/notes`, `PATCH /api/notes/:noteId`, `DELETE /api/notes/:noteId`
 - `POST /api/notes/:noteId/publish` and `/unpublish`
 - `GET /api/notes/:noteId/view` (authenticated inline viewer; student access only to published notes)
-- `GET /api/notes/:noteId/download` (Org Admin, Instructor, and Staff only)
+- `GET /api/notes/:noteId/download` (Org Admin, Instructor, and Tutor only)
 - `GET /api/courses`, `POST /api/courses`, `GET /api/courses/:courseId`, and `PATCH /api/courses/:courseId` (Org Admin or assigned Instructor)
 - `GET /api/courses/instructors`, `POST /api/courses/:courseId/publish`, `POST /api/courses/:courseId/archive`
 - `POST /api/courses/:courseId/topics`, `PATCH /api/courses/:courseId/topics/reorder`, and `PATCH /api/courses/:courseId/topics/:topicId`
@@ -217,6 +221,8 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 - `POST /api/student/courses/:courseId/enroll` and `/drop`
 
 Access and refresh tokens are sent only in httpOnly cookies. Every tenant login requires an organization code; Super Admin login does not.
+
+The authenticated `GET /api/notifications` and `/api/notifications/events` endpoints provide in-app notifications and live updates. Notification preferences, read state, and deletion are also tenant-scoped.
 
 ## Test and quality checks
 
@@ -239,7 +245,7 @@ Server tests use `TEST_DATABASE_URL`, create uniquely named fixtures, and remove
 ## Checkpoint scope
 
 - 1A: multi-tenant schema/migration, authentication, organization registration, approval flows, seed, and tests.
-- 1B: Create Staff with forced first-login password change, Student/Staff Details, and Publish Notes with private storage and student view-only protection.
+- 1B: Create Tutor with forced first-login password change, Student/Tutor Details, and Publish Notes with private storage and student view-only protection.
 - SP1: Practice Q/A and My Assessment (teacher question bank, assessment authoring/results, student practice and timed attempts).
 - 1C: Expert Sessions and remaining final tests.
 - 2A: tenant-scoped Courses, topics, enrollment, linked notes, and seeded assessment/practice examples. Course tests use the dedicated test database.

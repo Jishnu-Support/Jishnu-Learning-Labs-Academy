@@ -54,8 +54,8 @@ async function makeUser(organizationId: string, role: Role, name: string) {
       ...(role === Role.STUDENT ? {
         studentProfile: { create: { organizationId, studentId: `${prefix}-${name}`, status: StudentStatus.APPROVED } },
       } : {}),
-      ...(role === Role.STAFF ? {
-        staffProfile: { create: { organizationId, staffId: `${prefix}-${name}` } },
+      ...(role === Role.TUTOR ? {
+        tutorProfile: { create: { organizationId, tutorId: `${prefix}-${name}` } },
       } : {}),
     },
   });
@@ -87,13 +87,17 @@ function cookieHeader(response: { headers: { 'set-cookie'?: string | string[] } 
   return (Array.isArray(value) ? value : value ? [value] : []).map((cookie) => cookie.split(';')[0]).join('; ');
 }
 
-async function login(role: 'staff' | 'students' | 'org-admin', organizationCode: string, identifier: string) {
+async function login(role: 'tutor' | 'students' | 'org-admin', organizationCode: string, identifier: string) {
   const body = role === 'students'
     ? { organizationCode, studentId: identifier, password }
-    : role === 'staff'
+    : role === 'tutor'
       ? { organizationCode, identifier, password }
       : { organizationCode, email: `${prefix}-${identifier}@example.test`, password };
-  const endpoint = role === 'org-admin' ? '/api/auth/org-admin/login' : `/api/auth/${role}/login`;
+  const endpoint = role === 'org-admin'
+    ? '/api/auth/org-admin/login'
+    : role === 'tutor'
+      ? '/api/auth/tutors/login'
+      : `/api/auth/${role}/login`;
   const response = await request(app).post(endpoint).send(body);
   expect(response.status, JSON.stringify(response.body)).toBe(200);
   return cookieHeader(response);
@@ -164,24 +168,24 @@ describe('Part B media management', () => {
   it('enforces media roles, ownership, tenant scoping, type, signature, size, and quota', async () => {
     const organization = await makeOrganization('first');
     const otherOrganization = await makeOrganization('second');
-    const staff = await makeUser(organization.id, Role.STAFF, 'staff');
-    await makeUser(organization.id, Role.STAFF, 'other-staff');
+    const tutor = await makeUser(organization.id, Role.TUTOR, 'tutor');
+    await makeUser(organization.id, Role.TUTOR, 'other-tutor');
     const student = await makeUser(organization.id, Role.STUDENT, 'student');
     const admin = await makeUser(organization.id, Role.ORG_ADMIN, 'admin');
-    const otherTenantStaff = await makeUser(otherOrganization.id, Role.STAFF, 'tenant-staff');
-    const { course } = await makeCourse(organization.id, staff.id, 'MEDIA101');
-    const otherCourse = await makeCourse(otherOrganization.id, otherTenantStaff.id, 'MEDIA202');
-    const staffCookie = await login('staff', organization.code!, `${prefix}-staff`);
-    const otherStaffCookie = await login('staff', organization.code!, `${prefix}-other-staff`);
+    const otherTenantTutor = await makeUser(otherOrganization.id, Role.TUTOR, 'tenant-tutor');
+    const { course } = await makeCourse(organization.id, tutor.id, 'MEDIA101');
+    const otherCourse = await makeCourse(otherOrganization.id, otherTenantTutor.id, 'MEDIA202');
+    const tutorCookie = await login('tutor', organization.code!, `${prefix}-tutor`);
+    const otherTutorCookie = await login('tutor', organization.code!, `${prefix}-other-tutor`);
     const studentCookie = await login('students', organization.code!, `${prefix}-student`);
     const adminCookie = await login('org-admin', organization.code!, 'admin');
-    const otherTenantCookie = await login('staff', otherOrganization.code!, `${prefix}-tenant-staff`);
+    const otherTenantCookie = await login('tutor', otherOrganization.code!, `${prefix}-tenant-tutor`);
 
     expect((await request(app).post('/api/media').set('Cookie', studentCookie).send({})).status).toBe(403);
     expect((await request(app).patch('/api/media/not-a-media-id').set('Cookie', studentCookie).send({})).status).toBe(403);
     expect((await request(app).delete('/api/media/not-a-media-id').set('Cookie', studentCookie)).status).toBe(403);
 
-    const mismatchedType = await request(app).post('/api/media').set('Cookie', staffCookie).send({
+    const mismatchedType = await request(app).post('/api/media').set('Cookie', tutorCookie).send({
       title: 'Wrong MIME',
       courseId: course.id,
       type: 'VIDEO',
@@ -192,7 +196,7 @@ describe('Part B media management', () => {
     });
     expect(mismatchedType.status).toBe(400);
 
-    const traversalName = await request(app).post('/api/media').set('Cookie', staffCookie).send({
+    const traversalName = await request(app).post('/api/media').set('Cookie', tutorCookie).send({
       title: 'Traversal',
       courseId: course.id,
       type: 'VIDEO',
@@ -206,7 +210,7 @@ describe('Part B media management', () => {
     const previousMax = env.MAX_VIDEO_MB;
     env.MAX_VIDEO_MB = 1;
     try {
-      const tooLarge = await request(app).post('/api/media').set('Cookie', staffCookie).send({
+      const tooLarge = await request(app).post('/api/media').set('Cookie', tutorCookie).send({
         title: 'Too Large',
         courseId: course.id,
         type: 'VIDEO',
@@ -223,7 +227,7 @@ describe('Part B media management', () => {
     const previousQuota = env.MEDIA_STORAGE_QUOTA_GB;
     env.MEDIA_STORAGE_QUOTA_GB = 0.000001;
     try {
-      const overQuota = await request(app).post('/api/media').set('Cookie', staffCookie).send({
+      const overQuota = await request(app).post('/api/media').set('Cookie', tutorCookie).send({
         title: 'Over Quota',
         courseId: course.id,
         type: 'VIDEO',
@@ -237,21 +241,21 @@ describe('Part B media management', () => {
       env.MEDIA_STORAGE_QUOTA_GB = previousQuota;
     }
 
-    const media = await createMedia(staffCookie, course.id, 'Signature Validation');
-    const invalidSignature = await uploadMedia(staffCookie, media.id, Buffer.from('not a video'));
+    const media = await createMedia(tutorCookie, course.id, 'Signature Validation');
+    const invalidSignature = await uploadMedia(tutorCookie, media.id, Buffer.from('not a video'));
     expect(invalidSignature.status).toBe(400);
 
-    const validMedia = await createMedia(staffCookie, course.id, 'Tenant Isolation');
-    expect((await uploadMedia(staffCookie, validMedia.id)).status).toBe(202);
+    const validMedia = await createMedia(tutorCookie, course.id, 'Tenant Isolation');
+    expect((await uploadMedia(tutorCookie, validMedia.id)).status).toBe(202);
     const row = await prisma.mediaItem.findFirstOrThrow({ where: { id: validMedia.id, organizationId: organization.id } });
     expect(row.status).toBe(MediaStatus.PROCESSING);
     expect(row.originalKey).toMatch(/^originals\//);
 
     const unauthorizedEdit = await request(app).patch(`/api/media/${validMedia.id}`)
-      .set('Cookie', otherStaffCookie)
+      .set('Cookie', otherTutorCookie)
       .send({ title: 'Changed', description: '', courseId: course.id, topicId: null });
     expect(unauthorizedEdit.status).toBe(404);
-    expect((await request(app).delete(`/api/media/${validMedia.id}`).set('Cookie', otherStaffCookie)).status).toBe(404);
+    expect((await request(app).delete(`/api/media/${validMedia.id}`).set('Cookie', otherTutorCookie)).status).toBe(404);
 
     const adminEdit = await request(app).patch(`/api/media/${validMedia.id}`)
       .set('Cookie', adminCookie)
@@ -282,11 +286,11 @@ describe('Part B media management', () => {
 
   it('processes jobs, persists progress, retries failures, and recovers interrupted work', async () => {
     const organization = await makeOrganization('worker');
-    const staff = await makeUser(organization.id, Role.STAFF, 'worker-staff');
-    const { course } = await makeCourse(organization.id, staff.id, 'WORK101');
-    const staffCookie = await login('staff', organization.code!, `${prefix}-worker-staff`);
-    const media = await createMedia(staffCookie, course.id, 'Processor Lifecycle');
-    expect((await uploadMedia(staffCookie, media.id)).status).toBe(202);
+    const tutor = await makeUser(organization.id, Role.TUTOR, 'worker-tutor');
+    const { course } = await makeCourse(organization.id, tutor.id, 'WORK101');
+    const tutorCookie = await login('tutor', organization.code!, `${prefix}-worker-tutor`);
+    const media = await createMedia(tutorCookie, course.id, 'Processor Lifecycle');
+    expect((await uploadMedia(tutorCookie, media.id)).status).toBe(202);
 
     const fakeProcessor: MediaProcessor = {
       async process(input, onProgress) {
@@ -310,8 +314,8 @@ describe('Part B media management', () => {
     expect(ready.job?.status).toBe(MediaJobStatus.SUCCEEDED);
     expect(ready.job?.progressPercent).toBe(100);
 
-    const failureMedia = await createMedia(staffCookie, course.id, 'Retry Lifecycle');
-    expect((await uploadMedia(staffCookie, failureMedia.id)).status).toBe(202);
+    const failureMedia = await createMedia(tutorCookie, course.id, 'Retry Lifecycle');
+    expect((await uploadMedia(tutorCookie, failureMedia.id)).status).toBe(202);
     const failingProcessor: MediaProcessor = {
       async process() { throw new Error('test processor failure'); },
     };

@@ -20,9 +20,9 @@ export const instructorRegistrationSchema = z.object({
   password,
 });
 
-export const staffRegistrationSchema = z.object({
+export const tutorRegistrationSchema = z.object({
   organizationCode: organizationCodeSchema,
-  staffId: z.string().trim().min(1).max(40),
+  tutorId: z.string().trim().regex(/^TUT-[A-Z0-9-]+$/i, 'Use a Tutor ID starting with TUT-').max(40),
   name: z.string().trim().min(2).max(120),
   email: emailSchema,
   phone: phoneSchema,
@@ -41,7 +41,7 @@ export const portalLoginSchema = z.object({
   password: z.string().min(1).max(128),
 });
 
-export const staffLoginSchema = z.object({
+export const tutorLoginSchema = z.object({
   organizationCode: organizationCodeSchema,
   identifier: z.string().trim().min(1).max(254),
   password: z.string().min(1).max(128),

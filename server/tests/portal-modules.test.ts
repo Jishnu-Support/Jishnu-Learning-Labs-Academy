@@ -56,11 +56,11 @@ async function makeUser(
           },
         },
       } : {}),
-      ...(role === Role.STAFF ? {
-        staffProfile: {
+      ...(role === Role.TUTOR ? {
+        tutorProfile: {
           create: {
             organizationId,
-            staffId: options.identifier ?? `${prefix}-${suffix}`,
+            tutorId: options.identifier ?? `${prefix}-${suffix}`,
             joiningDate: new Date('2026-03-01T00:00:00.000Z'),
           },
         },
@@ -75,13 +75,15 @@ function cookieHeader(response: { headers: { 'set-cookie'?: string | string[] } 
   return (Array.isArray(cookies) ? cookies : cookies ? [cookies] : []).map((cookie) => cookie.split(';')[0]).join('; ');
 }
 
-async function login(role: 'org-admin' | 'instructors' | 'staff' | 'students', organizationCode: string, identifier: string, secret = password) {
+async function login(role: 'org-admin' | 'instructors' | 'tutor' | 'students', organizationCode: string, identifier: string, secret = password) {
   const endpoint = role === 'org-admin'
     ? '/api/auth/org-admin/login'
-    : `/api/auth/${role}/login`;
+    : role === 'tutor'
+      ? '/api/auth/tutors/login'
+      : `/api/auth/${role}/login`;
   const body = role === 'students'
     ? { organizationCode, studentId: identifier, password: secret }
-    : role === 'staff'
+    : role === 'tutor'
       ? { organizationCode, identifier, password: secret }
       : { organizationCode, email: identifier, password: secret };
   return request(app).post(endpoint).send(body);
@@ -131,81 +133,81 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('Checkpoint 1B staff and student directories', () => {
-  it('creates staff with a one-time temporary password and enforces password change', async () => {
-    const organization = await makeOrganization('staff');
-    const admin = await makeUser(organization.id, Role.ORG_ADMIN, 'staff-admin');
+describe('Checkpoint 1B tutor and student directories', () => {
+  it('creates tutor with a one-time temporary password and enforces password change', async () => {
+    const organization = await makeOrganization('tutor');
+    const admin = await makeUser(organization.id, Role.ORG_ADMIN, 'tutor-admin');
     const adminLogin = await login('org-admin', organization.code!, admin.email);
     const adminCookie = cookieHeader(adminLogin);
-    const temporaryPassword = 'OneTimeStaffPass!9';
-    const created = await request(app).post('/api/staff').set('Cookie', adminCookie).send({
-      staffId: 'NEW-STF-1',
-      name: 'New Staff Member',
+    const temporaryPassword = 'OneTimeTutorPass!9';
+    const created = await request(app).post('/api/tutors').set('Cookie', adminCookie).send({
+      tutorId: 'TUT-NEW-1',
+      name: 'New Tutor',
       phone: '+15555550124',
-      email: `${prefix}-new-staff@example.test`,
+      email: `${prefix}-new-tutor@example.test`,
       joiningDate: '2026-06-15',
       temporaryPassword,
     });
     expect(created.status).toBe(201);
-    expect(created.body.data.staff.user.status).toBe(AccountStatus.APPROVED);
-    expect(created.body.data.staff.user.mustChangePassword).toBeUndefined();
+    expect(created.body.data.tutor.user.status).toBe(AccountStatus.APPROVED);
+    expect(created.body.data.tutor.user.mustChangePassword).toBeUndefined();
     expect(created.body.data.temporaryPassword).toBe(temporaryPassword);
-    const createdUser = await prisma.user.findFirstOrThrow({ where: { organizationId: organization.id, email: `${prefix}-new-staff@example.test` } });
+    const createdUser = await prisma.user.findFirstOrThrow({ where: { organizationId: organization.id, email: `${prefix}-new-tutor@example.test` } });
     expect(createdUser.mustChangePassword).toBe(true);
-    const duplicateStaffId = await request(app).post('/api/staff').set('Cookie', adminCookie).send({
-      staffId: 'NEW-STF-1',
-      name: 'Duplicate Staff ID',
+    const duplicateTutorId = await request(app).post('/api/tutors').set('Cookie', adminCookie).send({
+      tutorId: 'TUT-NEW-1',
+      name: 'Duplicate Tutor ID',
       phone: '+15555550125',
-      email: `${prefix}-duplicate-staff@example.test`,
+      email: `${prefix}-duplicate-tutor@example.test`,
       joiningDate: '2026-06-15',
       temporaryPassword,
     });
-    expect(duplicateStaffId.status).toBe(409);
+    expect(duplicateTutorId.status).toBe(409);
 
-    const staffLogin = await login('staff', organization.code!, 'NEW-STF-1', temporaryPassword);
-    expect(staffLogin.status).toBe(200);
-    expect(staffLogin.body.data.user.mustChangePassword).toBe(true);
-    const staffCookie = cookieHeader(staffLogin);
-    expect((await request(app).get('/api/students').set('Cookie', staffCookie)).status).toBe(403);
-    const changed = await request(app).post('/api/auth/change-password').set('Cookie', staffCookie).send({
+    const tutorLogin = await login('tutor', organization.code!, 'TUT-NEW-1', temporaryPassword);
+    expect(tutorLogin.status).toBe(200);
+    expect(tutorLogin.body.data.user.mustChangePassword).toBe(true);
+    const tutorCookie = cookieHeader(tutorLogin);
+    expect((await request(app).get('/api/students').set('Cookie', tutorCookie)).status).toBe(403);
+    const changed = await request(app).post('/api/auth/change-password').set('Cookie', tutorCookie).send({
       currentPassword: temporaryPassword,
       newPassword,
     });
     expect(changed.status).toBe(200);
-    expect((await request(app).get('/api/students').set('Cookie', staffCookie)).status).toBe(200);
-    expect((await login('staff', organization.code!, 'NEW-STF-1', temporaryPassword)).status).toBe(401);
-    expect((await login('staff', organization.code!, 'NEW-STF-1', newPassword)).status).toBe(200);
+    expect((await request(app).get('/api/students').set('Cookie', tutorCookie)).status).toBe(200);
+    expect((await login('tutor', organization.code!, 'TUT-NEW-1', temporaryPassword)).status).toBe(401);
+    expect((await login('tutor', organization.code!, 'TUT-NEW-1', newPassword)).status).toBe(200);
 
-    const staffList = await request(app).get('/api/staff?search=NEW-STF-1').set('Cookie', adminCookie);
-    expect(staffList.status).toBe(200);
-    expect(staffList.body.data.staff).toHaveLength(1);
-    expect(JSON.stringify(staffList.body)).not.toContain('passwordHash');
-    expect(JSON.stringify(staffList.body)).not.toContain(temporaryPassword);
-    const creationAuditCount = await prisma.auditLog.count({ where: { organizationId: organization.id, action: 'STAFF_CREATED' } });
+    const tutorList = await request(app).get('/api/tutors?search=TUT-NEW-1').set('Cookie', adminCookie);
+    expect(tutorList.status).toBe(200);
+    expect(tutorList.body.data.tutors).toHaveLength(1);
+    expect(JSON.stringify(tutorList.body)).not.toContain('passwordHash');
+    expect(JSON.stringify(tutorList.body)).not.toContain(temporaryPassword);
+    const creationAuditCount = await prisma.auditLog.count({ where: { organizationId: organization.id, action: 'TUTOR_CREATED' } });
     expect(creationAuditCount).toBe(1);
-    expect((await request(app).post(`/api/staff/${createdUser.id}/suspend`).set('Cookie', adminCookie)).status).toBe(200);
-    expect((await login('staff', organization.code!, 'NEW-STF-1', newPassword)).status).toBe(403);
-    expect((await request(app).post(`/api/staff/${createdUser.id}/reactivate`).set('Cookie', adminCookie)).status).toBe(200);
-    const activeStaffCookie = cookieHeader(await login('staff', organization.code!, 'NEW-STF-1', newPassword));
-    expect((await request(app).post('/api/staff').set('Cookie', activeStaffCookie).send({})).status).toBe(403);
+    expect((await request(app).post(`/api/tutors/${createdUser.id}/suspend`).set('Cookie', adminCookie)).status).toBe(200);
+    expect((await login('tutor', organization.code!, 'TUT-NEW-1', newPassword)).status).toBe(403);
+    expect((await request(app).post(`/api/tutors/${createdUser.id}/reactivate`).set('Cookie', adminCookie)).status).toBe(200);
+    const activeTutorCookie = cookieHeader(await login('tutor', organization.code!, 'TUT-NEW-1', newPassword));
+    expect((await request(app).post('/api/tutors').set('Cookie', activeTutorCookie).send({})).status).toBe(403);
   }, 30000);
 
-  it('scopes student and staff search and detail data to the caller organization', async () => {
+  it('scopes student and tutor search and detail data to the caller organization', async () => {
     const first = await makeOrganization('directory-a');
     const second = await makeOrganization('directory-b');
     const adminA = await makeUser(first.id, Role.ORG_ADMIN, 'directory-admin-a');
     const instructorB = await makeUser(second.id, Role.INSTRUCTOR, 'directory-instructor-b');
-    const staffA = await makeUser(first.id, Role.STAFF, 'directory-staff-a', { identifier: 'STAFF-SEARCH-1' });
-    const staffB = await makeUser(second.id, Role.STAFF, 'directory-staff-b', { identifier: 'STAFF-SEARCH-1' });
+    const tutorA = await makeUser(first.id, Role.TUTOR, 'directory-tutor-a', { identifier: 'TUT-SEARCH-1' });
+    const tutorB = await makeUser(second.id, Role.TUTOR, 'directory-tutor-b', { identifier: 'TUT-SEARCH-1' });
     const studentA = await makeUser(first.id, Role.STUDENT, 'directory-student-a', { identifier: 'STUDENT-SEARCH-1' });
     const studentB = await makeUser(second.id, Role.STUDENT, 'directory-student-b', { identifier: 'STUDENT-SEARCH-1' });
     await makeUser(second.id, Role.STUDENT, 'directory-student-b-other', { identifier: 'OTHER-STU-1' });
     const adminLogin = await login('org-admin', first.code!, adminA.email);
     const instructorLogin = await login('instructors', second.code!, instructorB.email);
-    const staffLogin = await login('staff', first.code!, 'STAFF-SEARCH-1');
+    const tutorLogin = await login('tutor', first.code!, 'TUT-SEARCH-1');
     const adminCookie = cookieHeader(adminLogin);
     const instructorCookie = cookieHeader(instructorLogin);
-    const staffCookie = cookieHeader(staffLogin);
+    const tutorCookie = cookieHeader(tutorLogin);
 
     const students = await request(app).get('/api/students?search=STUDENT-SEARCH-1').set('Cookie', adminCookie);
     expect(students.status).toBe(200);
@@ -217,15 +219,15 @@ describe('Checkpoint 1B staff and student directories', () => {
     const crossStudent = await request(app).get('/api/students/OTHER-STU-1').set('Cookie', adminCookie);
     expect(crossStudent.status).toBe(404);
 
-    const staffSearch = await request(app).get('/api/staff?search=STAFF-SEARCH-1').set('Cookie', adminCookie);
-    expect(staffSearch.status).toBe(200);
-    expect(staffSearch.body.data.staff.map((member: { user: { id: string } }) => member.user.id)).toEqual([staffA.id]);
-    const crossStaff = await request(app).get(`/api/staff/${staffB.id}`).set('Cookie', adminCookie);
-    expect(crossStaff.status).toBe(404);
-    expect((await request(app).post(`/api/staff/${staffA.id}/suspend`).set('Cookie', staffCookie)).status).toBe(403);
+    const tutorSearch = await request(app).get('/api/tutors?search=TUT-SEARCH-1').set('Cookie', adminCookie);
+    expect(tutorSearch.status).toBe(200);
+    expect(tutorSearch.body.data.tutors.map((member: { user: { id: string } }) => member.user.id)).toEqual([tutorA.id]);
+    const crossTutor = await request(app).get(`/api/tutors/${tutorB.id}`).set('Cookie', adminCookie);
+    expect(crossTutor.status).toBe(404);
+    expect((await request(app).post(`/api/tutors/${tutorA.id}/suspend`).set('Cookie', tutorCookie)).status).toBe(403);
     const studentCookie = cookieHeader(await login('students', first.code!, 'STUDENT-SEARCH-1'));
     expect((await request(app).get('/api/students').set('Cookie', studentCookie)).status).toBe(403);
-    expect((await request(app).get('/api/staff').set('Cookie', studentCookie)).status).toBe(403);
+    expect((await request(app).get('/api/tutors').set('Cookie', studentCookie)).status).toBe(403);
   });
 
   it('returns safe student profile login summaries and audits suspension actions', async () => {
@@ -264,67 +266,67 @@ describe('Checkpoint 1B protected notes', () => {
     const second = await makeOrganization('notes-b');
     const admin = await makeUser(first.id, Role.ORG_ADMIN, 'notes-admin');
     const instructor = await makeUser(first.id, Role.INSTRUCTOR, 'notes-instructor');
-    await makeUser(first.id, Role.STAFF, 'notes-staff');
+    await makeUser(first.id, Role.TUTOR, 'notes-tutor');
     const student = await makeUser(first.id, Role.STUDENT, 'notes-student', { identifier: 'NOTE-STUDENT-1' });
     const otherAdmin = await makeUser(second.id, Role.ORG_ADMIN, 'notes-other-admin');
     const adminCookie = cookieHeader(await login('org-admin', first.code!, admin.email));
     const instructorCookie = cookieHeader(await login('instructors', first.code!, instructor.email));
-    const staffCookie = cookieHeader(await login('staff', first.code!, `${prefix}-notes-staff@example.test`));
+    const tutorCookie = cookieHeader(await login('tutor', first.code!, `${prefix}-notes-tutor@example.test`));
     const studentCookie = cookieHeader(await login('students', first.code!, 'NOTE-STUDENT-1'));
     const otherCookie = cookieHeader(await login('org-admin', second.code!, otherAdmin.email));
 
-    const staffNote = await createNote(staffCookie, { title: 'Staff published image', published: true, filename: 'staff.png' });
+    const tutorNote = await createNote(tutorCookie, { title: 'Tutor published image', published: true, filename: 'tutor.png' });
     const instructorNote = await createNote(instructorCookie, { title: 'Instructor draft' });
     const adminNote = await createNote(adminCookie, { title: 'Admin draft' });
     const otherNote = await createNote(otherCookie, { title: 'Other organization published', published: true, filename: 'other.png' });
-    expect(staffNote.status).toBe(201);
+    expect(tutorNote.status).toBe(201);
     expect(instructorNote.status).toBe(201);
     expect(adminNote.status).toBe(201);
     expect(otherNote.status).toBe(201);
-    const staffNoteId = staffNote.body.data.note.id as string;
+    const tutorNoteId = tutorNote.body.data.note.id as string;
     const instructorNoteId = instructorNote.body.data.note.id as string;
     const adminNoteId = adminNote.body.data.note.id as string;
     const otherNoteId = otherNote.body.data.note.id as string;
 
-    expect((await request(app).patch(`/api/notes/${instructorNoteId}`).set('Cookie', staffCookie).send({ title: 'not owner' })).status).toBe(403);
-    expect((await request(app).delete(`/api/notes/${instructorNoteId}`).set('Cookie', staffCookie)).status).toBe(403);
-    expect((await request(app).patch(`/api/notes/${staffNoteId}`).set('Cookie', staffCookie).send({ title: 'Staff edited own note' })).status).toBe(200);
-    expect((await request(app).patch(`/api/notes/${staffNoteId}`).set('Cookie', adminCookie).send({ title: 'Admin edited any note' })).status).toBe(200);
+    expect((await request(app).patch(`/api/notes/${instructorNoteId}`).set('Cookie', tutorCookie).send({ title: 'not owner' })).status).toBe(403);
+    expect((await request(app).delete(`/api/notes/${instructorNoteId}`).set('Cookie', tutorCookie)).status).toBe(403);
+    expect((await request(app).patch(`/api/notes/${tutorNoteId}`).set('Cookie', tutorCookie).send({ title: 'Tutor edited own note' })).status).toBe(200);
+    expect((await request(app).patch(`/api/notes/${tutorNoteId}`).set('Cookie', adminCookie).send({ title: 'Admin edited any note' })).status).toBe(200);
     expect((await request(app).post(`/api/notes/${instructorNoteId}/publish`).set('Cookie', instructorCookie)).status).toBe(200);
 
     const studentList = await request(app).get('/api/notes').set('Cookie', studentCookie);
     expect(studentList.status).toBe(200);
-    expect(studentList.body.data.notes.map((note: { id: string }) => note.id)).toContain(staffNoteId);
+    expect(studentList.body.data.notes.map((note: { id: string }) => note.id)).toContain(tutorNoteId);
     expect(studentList.body.data.notes.map((note: { id: string }) => note.id)).not.toContain(adminNoteId);
     expect(JSON.stringify(studentList.body)).not.toContain('/api/notes/');
     expect((await request(app).get(`/api/notes/${adminNoteId}/view`).set('Cookie', studentCookie)).status).toBe(404);
     expect((await request(app).get(`/api/notes/${otherNoteId}/view`).set('Cookie', studentCookie)).status).toBe(404);
 
-    const studentView = await request(app).get(`/api/notes/${staffNoteId}/view`).set('Cookie', studentCookie);
+    const studentView = await request(app).get(`/api/notes/${tutorNoteId}/view`).set('Cookie', studentCookie);
     expect(studentView.status).toBe(200);
     expect(studentView.headers['cache-control']).toBe('no-store');
     expect(studentView.headers['content-disposition']).toContain('inline');
     expect(studentView.headers['x-content-type-options']).toBe('nosniff');
     expect(studentView.body.toString()).toBe('phase 1b test file');
-    expect(await prisma.noteView.count({ where: { organizationId: first.id, noteId: staffNoteId, userId: student.id } })).toBe(1);
-    expect(await prisma.auditLog.count({ where: { organizationId: first.id, action: 'NOTE_VIEWED', targetId: staffNoteId, actorId: student.id } })).toBe(1);
+    expect(await prisma.noteView.count({ where: { organizationId: first.id, noteId: tutorNoteId, userId: student.id } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { organizationId: first.id, action: 'NOTE_VIEWED', targetId: tutorNoteId, actorId: student.id } })).toBe(1);
 
     const deniedStudentMutations = await Promise.all([
       request(app).post('/api/notes').set('Cookie', studentCookie).send({ title: 'Forbidden', subject: 'Test', description: 'No' }),
-      request(app).patch(`/api/notes/${staffNoteId}`).set('Cookie', studentCookie).send({ title: 'Forbidden' }),
-      request(app).delete(`/api/notes/${staffNoteId}`).set('Cookie', studentCookie),
-      request(app).post(`/api/notes/${staffNoteId}/publish`).set('Cookie', studentCookie),
-      request(app).post(`/api/notes/${staffNoteId}/unpublish`).set('Cookie', studentCookie),
-      request(app).get(`/api/notes/${staffNoteId}/download`).set('Cookie', studentCookie),
+      request(app).patch(`/api/notes/${tutorNoteId}`).set('Cookie', studentCookie).send({ title: 'Forbidden' }),
+      request(app).delete(`/api/notes/${tutorNoteId}`).set('Cookie', studentCookie),
+      request(app).post(`/api/notes/${tutorNoteId}/publish`).set('Cookie', studentCookie),
+      request(app).post(`/api/notes/${tutorNoteId}/unpublish`).set('Cookie', studentCookie),
+      request(app).get(`/api/notes/${tutorNoteId}/download`).set('Cookie', studentCookie),
     ]);
     expect(deniedStudentMutations.map(({ status }) => status)).toEqual([403, 403, 403, 403, 403, 403]);
-    expect((await request(app).get(`/api/notes/${otherNoteId}/download`).set('Cookie', staffCookie)).status).toBe(404);
-    expect((await request(app).get(`/api/notes/${staffNoteId}/download`).set('Cookie', staffCookie)).headers['content-disposition']).toContain('attachment');
+    expect((await request(app).get(`/api/notes/${otherNoteId}/download`).set('Cookie', tutorCookie)).status).toBe(404);
+    expect((await request(app).get(`/api/notes/${tutorNoteId}/download`).set('Cookie', tutorCookie)).headers['content-disposition']).toContain('attachment');
 
-    expect((await request(app).post(`/api/notes/${staffNoteId}/unpublish`).set('Cookie', staffCookie)).status).toBe(200);
-    expect((await request(app).post(`/api/notes/${staffNoteId}/publish`).set('Cookie', staffCookie)).status).toBe(200);
-    expect((await request(app).delete(`/api/notes/${staffNoteId}`).set('Cookie', staffCookie)).status).toBe(204);
-    expect((await request(app).get(`/api/notes/${staffNoteId}/view`).set('Cookie', studentCookie)).status).toBe(404);
+    expect((await request(app).post(`/api/notes/${tutorNoteId}/unpublish`).set('Cookie', tutorCookie)).status).toBe(200);
+    expect((await request(app).post(`/api/notes/${tutorNoteId}/publish`).set('Cookie', tutorCookie)).status).toBe(200);
+    expect((await request(app).delete(`/api/notes/${tutorNoteId}`).set('Cookie', tutorCookie)).status).toBe(204);
+    expect((await request(app).get(`/api/notes/${tutorNoteId}/view`).set('Cookie', studentCookie)).status).toBe(404);
     expect((await request(app).delete(`/api/notes/${instructorNoteId}`).set('Cookie', instructorCookie)).status).toBe(204);
     expect((await request(app).get(`/api/notes/${instructorNoteId}/view`).set('Cookie', studentCookie)).status).toBe(404);
     expect(await prisma.auditLog.count({ where: { organizationId: first.id, action: { in: ['NOTE_CREATED', 'NOTE_UPDATED', 'NOTE_PUBLISHED', 'NOTE_DELETED'] } } })).toBeGreaterThanOrEqual(5);

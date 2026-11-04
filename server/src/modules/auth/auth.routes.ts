@@ -8,8 +8,8 @@ import {
   instructorRegistrationSchema,
   changePasswordSchema,
   portalLoginSchema,
-  staffLoginSchema,
-  staffRegistrationSchema,
+  tutorLoginSchema,
+  tutorRegistrationSchema,
   studentLoginSchema,
   studentRegistrationSchema,
   superAdminLoginSchema,
@@ -25,10 +25,10 @@ const authLimiter = rateLimit({
 
 authRouter.post('/students/register', authLimiter, validateBody(studentRegistrationSchema), controller.registerStudent);
 authRouter.post('/instructors/register', authLimiter, validateBody(instructorRegistrationSchema), controller.registerInstructor);
-authRouter.post('/staff/register', authLimiter, validateBody(staffRegistrationSchema), controller.registerStaff);
+authRouter.post('/tutors/register', authLimiter, validateBody(tutorRegistrationSchema), controller.registerTutor);
 authRouter.post('/students/login', authLimiter, validateBody(studentLoginSchema), controller.studentLogin);
 authRouter.post('/instructors/login', authLimiter, validateBody(portalLoginSchema), controller.instructorLogin);
-authRouter.post('/staff/login', authLimiter, validateBody(staffLoginSchema), controller.staffLogin);
+authRouter.post('/tutors/login', authLimiter, validateBody(tutorLoginSchema), controller.tutorLogin);
 authRouter.post('/org-admin/login', authLimiter, validateBody(portalLoginSchema), controller.orgAdminLogin);
 authRouter.post('/super-admin/login', authLimiter, validateBody(superAdminLoginSchema), controller.superAdminLogin);
 authRouter.post('/refresh', authLimiter, controller.refresh);

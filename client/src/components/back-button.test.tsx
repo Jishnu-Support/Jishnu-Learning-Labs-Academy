@@ -44,13 +44,13 @@ describe('BackButton', () => {
   });
 
   it('preserves list filters and pagination when returning from a detail page', () => {
-    const list = '/org-admin/staff?search=STF-1001&status=APPROVED&page=3';
+    const list = '/org-admin/tutor?search=STF-1001&status=APPROVED&page=3';
     recordAppLocation(list, 'POP');
-    window.history.replaceState({ idx: 1 }, '', `${list}&detail=staff-1`);
+    window.history.replaceState({ idx: 1 }, '', `${list}&detail=tutor-1`);
     render(
-      <MemoryRouter initialEntries={[list, `${list}&detail=staff-1`]} initialIndex={1}>
+      <MemoryRouter initialEntries={[list, `${list}&detail=tutor-1`]} initialIndex={1}>
         <Routes>
-          <Route path="*" element={<><BackButton backTo="/org-admin/staff" /><CurrentLocation /></>} />
+          <Route path="*" element={<><BackButton backTo="/org-admin/tutor" /><CurrentLocation /></>} />
         </Routes>
       </MemoryRouter>,
     );
@@ -62,15 +62,15 @@ describe('BackButton', () => {
     render(
       <MemoryRouter initialEntries={['/form']}>
         <Routes>
-          <Route path="/form" element={<><PageHeader title="Edit staff" backTo="/staff" hasUnsavedChanges /><CurrentLocation /></>} />
-          <Route path="/staff" element={<CurrentLocation />} />
+          <Route path="/form" element={<><PageHeader title="Edit tutor" backTo="/tutor" hasUnsavedChanges /><CurrentLocation /></>} />
+          <Route path="/tutor" element={<CurrentLocation />} />
         </Routes>
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(screen.getByRole('dialog')).toHaveTextContent('Discard changes?');
     fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/staff');
+    expect(screen.getByTestId('location')).toHaveTextContent('/tutor');
   });
 
   it('confirms before allowing browser Back to leave a dirty form', () => {
@@ -79,7 +79,7 @@ describe('BackButton', () => {
     const go = vi.spyOn(window.history, 'go').mockImplementation(() => undefined);
     render(
       <MemoryRouter initialEntries={['/form']}>
-        <PageHeader title="Edit staff" backTo="/staff" hasUnsavedChanges />
+        <PageHeader title="Edit tutor" backTo="/tutor" hasUnsavedChanges />
       </MemoryRouter>,
     );
     fireEvent(window, new PopStateEvent('popstate'));

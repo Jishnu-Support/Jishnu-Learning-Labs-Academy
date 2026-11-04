@@ -1,6 +1,7 @@
-import { AccountStatus, Role, StudentStatus } from '@prisma/client';
+import { AccountStatus, NotificationType, Role, StudentStatus } from '@prisma/client';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
+import { notifyAfterCommit, notifyUsers } from '../notifications/notifications.service.js';
 
 type DecisionStatus = typeof AccountStatus.APPROVED | typeof AccountStatus.REJECTED;
 
@@ -70,6 +71,15 @@ async function decideStudent(
       },
     });
   });
+  if (status === AccountStatus.APPROVED) {
+    await notifyAfterCommit(() => notifyUsers(tenantId, [profile.userId], {
+      type: NotificationType.ACCOUNT_STATUS,
+      title: 'Your registration was approved',
+      body: 'You can now sign in to your learning portal.',
+      link: '/student/login',
+      dedupeKey: `student:${profile.userId}:approved`,
+    }), 'student approval');
+  }
   return { studentId, status: profileStatus, rejectionReason: status === AccountStatus.REJECTED ? reason ?? null : null };
 }
 
@@ -81,20 +91,21 @@ export function rejectStudent(organizationId: string | null, studentId: string, 
   return decideStudent(organizationId, studentId, actorId, AccountStatus.REJECTED, reason);
 }
 
-export async function listPendingStaff(organizationId: string | null) {
+export async function listPendingTutor(organizationId: string | null) {
   const tenantId = requireOrganizationId(organizationId);
-  return prisma.staffProfile.findMany({
+  const pending = await prisma.tutorProfile.findMany({
     where: {
       organizationId: tenantId,
-      user: { is: { organizationId: tenantId, role: Role.STAFF, status: AccountStatus.PENDING } },
+      user: { is: { organizationId: tenantId, role: Role.TUTOR, status: AccountStatus.PENDING } },
     },
     orderBy: { createdAt: 'asc' },
     select: {
-      staffId: true,
+      tutorId: true,
       joiningDate: true,
       user: { select: { id: true, name: true, email: true, phone: true, status: true, createdAt: true } },
     },
   });
+  return pending.map(({ tutorId, ...profile }) => ({ ...profile, tutorId: tutorId }));
 }
 
 export async function listPendingInstructors(organizationId: string | null) {
@@ -110,7 +121,7 @@ async function decideAccount(
   organizationId: string | null,
   userId: string,
   actorId: string,
-  role: typeof Role.INSTRUCTOR | typeof Role.STAFF,
+  role: typeof Role.INSTRUCTOR | typeof Role.TUTOR,
   status: DecisionStatus,
   reason?: string,
 ) {
@@ -152,6 +163,15 @@ async function decideAccount(
       },
     });
   });
+  if (status === AccountStatus.APPROVED) {
+    await notifyAfterCommit(() => notifyUsers(tenantId, [user.id], {
+      type: NotificationType.ACCOUNT_STATUS,
+      title: 'Your Tutor registration was approved',
+      body: 'You can now sign in to the Tutor Portal.',
+      link: '/tutor/login',
+      dedupeKey: `account:${user.id}:approved`,
+    }), 'Tutor approval');
+  }
   return { userId: user.id, role, status, rejectionReason: status === AccountStatus.REJECTED ? reason ?? null : null };
 }
 
@@ -163,10 +183,10 @@ export function rejectInstructor(organizationId: string | null, userId: string, 
   return decideAccount(organizationId, userId, actorId, Role.INSTRUCTOR, AccountStatus.REJECTED, reason);
 }
 
-export function approveStaff(organizationId: string | null, userId: string, actorId: string) {
-  return decideAccount(organizationId, userId, actorId, Role.STAFF, AccountStatus.APPROVED);
+export function approveTutor(organizationId: string | null, userId: string, actorId: string) {
+  return decideAccount(organizationId, userId, actorId, Role.TUTOR, AccountStatus.APPROVED);
 }
 
-export function rejectStaff(organizationId: string | null, userId: string, actorId: string, reason: string) {
-  return decideAccount(organizationId, userId, actorId, Role.STAFF, AccountStatus.REJECTED, reason);
+export function rejectTutor(organizationId: string | null, userId: string, actorId: string, reason: string) {
+  return decideAccount(organizationId, userId, actorId, Role.TUTOR, AccountStatus.REJECTED, reason);
 }

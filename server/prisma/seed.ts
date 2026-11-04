@@ -72,17 +72,27 @@ async function seedUser(input: {
   status: AccountStatus;
   passwordHash: string;
   phone?: string;
+  legacyEmail?: string;
 }) {
-  const existing = input.organizationId
+  const existingByEmail = input.organizationId
     ? await prisma.user.findUnique({
       where: { organizationId_email: { organizationId: input.organizationId, email: input.email } },
     })
     : await prisma.user.findFirst({ where: { organizationId: null, email: input.email } });
+  const existing = existingByEmail ?? (input.legacyEmail && input.organizationId
+    ? await prisma.user.findUnique({
+      where: { organizationId_email: { organizationId: input.organizationId, email: input.legacyEmail } },
+    })
+    : null);
   if (existing) {
     if (existing.role !== input.role) {
       throw new Error(`Seed account ${input.email} already exists with role ${existing.role}, expected ${input.role}`);
     }
-    return existing;
+    if (existing.email === input.email && existing.name === input.name) return existing;
+    return prisma.user.update({
+      where: { id: existing.id },
+      data: { email: input.email, name: input.name },
+    });
   }
 
   const user = await prisma.user.create({
@@ -121,25 +131,26 @@ async function seedInstructor(organizationId: string, passwordHash: string, emai
   return user;
 }
 
-async function seedStaff(
+async function seedTutor(
   organizationId: string,
   passwordHash: string,
   email: string,
-  staffId: string,
+  tutorId: string,
   name: string,
   status: AccountStatus,
+  legacyEmail?: string,
 ) {
-  const user = await seedUser({ organizationId, email, name, role: Role.STAFF, status, passwordHash });
-  const staffProfile = await prisma.staffProfile.findUnique({ where: { userId: user.id } });
-  if (!staffProfile) {
-    const conflictingProfile = await prisma.staffProfile.findUnique({
-      where: { organizationId_staffId: { organizationId, staffId } },
+  const user = await seedUser({ organizationId, email, name, role: Role.TUTOR, status, passwordHash, legacyEmail });
+  const tutorProfile = await prisma.tutorProfile.findUnique({ where: { userId: user.id } });
+  if (!tutorProfile) {
+    const conflictingProfile = await prisma.tutorProfile.findUnique({
+      where: { organizationId_tutorId: { organizationId, tutorId } },
     });
     if (conflictingProfile) {
-      throw new Error(`Seed staff ID ${staffId} already belongs to another user`);
+      throw new Error(`Seed tutor ID ${tutorId} already belongs to another user`);
     }
-    await prisma.staffProfile.create({
-      data: { organizationId, userId: user.id, staffId, joiningDate: new Date('2026-01-15T00:00:00.000Z') },
+    await prisma.tutorProfile.create({
+      data: { organizationId, userId: user.id, tutorId, joiningDate: new Date('2026-01-15T00:00:00.000Z') },
     });
   }
   const approval = await prisma.accountApproval.findUnique({ where: { userId: user.id } });
@@ -184,7 +195,7 @@ async function seedStudent(
         userId: user.id,
         studentId: input.studentId,
         status: studentStatus(user.status),
-        rejectionReason: user.status === AccountStatus.REJECTED ? 'Please contact your instructor.' : null,
+        rejectionReason: user.status === AccountStatus.REJECTED ? 'Please contact your Tutor.' : null,
         approvedAt: user.status === AccountStatus.APPROVED ? user.approvedAt : null,
       },
     });
@@ -249,7 +260,7 @@ async function seedTenant(
   input: {
     adminEmail: string;
     instructors: Array<{ email: string; name: string; status: AccountStatus }>;
-    staff: Array<{ email: string; staffId: string; name: string; status: AccountStatus }>;
+    tutors: Array<{ email: string; tutorId: string; name: string; status: AccountStatus; legacyEmail?: string }>;
     students: Array<{ studentId: string; email: string; name: string; status: AccountStatus }>;
   },
 ) {
@@ -266,9 +277,9 @@ async function seedTenant(
   for (const instructor of input.instructors) {
     instructors.push(await seedInstructor(organization.id, passwordHash, instructor.email, instructor.name, instructor.status));
   }
-  const staffUsers: User[] = [];
-  for (const staff of input.staff) {
-    staffUsers.push(await seedStaff(organization.id, passwordHash, staff.email, staff.staffId, staff.name, staff.status));
+  const tutorUsers: User[] = [];
+  for (const tutor of input.tutors) {
+    tutorUsers.push(await seedTutor(organization.id, passwordHash, tutor.email, tutor.tutorId, tutor.name, tutor.status, tutor.legacyEmail));
   }
   const students = [];
   for (const student of input.students) students.push(await seedStudent(organization.id, passwordHash, student));
@@ -294,13 +305,13 @@ async function seedTenant(
     skipDuplicates: true,
   });
   const host = instructors.find((instructor) => instructor.status === AccountStatus.APPROVED);
-  const sampleStaff = staffUsers.find((staff) => staff.status === AccountStatus.APPROVED);
-  if (!host || !sampleStaff) throw new Error(`Seed data for ${organization.name} needs approved instructor and staff accounts`);
+  const sampleTutor = tutorUsers.find((tutor) => tutor.status === AccountStatus.APPROVED);
+  if (!host || !sampleTutor) throw new Error(`Seed data for ${organization.name} needs approved instructor and tutor accounts`);
   await seedSampleContent(organization.id, host.id, organization.code, organization.name);
   await seedAuthoredNotes(organization.id, organization.name, [
     { user: admin, label: 'Org Admin' },
     { user: host, label: 'Instructor' },
-    { user: sampleStaff, label: 'Staff' },
+    { user: sampleTutor, label: 'Tutor' },
   ]);
   return { admin, instructors, students };
 }
@@ -772,10 +783,10 @@ async function main() {
       { email: 'instructor2@jll-demo.local', name: 'Ravi Instructor', status: AccountStatus.APPROVED },
       { email: 'pending-instructor@jll-demo.local', name: 'Pending Instructor', status: AccountStatus.PENDING },
     ],
-    staff: [
-      { email: 'staff1@jll-demo.local', staffId: 'STF-1001', name: 'Development Staff One', status: AccountStatus.APPROVED },
-      { email: 'staff2@jll-demo.local', staffId: 'STF-1002', name: 'Development Staff Two', status: AccountStatus.APPROVED },
-      { email: 'pending-staff@jll-demo.local', staffId: 'STF-1003', name: 'Pending Staff', status: AccountStatus.PENDING },
+    tutors: [
+      { email: 'tutor1@jll-demo.local', legacyEmail: 'staff1@jll-demo.local', tutorId: 'STF-1001', name: 'Development Tutor One', status: AccountStatus.APPROVED },
+      { email: 'tutor2@jll-demo.local', legacyEmail: 'staff2@jll-demo.local', tutorId: 'STF-1002', name: 'Development Tutor Two', status: AccountStatus.APPROVED },
+      { email: 'pending-tutor@jll-demo.local', legacyEmail: 'pending-staff@jll-demo.local', tutorId: 'STF-1003', name: 'Pending Tutor', status: AccountStatus.PENDING },
     ],
     students: [
     { studentId: 'STU-1001', email: 'pending1@jll-demo.local', name: 'Pending Student One', status: AccountStatus.PENDING },
@@ -792,9 +803,9 @@ async function main() {
       { email: 'instructor@northstar.local', name: 'Northstar Instructor', status: AccountStatus.APPROVED },
       { email: 'instructor2@northstar.local', name: 'Northstar Instructor Two', status: AccountStatus.APPROVED },
     ],
-    staff: [
-      { email: 'staff@northstar.local', staffId: 'STF-2001', name: 'Northstar Staff', status: AccountStatus.APPROVED },
-      { email: 'staff2@northstar.local', staffId: 'STF-2002', name: 'Northstar Staff Two', status: AccountStatus.APPROVED },
+    tutors: [
+      { email: 'tutor@northstar.local', legacyEmail: 'staff@northstar.local', tutorId: 'STF-2001', name: 'Northstar Tutor', status: AccountStatus.APPROVED },
+      { email: 'tutor2@northstar.local', legacyEmail: 'staff2@northstar.local', tutorId: 'STF-2002', name: 'Northstar Tutor Two', status: AccountStatus.APPROVED },
     ],
     students: [
     { studentId: 'STU-1001', email: 'student1@northstar.local', name: 'Northstar Student One', status: AccountStatus.APPROVED },
@@ -809,13 +820,13 @@ async function main() {
   console.log(`SUPER_ADMIN: ${superAdminEmail} / ${superAdminPassword} (no organization code)`);
   console.log('Jishnu Learning Labs Demo organization code: jll-demo');
   console.log('ORG_ADMIN: orgadmin@jll-demo.local');
-  console.log('INSTRUCTOR: instructor1@jll-demo.local, instructor2@jll-demo.local');
-  console.log('PENDING INSTRUCTOR: pending-instructor@jll-demo.local');
-  console.log('STAFF: STF-1001 (staff1@jll-demo.local), STF-1002 (staff2@jll-demo.local), pending STF-1003 (pending-staff@jll-demo.local)');
+  console.log('INSTRUCTOR accounts (use the Tutor portal): instructor1@jll-demo.local, instructor2@jll-demo.local');
+  console.log('PENDING INSTRUCTOR account (use the Tutor portal): pending-instructor@jll-demo.local');
+  console.log('TUTOR: STF-1001 (tutor1@jll-demo.local), STF-1002 (tutor2@jll-demo.local), pending STF-1003 (pending-tutor@jll-demo.local)');
   console.log('STUDENTS: pending STU-1001/STU-1002/STU-1006; approved STU-1003/STU-1004; rejected STU-1005');
   console.log('Northstar Academy organization code: northstar-academy');
   console.log('Northstar ORG_ADMIN: orgadmin@northstar.local');
-  console.log('Northstar INSTRUCTORS: instructor@northstar.local, instructor2@northstar.local; STAFF: STF-2001 / STF-2002; STUDENTS: STU-1001 / NST-2002');
+  console.log('Northstar INSTRUCTOR accounts (use the Tutor portal): instructor@northstar.local, instructor2@northstar.local; TUTORS: tutor@northstar.local (STF-2001) / tutor2@northstar.local (STF-2002); STUDENTS: STU-1001 / NST-2002');
   console.log('Do not use these credentials outside local development.');
 
 }

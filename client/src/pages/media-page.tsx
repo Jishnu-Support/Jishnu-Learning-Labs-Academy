@@ -44,8 +44,8 @@ function ControlField({ label, children }: { label: string; children: ReactNode 
 
 function dashboardPath(role: string) {
   if (role === 'ORG_ADMIN') return '/org-admin';
-  if (role === 'INSTRUCTOR') return '/instructor';
-  return '/staff';
+  if (role === 'INSTRUCTOR' || role === 'TUTOR') return '/tutor';
+  return '/org-admin';
 }
 
 function mediaPath(role: string) {
@@ -132,7 +132,7 @@ function MediaPreview({ media }: { media: Media }) {
 
 export function MediaPage() {
   const { user } = useAuth();
-  const role = user?.role ?? 'STAFF';
+  const role = user?.role ?? 'TUTOR';
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(initialDraft);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);

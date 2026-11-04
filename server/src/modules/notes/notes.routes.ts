@@ -7,7 +7,7 @@ import * as controller from './notes.controller.js';
 import { createNoteSchema, noteParamSchema, updateNoteSchema } from './notes.schemas.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
-const noteEditors = [Role.ORG_ADMIN, Role.INSTRUCTOR, Role.STAFF] as const;
+const noteEditors = [Role.ORG_ADMIN, Role.INSTRUCTOR, Role.TUTOR] as const;
 const noteViewers = [...noteEditors, Role.STUDENT] as const;
 
 export const notesRouter = Router();

@@ -13,7 +13,7 @@ MCQ single answer, MCQ multiple answers, TRUE_FALSE, MATCH (left items and right
 =====================================================
 CHECKPOINT SP1: PRACTICE Q/A AND MY ASSESSMENT
 =====================================================
-Teacher side (ORG_ADMIN and INSTRUCTOR; instructors only for their own courses; staff and students get 403)
+Teacher side (ORG_ADMIN and INSTRUCTOR; instructors only for their own courses; Tutors and students get 403)
 - "Practice Q/A" page with an "Add Practice Q/A" button: a form that supports every question type with validation and a preview; a question bank list with search and filters (course, topic, difficulty, type), edit and soft delete; CSV bulk import with a downloadable template and a row-by-row error report (CSV supports all types except MATCH, which is entered in the form)
 - "Assessments" page with an "Add Assessment" button: title, course, instructions, total marks, pass mark, duration in minutes, open and close dates, maximum attempts, shuffle options, result release mode (IMMEDIATE or MANUAL) and whether the answer review is allowed. Add questions inside the assessment (new questions or picked from the bank), reorder, edit, delete, with a running marks total. Status DRAFT / PUBLISHED / CLOSED; publish needs at least one question and valid marks; a published assessment cannot have its questions or marks changed (offer "Duplicate as new draft"). Snapshot the questions at publish time so later edits never change past attempts. Preview as a student without saving an attempt
 - A results page per assessment: score per student, average, pass rate, highest and lowest, per-question difficulty analysis, flagged attempts, "Release results" for MANUAL mode, regrade a question (with AuditLog), and CSV export
@@ -27,7 +27,7 @@ Student side
 CHECKPOINT SP2: MY ATTENDANCE AND LIBRARY
 =====================================================
 Attendance
-- Teacher side (ORG_ADMIN, INSTRUCTOR and STAFF): create a class entry for a course (date, title, optional duration) and mark each enrolled student PRESENT / LATE / ABSENT, with "mark all present", edit within a configurable time window, and an AuditLog entry for changes. Do not depend on live classes; leave a nullable liveSessionId field so live-class attendance can be linked later
+- Teacher side (ORG_ADMIN, INSTRUCTOR and TUTOR): create a class entry for a course (date, title, optional duration) and mark each enrolled student PRESENT / LATE / ABSENT, with "mark all present", edit within a configurable time window, and an AuditLog entry for changes. Do not depend on live classes; leave a nullable liveSessionId field so live-class attendance can be linked later
 - My Attendance (student): overall attendance percentage and per-course percentage (attended divided by total classes, LATE counts as a configurable fraction), a list with date, course, class, status, filters by course and date range, a monthly calendar view, and a warning banner when a course is below its minimum attendance percentage
 
 Library
@@ -50,6 +50,6 @@ SEED (idempotent, never deletes data)
 For the approved demo students in jll-demo: sample practice questions of every type for all 12 courses with subject-relevant content (for example match HTML tags to their purpose, fill in a missing keyword in a Python, C++ or Java snippet, true/false on CSS facts, MCQs on SAP modules and JavaScript scope, grammar fill-ups for English and Tamil, simple Maths problems, basic Social and Science facts); one published assessment per course; a few completed attempts with different scores; attendance records over the last 30 days with a mix of statuses; saved library items; and one completed course with an issued certificate so every page shows data
 
 TESTS (Vitest + Supertest, plus component tests)
-Correct answers never leaked before answering or submitting; grading per type including MATCH and FILL_BLANK and partial credit; timer expiry and auto-submit; attempt limits; open/close dates; MANUAL result release; regrade updates scores and writes an AuditLog entry; enrollment and organization isolation; students cannot see other students' attempts, attendance, certificates or tracking data; attendance percentage math; save and remove library items; grade calculation; certificate issued only when the rules are met; revoked certificate fails verification; staff and students get 403 on teacher-only routes
+Correct answers never leaked before answering or submitting; grading per type including MATCH and FILL_BLANK and partial credit; timer expiry and auto-submit; attempt limits; open/close dates; MANUAL result release; regrade updates scores and writes an AuditLog entry; enrollment and organization isolation; students cannot see other students' attempts, attendance, certificates or tracking data; attendance percentage math; save and remove library items; grade calculation; certificate issued only when the rules are met; revoked certificate fails verification; Tutors and students get 403 on teacher-only routes
 
 Remember: build ONE checkpoint at a time and STOP after each. Do not build live classes, payments or reports.

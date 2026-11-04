@@ -43,7 +43,7 @@ type CourseForm = {
 const noInstructors: Instructor[] = [];
 
 function routeForRole(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/instructor/courses';
+  return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/tutor/courses';
 }
 
 function safeReturnTo(value: string | null, base: string) {
@@ -52,7 +52,7 @@ function safeReturnTo(value: string | null, base: string) {
 }
 
 function roleDashboard(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin' : '/instructor';
+  return role === 'ORG_ADMIN' ? '/org-admin' : '/tutor';
 }
 
 function emptyForm(instructors: Instructor[], role: Role, userId?: string): CourseForm {
@@ -101,7 +101,7 @@ export function CoursesPage() {
       <PortalSidebar role={role} />
       <section className="portal-content">
         <PageHeader title="Courses" backTo={roleDashboard(role)} breadcrumbs={['Dashboard', 'Courses']} />
-        <p className="muted">Build course outlines, assign instructors, and track topic delivery.</p>
+        <p className="muted">Build course outlines, assign Tutors, and track topic delivery.</p>
         <div className="directory-filters">
           <label className="field search-field"><span>Search courses</span><input className="input" value={search} onChange={(event) => updateQuery('search', event.target.value)} /></label>
           <label className="field"><span>Status</span><select className="input" value={status} onChange={(event) => updateQuery('status', event.target.value)}><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="PUBLISHED">Published</option><option value="ARCHIVED">Archived</option></select></label>
@@ -117,7 +117,7 @@ export function CoursesPage() {
               <h3>{course.title}</h3>
               <p className="muted course-description">{course.category} · {course.plannedHours} planned hours</p>
               <p className="course-description">{course.description || 'No description yet.'}</p>
-              <p className="muted course-description">Instructors: {course.instructors.map(({ instructor }) => instructor.name).join(', ') || 'None'} · {course._count.enrollments} enrollments · {course._count.notes} notes</p>
+              <p className="muted course-description">Tutors: {course.instructors.map(({ instructor }) => instructor.name).join(', ') || 'None'} · {course._count.enrollments} enrollments · {course._count.notes} notes</p>
               <div className="course-actions">
                 <Link className="button button-secondary" to={`${base}/${course.id}?returnTo=${encodeURIComponent(`${base}${window.location.search}`)}`}>Manage course</Link>
                 {course.status !== 'ARCHIVED' && <Link className="button button-ghost" to={`${base}/${course.id}/edit?returnTo=${encodeURIComponent(`${base}${window.location.search}`)}`}>Edit</Link>}
@@ -236,7 +236,7 @@ export function CourseFormPage() {
           </div>
           <label className="field"><span>Description</span><textarea className="input textarea" value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={5000} /></label>
           <label className="course-instructor-option"><input type="checkbox" checked={form.requiresAssessmentPass} onChange={(event) => update('requiresAssessmentPass', event.target.checked)} /><span>Require passing the course assessment for completion</span></label>
-          <fieldset className="course-instructor-list"><legend>Assigned instructors</legend>{instructors.length ? instructorChecks : <p className="muted">No approved instructors are available.</p>}</fieldset>
+          <fieldset className="course-instructor-list"><legend>Assigned Tutors</legend>{instructors.length ? instructorChecks : <p className="muted">No approved Tutors are available.</p>}</fieldset>
           {invalidDateOrder && <p className="notice notice-error" role="alert">End date must be on or after the start date.</p>}
           {error && <p className="notice notice-error" role="alert">{error}</p>}
           <div className="row-actions">

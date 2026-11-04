@@ -14,12 +14,12 @@ vi.mock('../lib/api', () => ({
   },
 }));
 
-const staffUser: CurrentUser = {
-  id: 'staff-1',
+const tutorUser: CurrentUser = {
+  id: 'tutor-1',
   organizationId: 'org-1',
-  email: 'staff@example.test',
-  name: 'Media Staff',
-  role: 'STAFF',
+  email: 'tutor@example.test',
+  name: 'Media Tutor',
+  role: 'TUTOR',
   organization: { name: 'Academy', code: 'academy', isPlatformOwner: false },
 };
 
@@ -37,7 +37,7 @@ const processingMedia = {
   streamKey: null,
   course: { id: 'course-1', title: 'Python', code: 'PY101' },
   topic: null,
-  uploadedBy: { id: 'staff-1', name: 'Media Staff', role: 'STAFF' },
+  uploadedBy: { id: 'tutor-1', name: 'Media Tutor', role: 'TUTOR' },
   job: { status: 'PROCESSING', attempts: 1, progressPercent: 45, error: null },
 };
 
@@ -45,8 +45,8 @@ function renderMediaPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <AuthContext.Provider value={{ user: staffUser, loading: false, logout: vi.fn() }}>
-        <MemoryRouter initialEntries={['/staff/media']}>
+      <AuthContext.Provider value={{ user: tutorUser, loading: false, logout: vi.fn() }}>
+        <MemoryRouter initialEntries={['/tutor/media']}>
           <MediaPage />
         </MemoryRouter>
       </AuthContext.Provider>

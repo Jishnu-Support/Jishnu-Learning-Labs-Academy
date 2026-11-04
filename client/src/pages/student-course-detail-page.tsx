@@ -72,7 +72,7 @@ export function StudentCourseDetailPage() {
               <span><strong>Planned learning</strong>{course.plannedHours} hours</span>
               <span><strong>Start date</strong>{new Date(course.startDate).toLocaleDateString()}</span>
               <span><strong>End date</strong>{new Date(course.endDate).toLocaleDateString()}</span>
-              <span><strong>Instructor{course.instructors.length === 1 ? '' : 's'}</strong>{course.instructors.map(({ instructor }) => instructor.name).join(', ')}</span>
+              <span><strong>Tutor{course.instructors.length === 1 ? '' : 's'}</strong>{course.instructors.map(({ instructor }) => instructor.name).join(', ')}</span>
               <span><strong>Minimum attendance</strong>{course.minimumAttendancePercent}%</span>
               <span><strong>Assessment pass required</strong>{course.requiresAssessmentPass ? 'Yes' : 'No'}</span>
             </div>

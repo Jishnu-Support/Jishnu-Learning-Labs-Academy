@@ -13,10 +13,10 @@ export function ApprovalsPage() {
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<Registration | null>(null);
   const [reason, setReason] = useState('');
-  const students = useQuery({ queryKey: ['pending-registrations'], queryFn: () => api<{ registrations: Registration[] }>('/instructor/registrations/pending') });
+  const students = useQuery({ queryKey: ['pending-registrations'], queryFn: () => api<{ registrations: Registration[] }>('/tutor/registrations/pending') });
   const mutation = useMutation({
     mutationFn: ({ registration, action, rejectionReason }: { registration: Registration; action: 'approve' | 'reject'; rejectionReason?: string }) =>
-      api(`/instructor/registrations/${encodeURIComponent(registration.studentId ?? '')}/${action}`, { method: 'POST', body: JSON.stringify(rejectionReason ? { reason: rejectionReason } : {}) }),
+      api(`/tutor/registrations/${encodeURIComponent(registration.studentId ?? '')}/${action}`, { method: 'POST', body: JSON.stringify(rejectionReason ? { reason: rejectionReason } : {}) }),
     onSuccess: async () => {
       setSelected(null);
       setReason('');
@@ -28,7 +28,7 @@ export function ApprovalsPage() {
   const registrations = students.data?.registrations ?? [];
   return (
     <section>
-      <p className="eyebrow">INSTRUCTOR PORTAL</p><PageHeader title="Pending students" backTo="/instructor" breadcrumbs={['Dashboard', 'Pending Students']} />
+      <p className="eyebrow">TUTOR PORTAL</p><PageHeader title="Pending students" backTo="/tutor" breadcrumbs={['Dashboard', 'Pending Students']} />
       <p className="muted">Review student registrations for your organization.</p>
       {mutation.error && <p className="notice notice-error" role="alert">{mutation.error instanceof ApiError ? mutation.error.message : 'The decision could not be saved.'}</p>}
       {registrations.length === 0 ? <div className="card empty-state"><h2>All caught up.</h2><p>No students are waiting for review.</p></div> : <div className="approval-list">{registrations.map((registration) => <article className="card approval-row" key={registration.user.id}><div>{registration.studentId && <span className="student-id">{registration.studentId}</span>}<h2>{registration.user.name}</h2><p className="muted">{registration.user.email} · {registration.user.phone ?? 'No contact number'}</p></div><div className="row-actions"><Button disabled={mutation.isPending} onClick={() => mutation.mutate({ registration, action: 'approve' })}>Approve</Button><Button variant="secondary" disabled={mutation.isPending} onClick={() => { setSelected(registration); setReason(''); }}>Reject</Button></div></article>)}</div>}

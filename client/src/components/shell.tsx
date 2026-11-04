@@ -6,20 +6,22 @@ import { BrandIntroGate } from './brand-intro';
 import { BrandLogo } from './brand-logo';
 import { BrandWallpaper } from './brand-wallpaper';
 import { Button } from './ui/button';
+import { NotificationBell } from './notification-bell';
+import { roleLabel } from '../types';
 
 export function Shell() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigationType = useNavigationType();
   const navigate = useNavigate();
-  const isAuthSurface = /^\/(student|instructor|staff|org-admin|super-admin)\/(login|register)$/.test(location.pathname)
+  const isAuthSurface = /^\/(student|instructor|tutor|tutor|org-admin|super-admin)\/(login|register)$/.test(location.pathname)
     || location.pathname === '/organizations/register';
   useEffect(() => {
     recordAppLocation(`${location.pathname}${location.search}`, navigationType);
   }, [location.pathname, location.search, navigationType]);
 
   useEffect(() => {
-    const loginMatch = location.pathname.match(/^\/(student|instructor|staff|org-admin|super-admin)\/login$/);
+    const loginMatch = location.pathname.match(/^\/(student|instructor|tutor|tutor|org-admin|super-admin)\/login$/);
     const roleLabel = loginMatch?.[1]?.replace('-', ' ');
     const pageTitle = roleLabel
       ? `${roleLabel.replace(/\b\w/g, (letter) => letter.toUpperCase())} Login`
@@ -29,12 +31,12 @@ export function Shell() {
           ? 'Change Password'
           : location.pathname.startsWith('/student')
             ? 'Student Portal'
-            : location.pathname.startsWith('/instructor')
-              ? 'Instructor Portal'
+            : location.pathname.startsWith('/instructor') || location.pathname.startsWith('/tutor')
+              ? 'Tutor Portal'
               : location.pathname.startsWith('/org-admin')
                 ? 'Organization Admin Portal'
-                : location.pathname.startsWith('/staff')
-                  ? 'Staff Portal'
+                : location.pathname.startsWith('/tutor')
+                  ? 'Tutor Portal'
                   : location.pathname.startsWith('/super-admin')
                     ? 'Platform Admin'
                     : 'Learning Platform';
@@ -45,8 +47,7 @@ export function Shell() {
     await logout();
     const loginRoute = user?.role === 'SUPER_ADMIN' ? '/super-admin/login'
       : user?.role === 'ORG_ADMIN' ? '/org-admin/login'
-        : user?.role === 'INSTRUCTOR' ? '/instructor/login'
-          : user?.role === 'STAFF' ? '/staff/login' : '/student/login';
+        : user?.role === 'INSTRUCTOR' || user?.role === 'TUTOR' ? '/tutor/login' : '/student/login';
     navigate(loginRoute, { replace: true });
   };
   return (
@@ -58,7 +59,8 @@ export function Shell() {
             <BrandLogo className="topbar-logo" />
           </Link>
           <div className="topbar-actions">
-            {user && <span className="user-chip">{user.name} · {user.role.replace('_', ' ')}</span>}
+            {user && (user.organizationId || user.role === 'SUPER_ADMIN') && <NotificationBell />}
+            {user && <span className="user-chip">{user.name} · {roleLabel(user.role)}</span>}
             {user && <Button variant="ghost" onClick={() => void signOut()}>Sign out</Button>}
           </div>
         </header>

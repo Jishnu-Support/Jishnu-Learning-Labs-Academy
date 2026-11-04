@@ -13,19 +13,18 @@ import type { Role } from '../types';
 const schema = z.object({
   organizationCode: z.string().trim().min(1, 'Enter your organization code'),
   studentId: z.string().trim().optional(),
-  staffId: z.string().trim().optional(),
+  tutorId: z.string().trim().optional(),
   name: z.string().trim().min(2, 'Enter your name'),
   email: z.string().trim().email('Enter a valid email address'),
   phone: z.string().trim().min(7, 'Enter a valid contact number'),
   password: z.string().min(8, 'Use at least 8 characters'),
 });
 type FormValues = z.infer<typeof schema>;
-type Props = { role: Extract<Role, 'STUDENT' | 'INSTRUCTOR' | 'STAFF'> };
+type Props = { role: Extract<Role, 'STUDENT' | 'TUTOR'> };
 
 const roleDetails = {
-  STUDENT: { title: 'Student', endpoint: '/auth/students/register', login: '/student/login', approval: 'an instructor' },
-  INSTRUCTOR: { title: 'Instructor', endpoint: '/auth/instructors/register', login: '/instructor/login', approval: 'an organization admin' },
-  STAFF: { title: 'Staff', endpoint: '/auth/staff/register', login: '/staff/login', approval: 'an organization admin' },
+  STUDENT: { title: 'Student', endpoint: '/auth/students/register', login: '/student/login', approvalActor: 'A Tutor', approval: 'Tutor' },
+  TUTOR: { title: 'Tutor', endpoint: '/auth/tutors/register', login: '/tutor/login', approvalActor: 'An Org Admin', approval: 'Org Admin' },
 } as const;
 
 export function RegisterPage({ role }: Props) {
@@ -34,9 +33,9 @@ export function RegisterPage({ role }: Props) {
   const form = useForm<FormValues>({
     resolver: zodResolver(schema.superRefine((values, context) => {
       if (role === 'STUDENT' && !values.studentId?.trim()) context.addIssue({ code: 'custom', path: ['studentId'], message: 'Enter your Student ID' });
-      if (role === 'STAFF' && !values.staffId?.trim()) context.addIssue({ code: 'custom', path: ['staffId'], message: 'Enter your Staff ID' });
+      if (role === 'TUTOR' && !values.tutorId?.trim()) context.addIssue({ code: 'custom', path: ['tutorId'], message: 'Enter your Tutor ID' });
     })),
-    defaultValues: { organizationCode: '', studentId: '', staffId: '', name: '', email: '', phone: '', password: '' },
+    defaultValues: { organizationCode: '', studentId: '', tutorId: '', name: '', email: '', phone: '', password: '' },
   });
   const mutation = useMutation({
     mutationFn: (values: FormValues) => {
@@ -47,7 +46,7 @@ export function RegisterPage({ role }: Props) {
         phone: values.phone,
         password: values.password,
         ...(role === 'STUDENT' ? { studentId: values.studentId } : {}),
-        ...(role === 'STAFF' ? { staffId: values.staffId } : {}),
+        ...(role === 'TUTOR' ? { tutorId: values.tutorId } : {}),
       };
       return api(details.endpoint, { method: 'POST', body: JSON.stringify(body) });
     },
@@ -67,11 +66,11 @@ export function RegisterPage({ role }: Props) {
     <section className="narrow-card card">
       <p className="eyebrow">{details.title.toUpperCase()} PORTAL</p>
       <PageHeader title="Create your account" backTo="/organizations/register" breadcrumbs={[details.title, 'Register']} hasUnsavedChanges={form.formState.isDirty} />
-      <p className="muted">An {details.approval} must approve your registration before you can sign in.</p>
+      <p className="muted">{details.approvalActor} must approve your registration before you can sign in.</p>
       <form className="form-stack" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
         <Field label="Organization Code" autoComplete="organization" {...form.register('organizationCode')} error={form.formState.errors.organizationCode?.message} />
         {role === 'STUDENT' && <Field label="Student ID" autoComplete="username" {...form.register('studentId')} error={form.formState.errors.studentId?.message} />}
-        {role === 'STAFF' && <Field label="Staff ID" autoComplete="username" {...form.register('staffId')} error={form.formState.errors.staffId?.message} />}
+        {role === 'TUTOR' && <Field label="Tutor ID" autoComplete="username" {...form.register('tutorId')} error={form.formState.errors.tutorId?.message} />}
         <Field label="Full name" autoComplete="name" {...form.register('name')} error={form.formState.errors.name?.message} />
         <Field label="Email address" type="email" autoComplete="email" {...form.register('email')} error={form.formState.errors.email?.message} />
         <Field label="Contact number" type="tel" autoComplete="tel" {...form.register('phone')} error={form.formState.errors.phone?.message} />

@@ -14,7 +14,7 @@ Follow AGENTS.md strictly. Keep the same-origin /api setup, organization scoping
 
 Problem: when I open some modules while logged in, the app sends me to the sign-in page and the module never opens.
 
-1. Reproduce: for each role (Student, Instructor, Staff, Org Admin, Super Admin) log in as the seeded accounts, open EVERY sidebar item and every route directly, and record which ones end at a login page. Check the network log for the 401/403/404/500 that triggers it. Tell me the root cause per case in plain language.
+1. Reproduce: for each role (Student, Instructor, Tutor, Org Admin, Super Admin) log in as the seeded accounts, open EVERY sidebar item and every route directly, and record which ones end at a login page. Check the network log for the 401/403/404/500 that triggers it. Tell me the root cause per case in plain language.
 2. Likely causes to check: wrong route guard (a role mismatch redirects to login instead of showing "no access"); a global API handler that logs the user out on any 401; token refresh race conditions (parallel requests each trying to refresh); the one-active-session rule revoking the session; sidebar links with no matching route and a catch-all that redirects to login; cookies or paths lost on direct navigation or page refresh.
 3. Fix:
    - Not logged in: go to the correct login page and keep a "return to" URL so after login the user lands on the module they wanted.

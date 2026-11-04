@@ -1,10 +1,11 @@
 import { basename, extname } from 'node:path';
-import { Prisma, Role } from '@prisma/client';
+import { NotificationType, Prisma, Role } from '@prisma/client';
 import type { Express } from 'express';
 import { prisma } from '../../config/prisma.js';
 import { logger } from '../../config/logger.js';
 import { HttpError } from '../../utils/http-error.js';
 import { localDiskStorage } from './storage.service.js';
+import { notifyAfterCommit, notifyCourseStudents, notifyOrganizationStudents } from '../notifications/notifications.service.js';
 
 const maximumFileSize = 20 * 1024 * 1024;
 const allowedTypes = new Map([
@@ -206,7 +207,7 @@ export async function setNotePublished(
   const note = await findNote(tenantId, noteId);
   requireNoteOwner(note, actorId, role);
   if (note.published === published) throw new HttpError(409, published ? 'Note is already published' : 'Note is already a draft');
-  return prisma.$transaction(async (tx) => {
+  const updated = await prisma.$transaction(async (tx) => {
     const updated = await tx.note.update({ where: { id: note.id }, data: { published }, select: safeNoteSelect() });
     await tx.auditLog.create({
       data: {
@@ -220,6 +221,24 @@ export async function setNotePublished(
     });
     return updated;
   });
+  if (published) {
+    const payload = {
+      type: NotificationType.CONTENT_PUBLISHED,
+      title: 'New learning content',
+      body: `${updated.title} is now available.`,
+      courseId: updated.course?.id,
+      link: updated.course ? `/student/courses/${updated.course.id}` : '/student/notes',
+      groupKey: updated.course ? `course:${updated.course.id}:content` : `organization:${tenantId}:content`,
+      dedupeKey: `note:${updated.id}:published`,
+    };
+    await notifyAfterCommit(
+      () => updated.course
+        ? notifyCourseStudents(tenantId, updated.course.id, payload)
+        : notifyOrganizationStudents(tenantId, payload),
+      'note publication',
+    );
+  }
+  return updated;
 }
 
 export async function softDeleteNote(organizationId: string | null, noteId: string, actorId: string, role: Role) {
@@ -274,7 +293,7 @@ export async function noteForView(organizationId: string | null, noteId: string,
 
 export async function noteForDownload(organizationId: string | null, noteId: string, userId: string, role: Role) {
   const tenantId = requireOrganizationId(organizationId);
-  if (role !== Role.ORG_ADMIN && role !== Role.INSTRUCTOR && role !== Role.STAFF) {
+  if (role !== Role.ORG_ADMIN && role !== Role.INSTRUCTOR && role !== Role.TUTOR) {
     throw new HttpError(403, 'You do not have permission to download note files');
   }
   const note = await findNote(tenantId, noteId);

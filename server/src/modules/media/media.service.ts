@@ -1,14 +1,15 @@
-import { EnrollmentStatus, MediaJobStatus, MediaStatus, MediaType, MediaVisibility, Prisma, Role } from '@prisma/client';
+import { EnrollmentStatus, MediaJobStatus, MediaStatus, MediaType, MediaVisibility, NotificationType, Prisma, Role } from '@prisma/client';
 import { fileTypeFromFile } from 'file-type';
 import { basename, extname } from 'node:path';
 import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { mediaStorage } from './media.storage.js';
+import { notifyAfterCommit, notifyCourseStudents } from '../notifications/notifications.service.js';
 import type { CreateMediaInput, MediaListInput, UpdateMediaInput } from './media.schemas.js';
 import { expectedMediaMimeTypes } from './media.schemas.js';
 
-const managerRoles = [Role.STAFF, Role.INSTRUCTOR, Role.ORG_ADMIN] as const;
+const managerRoles = [Role.TUTOR, Role.INSTRUCTOR, Role.ORG_ADMIN] as const;
 const videoLimits = new Set(['.mp4', '.mov', '.webm', '.mkv']);
 const audioLimits = new Set(['.mp3', '.m4a', '.aac', '.wav', '.ogg']);
 
@@ -467,7 +468,7 @@ export async function updateMedia(actor: MediaActor, mediaId: string, input: Upd
 export async function setMediaVisibility(actor: MediaActor, mediaId: string, published: boolean) {
   const media = await findManagedMedia(actor, mediaId);
   if (published && media.status !== MediaStatus.READY) throw new HttpError(409, 'Media must be ready before it can be published');
-  return prisma.$transaction(async (tx) => {
+  const updated = await prisma.$transaction(async (tx) => {
     const updated = await tx.mediaItem.update({
       where: { id: media.id },
       data: {
@@ -478,6 +479,18 @@ export async function setMediaVisibility(actor: MediaActor, mediaId: string, pub
     await audit(tx, media.organizationId, actor.userId, published ? 'MEDIA_PUBLISHED' : 'MEDIA_UNPUBLISHED', media.id);
     return serializeMedia(updated);
   });
+  if (published && media.courseId) {
+    const courseId = media.courseId;
+    await notifyAfterCommit(() => notifyCourseStudents(tenantId(actor), courseId, {
+      type: NotificationType.CONTENT_PUBLISHED,
+      title: 'New learning content',
+      body: `${media.title} is now available.`,
+      link: `/student/courses/${courseId}`,
+      groupKey: `course:${courseId}:content`,
+      dedupeKey: `media:${media.id}:published`,
+    }), 'media publication');
+  }
+  return updated;
 }
 
 export async function softDeleteMedia(actor: MediaActor, mediaId: string) {

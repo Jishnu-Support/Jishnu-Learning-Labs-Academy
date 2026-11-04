@@ -139,8 +139,7 @@ export async function listOrganizations(search?: string) {
     ...organization,
     counts: {
       students: users.filter(({ role }) => role === Role.STUDENT).length,
-      staff: users.filter(({ role }) => role === Role.STAFF).length,
-      instructors: users.filter(({ role }) => role === Role.INSTRUCTOR).length,
+      tutors: users.filter(({ role }) => role === Role.TUTOR || role === Role.INSTRUCTOR).length,
     },
   }));
 }

@@ -16,18 +16,18 @@ export const rejectStudent: RequestHandler = async (req, res) => {
   res.json({ data: result });
 };
 
-export const listPendingStaff: RequestHandler = async (req, res) => {
-  const registrations = await service.listPendingStaff(req.auth!.organizationId);
+export const listPendingTutor: RequestHandler = async (req, res) => {
+  const registrations = await service.listPendingTutor(req.auth!.organizationId);
   res.json({ data: { registrations } });
 };
 
-export const approveStaff: RequestHandler = async (req, res) => {
-  const result = await service.approveStaff(req.auth!.organizationId, req.params.userId as string, req.auth!.userId);
+export const approveTutor: RequestHandler = async (req, res) => {
+  const result = await service.approveTutor(req.auth!.organizationId, req.params.userId as string, req.auth!.userId);
   res.json({ data: result });
 };
 
-export const rejectStaff: RequestHandler = async (req, res) => {
-  const result = await service.rejectStaff(req.auth!.organizationId, req.params.userId as string, req.auth!.userId, req.body.reason);
+export const rejectTutor: RequestHandler = async (req, res) => {
+  const result = await service.rejectTutor(req.auth!.organizationId, req.params.userId as string, req.auth!.userId, req.body.reason);
   res.json({ data: result });
 };
 

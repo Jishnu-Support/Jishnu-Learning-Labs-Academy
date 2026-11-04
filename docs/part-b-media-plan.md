@@ -19,8 +19,8 @@ Save this whole specification as `docs/part-b-media-plan.md` in the repository (
 
 ### Permissions
 
-- `STAFF`, `INSTRUCTOR` and `ORG_ADMIN` can upload and manage media.
-- Staff and instructors edit, publish, unpublish and delete only their own uploads; `ORG_ADMIN` manages all media of the organization.
+- `TUTOR`, `INSTRUCTOR` and `ORG_ADMIN` can upload and manage media.
+- Tutors and instructors edit, publish, unpublish and delete only their own uploads; `ORG_ADMIN` manages all media of the organization.
 - Students can never upload.
 - Every route checks role and organization on the backend.
 
@@ -33,7 +33,7 @@ Save this whole specification as `docs/part-b-media-plan.md` in the repository (
 
 ### Upload
 
-- Add an "Upload Media" page in the Staff portal and the same page for Instructor and Org Admin, plus a "My Uploads" list.
+- Add an "Upload Media" page in the Tutor portal and the same page for Instructor and Org Admin, plus a "My Uploads" list.
 - The form has title, description, course, optional topic, type, and a drag-and-drop file picker with a progress bar, cancel and retry.
 - Allowed types, validated by extension, MIME type and file signature (magic bytes): video MP4, MOV, WebM, MKV; audio MP3, M4A, AAC, WAV, OGG.
 - Reject everything else, enforce size limits and quota, rate limit uploads, use random storage keys (no user-supplied filenames in paths), and clean up partial uploads.
@@ -62,7 +62,7 @@ Add a development script (`npm run media:sample`) that uses FFmpeg to generate a
 
 ### Tests
 
-- Permissions: students get 403 on upload, edit and delete; staff cannot edit another person's media; organization isolation, including manifest, segment and key routes returning 404 for other organizations.
+- Permissions: students get 403 on upload, edit and delete; Tutors cannot edit another person's media; organization isolation, including manifest, segment and key routes returning 404 for other organizations.
 - Upload validation: wrong type, a renamed file with the wrong signature, over the size limit, over the quota, path traversal attempts.
 - Processing: job lifecycle, retry, failure, recovery after a restart (mock FFmpeg in unit tests; one optional integration test with the sample files).
 - Component tests for the upload form, progress and the status list.
@@ -73,6 +73,6 @@ After my "go ahead": run lint, type-check and tests, fix failures, commit, then 
 
 1. The exact commands to migrate and restart.
 2. The `npm run media:sample` command.
-3. A step-by-step manual test: log in as staff, upload a small video and an audio, watch processing reach Ready, publish them to a course, then edit, unpublish and delete one.
+3. A step-by-step manual test: log in as a Tutor, upload a small video and an audio, watch processing reach Ready, publish them to a course, then edit, unpublish and delete one.
 
 Then stop and wait for me to say "start Part C".

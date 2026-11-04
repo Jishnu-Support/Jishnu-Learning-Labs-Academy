@@ -14,6 +14,7 @@ const envSchema = z.object({
   REQUIRE_ENROLLMENT_APPROVAL: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   SHOW_PARTNER_ORG_NAME: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   NOTE_STORAGE_DIR: z.string().default('storage/notes'),
+  TUTOR_STORAGE_DIR: z.string().default('storage/tutors'),
   MEDIA_STORAGE_DIR: z.string().default('storage/media'),
   MEDIA_STORAGE_QUOTA_GB: z.coerce.number().positive().default(10),
   MAX_VIDEO_MB: z.coerce.number().int().positive().default(500),

@@ -65,7 +65,7 @@ async function registerSample(input: {
     const media = await createMedia({
       organizationId: input.organizationId,
       userId: input.uploaderId,
-      role: Role.STAFF,
+      role: Role.TUTOR,
     }, {
       title: input.title,
       description: 'Locally generated 10-second Part B media sample.',
@@ -117,10 +117,10 @@ async function main() {
   const organization = await prisma.organization.findUnique({ where: { code: 'jll-demo' }, select: { id: true } });
   if (!organization) throw new Error('Seed the jll-demo organization before generating media samples');
   const uploader = await prisma.user.findFirst({
-    where: { organizationId: organization.id, role: Role.STAFF, status: AccountStatus.APPROVED, isActive: true },
+    where: { organizationId: organization.id, role: Role.TUTOR, status: AccountStatus.APPROVED, isActive: true },
     select: { id: true },
   });
-  if (!uploader) throw new Error('An approved jll-demo staff account is required to register media samples');
+  if (!uploader) throw new Error('An approved jll-demo Tutor account is required to register media samples');
   const courses = await prisma.course.findMany({
     where: { organizationId: organization.id, code: { in: ['PY101', 'JAV101', 'JS101'] } },
     select: { id: true, code: true },

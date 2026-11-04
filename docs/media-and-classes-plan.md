@@ -4,7 +4,7 @@
 
 This plan covers the next two checkpoints for the Jishnu Learning Labs platform:
 
-- MC1: Videos & Audios (student playback and staff reporting)
+- MC1: Videos & Audios (student playback and Tutor reporting)
 - MC2: Online Classes (expert sessions and student attendance)
 
 Follow AGENTS.md strictly. Keep the same-origin /api setup, organization scoping, backend permission checks, Zod validation, AuditLog entries, PageHeader with Back, the Jishnu theme, and the responsive layout rules in docs/design-system.md. Do not reset the database or delete data.
@@ -50,11 +50,11 @@ Player page (video and audio):
 
 WatchProgress should feed "Learned hours" on My Courses.
 
-Instructors, staff and Org Admin get a "Media" view with a viewing report (who watched, percent watched).
+Instructors, Tutors and Org Admin get a "Media" view with a viewing report (who watched, percent watched).
 
 ## MC2: Online Classes
 
-Teacher side (ORG_ADMIN and INSTRUCTOR create and edit; STAFF view):
+Teacher side (ORG_ADMIN, INSTRUCTOR and TUTOR create and edit; TUTOR view):
 
 - Schedule a class: title, description, course, date and time, duration
 - Statuses: SCHEDULED / LIVE / ENDED / CANCELLED
@@ -94,7 +94,7 @@ Required tests include:
 - join window
 - enrollment and organization checks
 - attendance recording and status rules
-- permissions (staff and students cannot schedule)
+- permissions (Tutors and students cannot schedule)
 - device-check component
 
 ## Execution workflow

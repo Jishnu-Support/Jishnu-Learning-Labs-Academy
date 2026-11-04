@@ -92,7 +92,7 @@ export function StudentCoursesPage() {
               <h2>{course.title}</h2>
               <p>{course.description || 'No description provided.'}</p>
               <p className="muted">{course.plannedHours} hours · {course._count.topics} topics</p>
-              <p className="muted">Instructor{course.instructors.length === 1 ? '' : 's'}: {course.instructors.map(({ instructor }) => instructor.name).join(', ')}</p>
+              <p className="muted">Tutor{course.instructors.length === 1 ? '' : 's'}: {course.instructors.map(({ instructor }) => instructor.name).join(', ')}</p>
               <div className="course-actions">
                 <Link className="button button-secondary" to={`/student/courses/${course.id}?returnTo=${encodeURIComponent(returnTo)}`}>Course details</Link>
                 {enrollment
