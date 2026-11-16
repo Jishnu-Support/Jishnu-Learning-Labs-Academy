@@ -4,7 +4,7 @@ import { HttpError } from '../../utils/http-error.js';
 import * as service from './learning.service.js';
 import {
   createQuestionSchema, eventSchema, practiceStartSchema, questionListQuerySchema,
-  regradeSchema,
+  practiceSetListQuerySchema, regradeSchema,
 } from './learning.schemas.js';
 
 function actor(req: Request) {
@@ -137,6 +137,10 @@ export const closeAssessment: RequestHandler = async (req, res) => {
   res.json({ data: { assessment: await service.closeAssessment(actor(req), param(req, 'assessmentId')) } });
 };
 
+export const reopenAssessment: RequestHandler = async (req, res) => {
+  res.json({ data: { assessment: await service.reopenAssessment(actor(req), param(req, 'assessmentId')) } });
+};
+
 export const publishAssessment: RequestHandler = async (req, res) => {
   res.json({ data: { assessment: await service.publishAssessment(actor(req), param(req, 'assessmentId')) } });
 };
@@ -164,7 +168,8 @@ export const exportResults: RequestHandler = async (req, res) => {
 };
 
 export const studentAssessments: RequestHandler = async (req, res) => {
-  res.json({ data: { assessments: await service.studentAssessments(actor(req)) } });
+  const filters = practiceSetListQuerySchema.parse(req.query);
+  res.json({ data: { assessments: await service.studentAssessments(actor(req), filters.courseId) } });
 };
 
 export const startAttempt: RequestHandler = async (req, res) => {
@@ -206,6 +211,38 @@ export const answerPractice: RequestHandler = async (req, res) => {
   res.json({ data: await service.answerPractice(actor(req), param(req, 'sessionId'), req.body.questionId, req.body.answer) });
 };
 
+export const listPracticeSets: RequestHandler = async (req, res) => {
+  const filters = practiceSetListQuerySchema.parse(req.query);
+  res.json({ data: { practiceSets: await service.listPracticeSets(actor(req), filters.courseId) } });
+};
+
+export const getPracticeSet: RequestHandler = async (req, res) => {
+  res.json({ data: { practiceSet: await service.getPracticeSet(actor(req), param(req, 'setId')) } });
+};
+
+export const createPracticeSet: RequestHandler = async (req, res) => {
+  res.status(201).json({ data: { practiceSet: await service.createPracticeSet(actor(req), req.body) } });
+};
+
+export const updatePracticeSet: RequestHandler = async (req, res) => {
+  res.json({ data: { practiceSet: await service.updatePracticeSet(actor(req), param(req, 'setId'), req.body) } });
+};
+
+export const deletePracticeSet: RequestHandler = async (req, res) => {
+  await service.deletePracticeSet(actor(req), param(req, 'setId'));
+  res.status(204).end();
+};
+
+export const studentPracticeSets: RequestHandler = async (req, res) => {
+  const filters = practiceSetListQuerySchema.parse(req.query);
+  res.json({ data: { practiceSets: await service.studentPracticeSets(actor(req), filters.courseId) } });
+};
+
+export const startPracticeSet: RequestHandler = async (req, res) => {
+  res.status(201).json({ data: await service.startPracticeSet(actor(req), param(req, 'setId')) });
+};
+
 export const practiceHistory: RequestHandler = async (req, res) => {
-  res.json({ data: { sessions: await service.practiceHistory(actor(req)) } });
+  const filters = practiceSetListQuerySchema.parse(req.query);
+  res.json({ data: { sessions: await service.practiceHistory(actor(req), filters.courseId) } });
 };

@@ -5,6 +5,7 @@ import {
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { notifyAfterCommit, notifyCourseStudents, notifyUsers } from '../notifications/notifications.service.js';
+import { canAccessContent, requireContentAccess } from '../student-portal/content-access.service.js';
 import { questionSchema } from './learning.schemas.js';
 
 type Actor = { organizationId: string; userId: string; role: Role };
@@ -19,19 +20,27 @@ type AssessmentInput = {
   shuffleQuestions?: boolean; shuffleOptions?: boolean; resultReleaseMode?: ResultReleaseMode;
   answerReviewAllowed?: boolean; weight?: number | null;
 };
+type PracticeSetInput = {
+  courseId?: string;
+  title?: string;
+  topic?: string;
+  difficulty?: QuestionDifficulty;
+  questionIds?: string[];
+  published?: boolean;
+};
 type SnapshotQuestion = {
   id: string; type: QuestionType; prompt: string; options: unknown; correctAnswer: unknown;
   explanation: string | null; marks: number; topic: string; difficulty: QuestionDifficulty;
 };
 
 function assertTeacher(actor: Actor) {
-  if (actor.role !== Role.ORG_ADMIN && actor.role !== Role.INSTRUCTOR) throw new HttpError(403, 'You do not have permission to manage learning content');
+  if (actor.role !== Role.ORG_ADMIN && actor.role !== Role.TUTOR) throw new HttpError(403, 'You do not have permission to manage learning content');
 }
 
 async function managedCourse(actor: Actor, courseId: string) {
   assertTeacher(actor);
   const course = await prisma.course.findFirst({
-    where: { id: courseId, organizationId: actor.organizationId, ...(actor.role === Role.INSTRUCTOR ? { instructors: { some: { instructorId: actor.userId } } } : {}) },
+    where: { id: courseId, organizationId: actor.organizationId, ...(actor.role === Role.TUTOR ? { instructors: { some: { instructorId: actor.userId } } } : {}) },
     select: { id: true },
   });
   if (!course) throw new HttpError(404, 'Course not found');
@@ -148,7 +157,7 @@ export async function listQuestions(actor: Actor, filters: { courseId?: string; 
       ...(filters.difficulty ? { difficulty: filters.difficulty } : {}),
       ...(filters.type ? { type: filters.type } : {}),
       ...(filters.search ? { prompt: { contains: filters.search, mode: 'insensitive' } } : {}),
-      ...(actor.role === Role.INSTRUCTOR ? { course: { instructors: { some: { instructorId: actor.userId } } } } : {}),
+      ...(actor.role === Role.TUTOR ? { course: { instructors: { some: { instructorId: actor.userId } } } } : {}),
     },
     include: { course: { select: { id: true, code: true, title: true } }, courseTopic: { select: { id: true, title: true } } },
     orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
@@ -171,7 +180,7 @@ export async function updateQuestion(actor: Actor, questionId: string, input: Pa
   assertTeacher(actor);
   const current = await prisma.practiceQuestion.findFirst({
     where: { id: questionId, organizationId: actor.organizationId, deletedAt: null,
-      ...(actor.role === Role.INSTRUCTOR ? { course: { instructors: { some: { instructorId: actor.userId } } } } : {}) },
+      ...(actor.role === Role.TUTOR ? { course: { instructors: { some: { instructorId: actor.userId } } } } : {}) },
   });
   if (!current) throw new HttpError(404, 'Question not found');
   const courseId = input.courseId ?? current.courseId;
@@ -203,7 +212,7 @@ export async function deleteQuestion(actor: Actor, questionId: string) {
   assertTeacher(actor);
   const question = await prisma.practiceQuestion.findFirst({
     where: { id: questionId, organizationId: actor.organizationId, deletedAt: null,
-      ...(actor.role === Role.INSTRUCTOR ? { course: { instructors: { some: { instructorId: actor.userId } } } } : {}) },
+      ...(actor.role === Role.TUTOR ? { course: { instructors: { some: { instructorId: actor.userId } } } } : {}) },
     select: { id: true },
   });
   if (!question) throw new HttpError(404, 'Question not found');
@@ -238,11 +247,127 @@ function questionSnapshot(row: {
   return { id: row.id, type: row.type, prompt: row.prompt, options: row.options, correctAnswer: row.correctAnswer, explanation: row.explanation, marks: row.marks, topic: row.topic, difficulty: row.difficulty };
 }
 
+async function validatePracticeSetQuestions(
+  actor: Actor,
+  courseId: string,
+  topic: string,
+  difficulty: QuestionDifficulty,
+  questionIds: string[],
+) {
+  const questions = await prisma.practiceQuestion.findMany({
+    where: { id: { in: questionIds }, organizationId: actor.organizationId, courseId, topic, difficulty, deletedAt: null },
+    select: { id: true },
+  });
+  if (questions.length !== questionIds.length) {
+    throw new HttpError(400, 'Every set question must be active and match its course, topic, and difficulty');
+  }
+}
+
+function practiceSetScope(actor: Actor) {
+  return actor.role === Role.TUTOR
+    ? { course: { instructors: { some: { instructorId: actor.userId } } } }
+    : {};
+}
+
+export async function listPracticeSets(actor: Actor, courseId?: string) {
+  assertTeacher(actor);
+  if (courseId) await managedCourse(actor, courseId);
+  return prisma.practiceSet.findMany({
+    where: {
+      organizationId: actor.organizationId,
+      deletedAt: null,
+      ...(courseId ? { courseId } : {}),
+      ...practiceSetScope(actor),
+    },
+    include: { course: { select: { id: true, code: true, title: true } } },
+    orderBy: [{ updatedAt: 'desc' }, { title: 'asc' }],
+  }).then((sets) => sets.map(({ questionIds, ...set }) => ({
+    ...set,
+    questionCount: Array.isArray(questionIds) ? questionIds.length : 0,
+  })));
+}
+
+async function findManagedPracticeSet(actor: Actor, setId: string) {
+  assertTeacher(actor);
+  const set = await prisma.practiceSet.findFirst({
+    where: { id: setId, organizationId: actor.organizationId, deletedAt: null, ...practiceSetScope(actor) },
+    include: { course: { select: { id: true, code: true, title: true } } },
+  });
+  if (!set) throw new HttpError(404, 'Practice set not found');
+  return set;
+}
+
+export async function getPracticeSet(actor: Actor, setId: string) {
+  const set = await findManagedPracticeSet(actor, setId);
+  const questionIds = Array.isArray(set.questionIds) ? set.questionIds.filter((id): id is string => typeof id === 'string') : [];
+  const questions = await prisma.practiceQuestion.findMany({
+    where: { id: { in: questionIds }, organizationId: actor.organizationId, courseId: set.courseId },
+    include: { courseTopic: { select: { id: true, title: true } } },
+  });
+  const byId = new Map(questions.map((question) => [question.id, question]));
+  return {
+    ...set,
+    questions: questionIds.map((id) => byId.get(id)).filter((question) => question !== undefined),
+  };
+}
+
+export async function createPracticeSet(actor: Actor, input: PracticeSetInput) {
+  assertTeacher(actor);
+  const courseId = input.courseId!;
+  const title = input.title!;
+  const topic = input.topic!;
+  const difficulty = input.difficulty!;
+  const questionIds = input.questionIds!;
+  await managedCourse(actor, courseId);
+  await validatePracticeSetQuestions(actor, courseId, topic, difficulty, questionIds);
+  return prisma.$transaction(async (tx) => {
+    const set = await tx.practiceSet.create({
+      data: {
+        organizationId: actor.organizationId, courseId, createdById: actor.userId,
+        title, topic, difficulty, questionIds: json(questionIds), published: input.published ?? false,
+      },
+    });
+    await audit(tx, actor, 'PRACTICE_SET_CREATED', 'PracticeSet', set.id, { courseId, questionCount: questionIds.length });
+    return set;
+  });
+}
+
+export async function updatePracticeSet(actor: Actor, setId: string, input: PracticeSetInput) {
+  const current = await findManagedPracticeSet(actor, setId);
+  const title = input.title ?? current.title;
+  const topic = input.topic ?? current.topic;
+  const difficulty = input.difficulty ?? current.difficulty;
+  const questionIds = input.questionIds ?? (Array.isArray(current.questionIds) ? current.questionIds.filter((id): id is string => typeof id === 'string') : []);
+  await validatePracticeSetQuestions(actor, current.courseId, topic, difficulty, questionIds);
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.practiceSet.update({
+      where: { id: current.id },
+      data: {
+        title, topic, difficulty, questionIds: json(questionIds),
+        ...(input.published !== undefined ? { published: input.published } : {}),
+      },
+    });
+    await audit(tx, actor, 'PRACTICE_SET_UPDATED', 'PracticeSet', updated.id, { published: updated.published, questionCount: questionIds.length });
+    return updated;
+  });
+}
+
+export async function deletePracticeSet(actor: Actor, setId: string) {
+  const current = await findManagedPracticeSet(actor, setId);
+  await prisma.$transaction(async (tx) => {
+    await tx.practiceSet.update({ where: { id: current.id }, data: { published: false, deletedAt: new Date() } });
+    await audit(tx, actor, 'PRACTICE_SET_DELETED', 'PracticeSet', current.id);
+  });
+}
+
 async function managedAssessment(actor: Actor, assessmentId: string) {
   assertTeacher(actor);
   const assessment = await prisma.assessment.findFirst({
     where: { id: assessmentId, organizationId: actor.organizationId,
-      ...(actor.role === Role.INSTRUCTOR ? { course: { instructors: { some: { instructorId: actor.userId } } } } : {}) },
+      ...(actor.role === Role.TUTOR ? {
+        createdById: actor.userId,
+        course: { instructors: { some: { instructorId: actor.userId } } },
+      } : {}) },
     include: { questions: { orderBy: { order: 'asc' } }, course: { select: { id: true, code: true, title: true } } },
   });
   if (!assessment) throw new HttpError(404, 'Assessment not found');
@@ -252,7 +377,13 @@ async function managedAssessment(actor: Actor, assessmentId: string) {
 export async function listAssessments(actor: Actor) {
   assertTeacher(actor);
   return prisma.assessment.findMany({
-    where: { organizationId: actor.organizationId, ...(actor.role === Role.INSTRUCTOR ? { course: { instructors: { some: { instructorId: actor.userId } } } } : {}) },
+    where: {
+      organizationId: actor.organizationId,
+      ...(actor.role === Role.TUTOR ? {
+        createdById: actor.userId,
+        course: { instructors: { some: { instructorId: actor.userId } } },
+      } : {}),
+    },
     include: { course: { select: { id: true, code: true, title: true } }, _count: { select: { questions: true, attempts: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -394,12 +525,29 @@ export async function closeAssessment(actor: Actor, assessmentId: string) {
   const assessment = await managedAssessment(actor, assessmentId);
   if (assessment.status !== AssessmentStatus.PUBLISHED) throw new HttpError(409, 'Only published assessments can be closed');
   return prisma.$transaction(async (tx) => {
-    const updated = await tx.assessment.update({ where: { id: assessmentId }, data: { status: AssessmentStatus.CLOSED } });
+    const updated = await tx.assessment.updateMany({
+      where: { id: assessmentId, organizationId: actor.organizationId, status: AssessmentStatus.PUBLISHED },
+      data: { status: AssessmentStatus.CLOSED },
+    });
+    if (updated.count !== 1) throw new HttpError(409, 'Assessment status changed before it could be closed');
     await audit(tx, actor, 'ASSESSMENT_CLOSED', 'Assessment', assessmentId);
-    return updated;
+    return tx.assessment.findUniqueOrThrow({ where: { id: assessmentId } });
   });
 }
 
+export async function reopenAssessment(actor: Actor, assessmentId: string) {
+  const assessment = await managedAssessment(actor, assessmentId);
+  if (assessment.status !== AssessmentStatus.CLOSED) throw new HttpError(409, 'Only closed assessments can be reopened');
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.assessment.updateMany({
+      where: { id: assessmentId, organizationId: actor.organizationId, status: AssessmentStatus.CLOSED },
+      data: { status: AssessmentStatus.PUBLISHED },
+    });
+    if (updated.count !== 1) throw new HttpError(409, 'Assessment status changed before it could be reopened');
+    await audit(tx, actor, 'ASSESSMENT_REOPENED', 'Assessment', assessmentId);
+    return tx.assessment.findUniqueOrThrow({ where: { id: assessmentId } });
+  });
+}
 export async function publishAssessment(actor: Actor, assessmentId: string) {
   const assessment = await managedAssessment(actor, assessmentId);
   if (assessment.status !== AssessmentStatus.DRAFT) throw new HttpError(409, 'Only drafts can be published');
@@ -419,7 +567,7 @@ export async function publishAssessment(actor: Actor, assessmentId: string) {
     type: NotificationType.ASSESSMENT_PUBLISHED,
     title: 'New assessment available',
     body: `${assessment.title} is ready for you.`,
-    link: '/student/assessments',
+    link: `/student/courses/${assessment.courseId}/assessments`,
     dedupeKey: `assessment:${assessment.id}:published`,
   }), 'assessment publication');
   return result;
@@ -448,6 +596,13 @@ async function assertEnrolled(actor: Actor, courseId: string) {
     select: { id: true },
   });
   if (!enrollment) throw new HttpError(404, 'Course enrollment not found');
+  await requireContentAccess({
+    organizationId: actor.organizationId,
+    userId: actor.userId,
+    role: actor.role,
+    courseId,
+    published: true,
+  });
 }
 
 export async function startPractice(actor: Actor, input: { courseId: string; topicId?: string; difficulty?: QuestionDifficulty; type?: QuestionType; count: number; timeLimitSeconds?: number }) {
@@ -460,21 +615,100 @@ export async function startPractice(actor: Actor, input: { courseId: string; top
   });
   if (!questions.length) throw new HttpError(404, 'No practice questions match your filters');
   const questionIds = shuffled(questions.map(({ id }) => id)).slice(0, input.count);
+  return createPracticeSession(actor, input.courseId, questionIds, input.timeLimitSeconds);
+}
+
+async function createPracticeSession(
+  actor: Actor,
+  courseId: string,
+  questionIds: string[],
+  timeLimitSeconds?: number,
+  practiceSetId?: string,
+) {
   const startedAt = new Date();
   const session = await prisma.practiceSession.create({
     data: {
-      organizationId: actor.organizationId, studentId: actor.userId, courseId: input.courseId,
+      organizationId: actor.organizationId, studentId: actor.userId, courseId,
+      ...(practiceSetId ? { practiceSetId } : {}),
       questionIds: json(questionIds), totalQuestions: questionIds.length,
-      ...(input.timeLimitSeconds ? { timeLimitSeconds: input.timeLimitSeconds, expiresAt: new Date(startedAt.getTime() + input.timeLimitSeconds * 1000) } : {}),
+      ...(timeLimitSeconds ? { timeLimitSeconds, expiresAt: new Date(startedAt.getTime() + timeLimitSeconds * 1000) } : {}),
     },
   });
   return getPracticeSession(actor, session.id);
 }
 
+export async function studentPracticeSets(actor: Actor, courseId?: string) {
+  if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Student access required');
+  const enrollments = await prisma.enrollment.findMany({
+    where: {
+      organizationId: actor.organizationId,
+      studentId: actor.userId,
+      status: EnrollmentStatus.ACTIVE,
+      course: { status: 'PUBLISHED' },
+      ...(courseId ? { courseId } : {}),
+    },
+    select: { courseId: true },
+  });
+  if (courseId && !enrollments.some((enrollment) => enrollment.courseId === courseId)) {
+    throw new HttpError(404, 'Course enrollment not found');
+  }
+  const sets = await prisma.practiceSet.findMany({
+    where: {
+      organizationId: actor.organizationId, courseId: { in: enrollments.map(({ courseId }) => courseId) },
+      published: true, deletedAt: null,
+    },
+    select: {
+      id: true, courseId: true, title: true, topic: true, difficulty: true, published: true, createdAt: true,
+      questionIds: true, course: { select: { id: true, code: true, title: true } },
+    },
+    orderBy: [{ createdAt: 'desc' }, { title: 'asc' }],
+  });
+  return Promise.all(sets.map(async ({ questionIds, ...set }) => ({
+    ...set,
+    questionCount: Array.isArray(questionIds) ? questionIds.length : 0,
+    locked: !await canAccessContent({
+      organizationId: actor.organizationId,
+      userId: actor.userId,
+      role: actor.role,
+      courseId: set.courseId,
+      published: set.published,
+    }),
+  })));
+}
+
+export async function startPracticeSet(actor: Actor, setId: string) {
+  if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Student access required');
+  const set = await prisma.practiceSet.findFirst({
+    where: {
+      id: setId, organizationId: actor.organizationId, published: true, deletedAt: null,
+      course: {
+        status: 'PUBLISHED',
+        enrollments: { some: { organizationId: actor.organizationId, studentId: actor.userId, status: EnrollmentStatus.ACTIVE } },
+      },
+    },
+    select: { id: true, courseId: true, questionIds: true },
+  });
+  if (!set) throw new HttpError(404, 'Published practice set not found in your enrolled courses');
+  await requireContentAccess({
+    organizationId: actor.organizationId,
+    userId: actor.userId,
+    role: actor.role,
+    courseId: set.courseId,
+    published: true,
+  });
+  const questionIds = Array.isArray(set.questionIds) ? set.questionIds.filter((id): id is string => typeof id === 'string') : [];
+  if (!questionIds.length) throw new HttpError(409, 'This practice set has no available questions');
+  const questionCount = await prisma.practiceQuestion.count({
+    where: { id: { in: questionIds }, organizationId: actor.organizationId, courseId: set.courseId, deletedAt: null },
+  });
+  if (questionCount !== questionIds.length) throw new HttpError(409, 'A question in this set is no longer available');
+  return createPracticeSession(actor, set.courseId, questionIds, undefined, set.id);
+}
+
 export async function getPracticeSession(actor: Actor, sessionId: string) {
   let session = await prisma.practiceSession.findFirst({
     where: { id: sessionId, organizationId: actor.organizationId, studentId: actor.userId },
-    include: { answers: true },
+    include: { answers: true, practiceSet: { select: { title: true } } },
   });
   if (!session) throw new HttpError(404, 'Practice session not found');
   if (session.status === PracticeSessionStatus.IN_PROGRESS && session.expiresAt && session.expiresAt <= new Date()) {
@@ -540,38 +774,70 @@ export async function answerPractice(actor: Actor, sessionId: string, questionId
   return { isCorrect, score, correctAnswer: row.correctAnswer, explanation: row.explanation, next: await getPracticeSession(actor, sessionId) };
 }
 
-export async function practiceHistory(actor: Actor) {
+export async function practiceHistory(actor: Actor, courseId?: string) {
+  if (courseId) {
+    const enrollment = await prisma.enrollment.findFirst({
+      where: {
+        organizationId: actor.organizationId,
+        studentId: actor.userId,
+        courseId,
+        status: EnrollmentStatus.ACTIVE,
+      },
+      select: { id: true },
+    });
+    if (!enrollment) throw new HttpError(404, 'Course enrollment not found');
+  }
   return prisma.practiceSession.findMany({
-    where: { organizationId: actor.organizationId, studentId: actor.userId },
-    include: { course: { select: { title: true, code: true } } },
+    where: {
+      organizationId: actor.organizationId,
+      studentId: actor.userId,
+      ...(courseId ? { courseId } : {}),
+    },
+    include: { course: { select: { title: true, code: true } }, practiceSet: { select: { title: true } } },
     orderBy: { createdAt: 'desc' }, take: 100,
   });
 }
 
-export async function studentAssessments(actor: Actor) {
+export async function studentAssessments(actor: Actor, courseId?: string) {
   if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Student access required');
   const now = new Date();
   const enrollments = await prisma.enrollment.findMany({
-    where: { organizationId: actor.organizationId, studentId: actor.userId, status: EnrollmentStatus.ACTIVE, course: { status: 'PUBLISHED' } },
+    where: {
+      organizationId: actor.organizationId,
+      studentId: actor.userId,
+      status: EnrollmentStatus.ACTIVE,
+      course: { status: 'PUBLISHED' },
+      ...(courseId ? { courseId } : {}),
+    },
     select: { courseId: true },
   });
+  if (courseId && !enrollments.some((enrollment) => enrollment.courseId === courseId)) {
+    throw new HttpError(404, 'Course enrollment not found');
+  }
   return prisma.assessment.findMany({
-    where: { organizationId: actor.organizationId, courseId: { in: enrollments.map(({ courseId }) => courseId) }, status: { in: [AssessmentStatus.PUBLISHED, AssessmentStatus.CLOSED] } },
+    where: { organizationId: actor.organizationId, courseId: courseId ?? { in: enrollments.map(({ courseId }) => courseId) }, status: { in: [AssessmentStatus.PUBLISHED, AssessmentStatus.CLOSED] } },
     select: {
       id: true, title: true, status: true, instructions: true, totalMarks: true, passMark: true, durationMinutes: true, opensAt: true, closesAt: true, maxAttempts: true,
       resultReleaseMode: true, resultsReleasedAt: true,
-      course: { select: { title: true, code: true } },
-      attempts: { where: { organizationId: actor.organizationId, studentId: actor.userId }, select: { id: true, status: true, submittedAt: true, score: true }, orderBy: { startedAt: 'desc' } },
+      course: { select: { id: true, title: true, code: true } },
+      attempts: { where: { organizationId: actor.organizationId, studentId: actor.userId }, select: { id: true, status: true, submittedAt: true, score: true, passed: true }, orderBy: { startedAt: 'desc' } },
     },
     orderBy: [{ opensAt: 'asc' }, { createdAt: 'desc' }],
-  }).then((items) => items.map((item) => ({
+  }).then(async (items) => Promise.all(items.map(async (item) => ({
     ...item,
+    locked: !await canAccessContent({
+      organizationId: actor.organizationId,
+      userId: actor.userId,
+      role: actor.role,
+      courseId: item.course.id,
+      published: true,
+    }),
     attempts: item.attempts.map((attempt) => ({
       ...attempt,
       score: item.resultReleaseMode === ResultReleaseMode.IMMEDIATE || item.resultsReleasedAt ? attempt.score : null,
     })),
     availability: item.status === AssessmentStatus.CLOSED || (item.closesAt && item.closesAt <= now) ? 'CLOSED' : item.opensAt && item.opensAt > now ? 'UPCOMING' : 'OPEN',
-  })));
+  }))));
 }
 
 function attemptSnapshot(assessment: { publishedSnapshot: Prisma.JsonValue | null; shuffleQuestions: boolean; shuffleOptions: boolean }) {
@@ -661,6 +927,13 @@ export async function startAttempt(actor: Actor, assessmentId: string) {
       course: { enrollments: { some: { studentId: actor.userId, organizationId: actor.organizationId, status: EnrollmentStatus.ACTIVE } } } },
   });
   if (!assessment) throw new HttpError(404, 'Assessment not found for an active enrollment');
+  await requireContentAccess({
+    organizationId: actor.organizationId,
+    userId: actor.userId,
+    role: actor.role,
+    courseId: assessment.courseId,
+    published: true,
+  });
   const now = new Date();
   if (assessment.opensAt && assessment.opensAt > now) throw new HttpError(409, 'Assessment has not opened yet');
   if (assessment.closesAt && assessment.closesAt <= now) throw new HttpError(409, 'Assessment is closed');
@@ -792,7 +1065,7 @@ export async function releaseResults(actor: Actor, assessmentId: string) {
       type: NotificationType.ASSESSMENT_RESULTS,
       title: 'Assessment results released',
       body: `Results for ${assessment.title} are available.`,
-      link: '/student/assessments',
+      link: `/student/courses/${assessment.courseId}/assessments`,
       dedupeKey: `assessment:${assessment.id}:results-released`,
     });
   }, 'assessment results release');

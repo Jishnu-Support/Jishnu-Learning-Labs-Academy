@@ -6,7 +6,6 @@ import type { Role } from '../types';
 
 const roleTitles: Record<Role, string> = {
   STUDENT: 'STUDENT',
-  INSTRUCTOR: 'TUTOR',
   TUTOR: 'TUTOR',
   ORG_ADMIN: 'ORG ADMIN',
   SUPER_ADMIN: 'SUPER ADMIN',
@@ -20,22 +19,23 @@ export function Dashboard({ role }: { role: Role }) {
     : '';
   const links: Partial<Record<Role, Array<{ title: string; description: string; href: string; label: string }>>> = {
     SUPER_ADMIN: [
+      { title: 'Payments', description: 'Review organization-wide fee activity and payment settings.', href: '/super-admin/payments', label: 'Manage payments' },
       { title: 'Organizations', description: 'Monitor organizations and suspend or reactivate access when needed.', href: '/super-admin/organizations', label: 'Manage organizations' },
     ],
     STUDENT: [
-      { title: 'My courses', description: 'Browse published courses and continue your learning.', href: '/student/courses', label: 'Open courses' },
+      { title: 'My Course', description: 'Continue learning in your active courses and open course materials.', href: '/student/courses', label: 'Open My Course' },
+      { title: 'Library', description: 'Browse your available learning books and resources.', href: '/student/library', label: 'Open Library' },
     ],
     ORG_ADMIN: [
-      { title: 'Courses', description: 'Create organization courses, assign instructors, and track progress.', href: '/org-admin/courses', label: 'Manage courses' },
+      { title: 'Payments', description: 'Review organization fee payments, subscriptions, refunds, and settings.', href: '/org-admin/payments', label: 'Manage payments' },
+      { title: 'Courses', description: 'Create organization courses, assign Tutors, and track progress.', href: '/org-admin/courses', label: 'Manage courses' },
       { title: 'Pending Tutors', description: 'Review Tutor registrations for your organization.', href: '/org-admin/tutors/pending', label: 'Review registrations' },
       { title: 'Media', description: 'Upload and manage course videos and audio.', href: '/org-admin/media', label: 'Upload media' },
     ],
-    INSTRUCTOR: [
-      { title: 'Courses', description: 'Manage your assigned courses and mark topics as delivered.', href: '/tutor/courses', label: 'Open courses' },
-      { title: 'Pending students', description: 'Approve or reject student registrations for your organization.', href: '/tutor/approvals', label: 'Review students' },
-      { title: 'Media', description: 'Upload and manage your course videos and audio.', href: '/tutor/media', label: 'Upload media' },
-    ],
     TUTOR: [
+      { title: 'My Fees and Earnings', description: 'Set course fee prices, view paid students, and track collections.', href: '/tutor/payments', label: 'View fees and earnings' },
+      { title: 'Courses', description: 'Manage courses assigned to you and mark topics as delivered.', href: '/tutor/courses', label: 'Open courses' },
+      { title: 'Pending students', description: 'Approve or reject student registrations for your organization.', href: '/tutor/approvals', label: 'Review students' },
       { title: 'Media', description: 'Upload and manage course videos and audio.', href: '/tutor/media', label: 'Upload media' },
     ],
   };

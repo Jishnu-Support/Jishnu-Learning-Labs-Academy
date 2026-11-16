@@ -12,8 +12,13 @@ Theme values live in `client/src/index.css` as CSS custom properties and Tailwin
 | Gray | `#6B6B6B` | Secondary text and borders |
 | Page background | `#F7F7FC` | Application canvas |
 | Primary text | `#1B1B2F` | Body text |
+| `--text-on-navy` | `#FFFFFF` | Text and icons on navy or blue surfaces |
+| `--text-on-navy-muted` | `#DDE1F5` | Secondary text on navy or blue surfaces |
+| `--text-on-navy-link` | `#F7D8F0` | Links on navy or blue surfaces |
 
 Use the shared `--brand-*` CSS variables or Tailwind tokens (`primary`, `secondary`, `accent`, `success`, and `ring`) rather than component-local color values. For contrast, never render lime text on white; use navy text over lime fills. Pending statuses use amber, while rejected and suspended statuses use red.
+
+Text and icons on navy or blue backgrounds must use the shared on-navy tokens; do not use black, primary navy, or other dark text there. Normal text must meet WCAG AA contrast (4.5:1; large text 3:1), including links, placeholders, controls, tables, menus, tooltips, badges, toasts, and disabled states. Check all four portals during browser validation.
 
 ## Typography and components
 

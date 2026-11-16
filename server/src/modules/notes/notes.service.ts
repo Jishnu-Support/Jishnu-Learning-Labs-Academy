@@ -1,11 +1,13 @@
 import { basename, extname } from 'node:path';
 import { NotificationType, Prisma, Role } from '@prisma/client';
 import type { Express } from 'express';
+import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
 import { logger } from '../../config/logger.js';
 import { HttpError } from '../../utils/http-error.js';
 import { localDiskStorage } from './storage.service.js';
 import { notifyAfterCommit, notifyCourseStudents, notifyOrganizationStudents } from '../notifications/notifications.service.js';
+import { canAccessContent, requireContentAccess } from '../student-portal/content-access.service.js';
 
 const maximumFileSize = 20 * 1024 * 1024;
 const allowedTypes = new Map([
@@ -16,8 +18,8 @@ const allowedTypes = new Map([
   ['.webp', 'image/webp'],
 ]);
 
-type NoteInput = { title: string; subject: string; description: string; courseId?: string | null };
-type NoteListInput = { search?: string; subject?: string; courseId?: string };
+type NoteInput = { title: string; subject: string; description: string; courseId?: string | null; freePreview?: boolean };
+type NoteListInput = { search?: string; subject?: string; courseId?: string; saved?: 'true' | 'false' | 'all' };
 
 function requireOrganizationId(organizationId: string | null): string {
   if (!organizationId) throw new HttpError(403, 'An organization-scoped account is required');
@@ -32,6 +34,7 @@ function safeNoteSelect() {
     description: true,
     originalName: true,
     published: true,
+    freePreview: true,
     createdAt: true,
     updatedAt: true,
     author: { select: { id: true, name: true, role: true } },
@@ -79,11 +82,13 @@ async function findNote(organizationId: string, noteId: string) {
       authorId: true,
       title: true,
       subject: true,
+      courseId: true,
       description: true,
       storageKey: true,
       originalName: true,
       mimeType: true,
       published: true,
+      freePreview: true,
     },
   });
   if (!note) throw new HttpError(404, 'Note not found');
@@ -92,28 +97,88 @@ async function findNote(organizationId: string, noteId: string) {
 
 export async function listNotes(organizationId: string | null, userId: string, role: Role, input: NoteListInput) {
   const tenantId = requireOrganizationId(organizationId);
+  if (input.saved && role !== Role.STUDENT) throw new HttpError(403, 'Only students can filter their saved notes');
+  const activeCourseIds = role === Role.STUDENT
+    ? (await prisma.enrollment.findMany({
+      where: { organizationId: tenantId, studentId: userId, status: 'ACTIVE' },
+      select: { courseId: true },
+    })).map(({ courseId }) => courseId)
+    : [];
+  const visibilityConditions = role === Role.STUDENT
+    ? [{ OR: [{ courseId: null }, { courseId: { in: activeCourseIds } }] }]
+    : role === Role.TUTOR
+      ? [{ OR: [{ published: true }, { authorId: userId }] }]
+      : [];
+  const searchConditions = input.search
+    ? [{
+      OR: [
+        { title: { contains: input.search, mode: 'insensitive' as const } },
+        { subject: { contains: input.search, mode: 'insensitive' as const } },
+      ],
+    }]
+    : [];
   const notes = await prisma.note.findMany({
     where: {
       organizationId: tenantId,
       deletedAt: null,
+      ...(role === Role.STUDENT ? { published: true } : {}),
       ...(input.courseId ? { courseId: input.courseId } : {}),
-      ...(role === Role.ORG_ADMIN ? {} : role === Role.STUDENT ? { published: true } : {
-        OR: [{ published: true }, { authorId: userId }],
-      }),
-      ...(input.search ? {
-        AND: [{
-          OR: [
-            { title: { contains: input.search, mode: 'insensitive' } },
-            { subject: { contains: input.search, mode: 'insensitive' } },
-          ],
-        }],
-      } : {}),
+      ...(role === Role.STUDENT && (input.saved === 'true' || (!input.saved && env.STUDY_MATERIALS_SAVED_ONLY)) ? { savedBy: { some: { organizationId: tenantId, studentId: userId } } } : {}),
+      ...(role === Role.STUDENT && input.saved === 'false' ? { savedBy: { none: { organizationId: tenantId, studentId: userId } } } : {}),
+      ...(visibilityConditions.length || searchConditions.length
+        ? { AND: [...visibilityConditions, ...searchConditions] }
+        : {}),
       ...(input.subject ? { subject: { equals: input.subject, mode: 'insensitive' } } : {}),
     },
     orderBy: { updatedAt: 'desc' },
     select: safeNoteSelect(),
   });
-  return { notes };
+  if (role !== Role.STUDENT) return { notes };
+  const savedNoteIds = new Set((await prisma.savedNote.findMany({
+    where: { organizationId: tenantId, studentId: userId, noteId: { in: notes.map(({ id }) => id) } },
+    select: { noteId: true },
+  })).map(({ noteId }) => noteId));
+  return {
+    notes: await Promise.all(notes.map(async (note) => ({
+      ...note,
+      saved: savedNoteIds.has(note.id),
+      locked: !await canAccessContent({
+        organizationId: tenantId,
+        userId,
+        role,
+        courseId: note.course?.id ?? null,
+        published: note.published,
+        freePreview: note.freePreview,
+      }),
+    }))),
+  };
+}
+
+export async function saveNote(organizationId: string | null, noteId: string, studentId: string, saved: boolean) {
+  const tenantId = requireOrganizationId(organizationId);
+  if (saved) {
+    const note = await prisma.note.findFirst({
+      where: { id: noteId, organizationId: tenantId, published: true, deletedAt: null },
+      select: { id: true, courseId: true, published: true, freePreview: true },
+    });
+    if (!note) throw new HttpError(404, 'Published note not found');
+    await requireContentAccess({
+      organizationId: tenantId,
+      userId: studentId,
+      role: Role.STUDENT,
+      courseId: note.courseId,
+      published: note.published,
+      freePreview: note.freePreview,
+    });
+    await prisma.savedNote.upsert({
+      where: { organizationId_noteId_studentId: { organizationId: tenantId, noteId, studentId } },
+      create: { organizationId: tenantId, noteId, studentId },
+      update: {},
+    });
+  } else {
+    await prisma.savedNote.deleteMany({ where: { organizationId: tenantId, noteId, studentId } });
+  }
+  return { noteId, saved };
 }
 
 export async function createNote(
@@ -135,6 +200,7 @@ export async function createNote(
           subject: input.subject,
           description: input.description,
           courseId: input.courseId ?? null,
+          freePreview: input.freePreview ?? false,
           ...(upload ? upload : {}),
         },
         select: safeNoteSelect(),
@@ -227,7 +293,7 @@ export async function setNotePublished(
       title: 'New learning content',
       body: `${updated.title} is now available.`,
       courseId: updated.course?.id,
-      link: updated.course ? `/student/courses/${updated.course.id}` : '/student/notes',
+      link: updated.course ? `/student/courses/${updated.course.id}/materials` : '/student/courses',
       groupKey: updated.course ? `course:${updated.course.id}:content` : `organization:${tenantId}:content`,
       dedupeKey: `note:${updated.id}:published`,
     };
@@ -264,6 +330,14 @@ export async function noteForView(organizationId: string | null, noteId: string,
   const tenantId = requireOrganizationId(organizationId);
   const note = await findNote(tenantId, noteId);
   if (!isVisible(note, userId, role)) throw new HttpError(404, 'Note not found');
+  await requireContentAccess({
+    organizationId: tenantId,
+    userId,
+    role,
+    courseId: note.courseId,
+    published: note.published,
+    freePreview: note.freePreview,
+  });
   if (role === Role.STUDENT) {
     await prisma.$transaction(async (tx) => {
       const view = await tx.noteView.create({ data: { organizationId: tenantId, noteId: note.id, userId } });
@@ -293,7 +367,7 @@ export async function noteForView(organizationId: string | null, noteId: string,
 
 export async function noteForDownload(organizationId: string | null, noteId: string, userId: string, role: Role) {
   const tenantId = requireOrganizationId(organizationId);
-  if (role !== Role.ORG_ADMIN && role !== Role.INSTRUCTOR && role !== Role.TUTOR) {
+  if (role !== Role.ORG_ADMIN && role !== Role.TUTOR) {
     throw new HttpError(403, 'You do not have permission to download note files');
   }
   const note = await findNote(tenantId, noteId);

@@ -19,12 +19,12 @@ const student: CurrentUser = {
   organization: { name: 'Academy', code: 'academy', isPlatformOwner: false },
 };
 
-function renderPracticePage() {
+function renderPracticePage(embeddedCourseId?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <AuthContext.Provider value={{ user: student, loading: false, logout: vi.fn() }}>
-        <MemoryRouter initialEntries={['/student/practice']}><StudentPracticePage /></MemoryRouter>
+        <MemoryRouter initialEntries={['/student/practice']}>{embeddedCourseId ? <StudentPracticePage embeddedCourseId={embeddedCourseId} /> : <StudentPracticePage />}</MemoryRouter>
       </AuthContext.Provider>
     </QueryClientProvider>,
   );
@@ -38,6 +38,7 @@ describe('StudentPracticePage', () => {
       if (path === '/student/courses/enrolled') return { enrollments: [{ course: { id: 'course-1', code: 'PY101', title: 'Python' } }] };
       if (path === '/student/courses/course-1') return { course: { topics: [{ id: 'topic-1', title: 'Basics' }] } };
       if (path === '/learning/student/practice/history') return { sessions: [] };
+      if (path === '/learning/student/practice-sets') return { practiceSets: [] };
       if (path === '/learning/student/practice/start') {
         expect(init?.method).toBe('POST');
         return {
@@ -60,13 +61,29 @@ describe('StudentPracticePage', () => {
     expect(await screen.findByRole('heading', { name: 'Practice Q/A' })).toBeInTheDocument();
     fireEvent.change(await screen.findByLabelText('Enrolled course'), { target: { value: 'course-1' } });
     await screen.findByRole('option', { name: 'Basics' });
-    fireEvent.click(screen.getByRole('button', { name: 'Start practice' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start random practice' }));
     expect(await screen.findByText('Choose A')).toBeInTheDocument();
     expect(screen.queryByText('A is correct.')).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/Your answer/), { target: { value: 'A' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit answer' }));
+    fireEvent.click(screen.getByLabelText('A'));
+    fireEvent.click(screen.getByRole('button', { name: 'Check answer' }));
     await waitFor(() => expect(screen.getByText(/Correct\. Answer: "A"/)).toBeInTheDocument());
     expect(screen.getByText(/A is correct\./)).toBeInTheDocument();
     expect(screen.getByText('Practice complete')).toBeInTheDocument();
   }, 10000);
+
+  it('loads practice sets and history only for the course tab and locks its course selector', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === '/student/courses/enrolled') return { enrollments: [{ course: { id: 'course-1', code: 'PY101', title: 'Python' } }] };
+      if (path === '/student/courses/course-1') return { course: { topics: [] } };
+      if (path === '/learning/student/practice/history?courseId=course-1') return { sessions: [] };
+      if (path === '/learning/student/practice-sets?courseId=course-1') return { practiceSets: [] };
+      throw new Error(`Unexpected API request: ${path}`);
+    });
+
+    renderPracticePage('course-1');
+    expect(await screen.findByText('No published sets are available for this course yet.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Enrolled course')).not.toBeInTheDocument();
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/learning/student/practice/history?courseId=course-1');
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/learning/student/practice-sets?courseId=course-1');
+  });
 });

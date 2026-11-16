@@ -69,7 +69,7 @@ function cookieHeader(response: { headers: { 'set-cookie'?: string | string[] } 
   return (Array.isArray(cookies) ? cookies : cookies ? [cookies] : []).map((cookie) => cookie.split(';')[0]).join('; ');
 }
 
-async function login(role: 'org-admin' | 'instructors' | 'students', organizationCode: string, user: User) {
+async function login(role: 'org-admin' | 'tutors' | 'students', organizationCode: string, user: User) {
   const endpoint = role === 'org-admin' ? '/api/auth/org-admin/login' : `/api/auth/${role}/login`;
   const body = role === 'students'
     ? {
@@ -77,7 +77,9 @@ async function login(role: 'org-admin' | 'instructors' | 'students', organizatio
       studentId: (await prisma.studentProfile.findUniqueOrThrow({ where: { userId: user.id }, select: { studentId: true } })).studentId,
       password,
     }
-    : { organizationCode, email: user.email, password };
+    : role === 'tutors'
+      ? { organizationCode, identifier: user.email, password }
+      : { organizationCode, email: user.email, password };
   const response = await request(app).post(endpoint).send(body);
   if (response.status !== 200) throw new Error(`Test login failed for ${user.email}: ${response.status}`);
   return cookieHeader(response);
@@ -119,16 +121,16 @@ beforeAll(async () => {
   organization = await makeOrganization('primary');
   otherOrganization = await makeOrganization('other');
   admin = await makeUser(organization.id, Role.ORG_ADMIN, 'admin');
-  instructor = await makeUser(organization.id, Role.INSTRUCTOR, 'instructor');
-  secondInstructor = await makeUser(organization.id, Role.INSTRUCTOR, 'second-instructor');
-  otherInstructor = await makeUser(otherOrganization.id, Role.INSTRUCTOR, 'other-instructor');
+  instructor = await makeUser(organization.id, Role.TUTOR, 'tutor');
+  secondInstructor = await makeUser(organization.id, Role.TUTOR, 'second-tutor');
+  otherInstructor = await makeUser(otherOrganization.id, Role.TUTOR, 'other-tutor');
   student = await makeUser(organization.id, Role.STUDENT, 'student');
   secondStudent = await makeUser(organization.id, Role.STUDENT, 'second-student');
   northstarStudent = await makeUser(otherOrganization.id, Role.STUDENT, 'northstar-student');
   northstarPendingStudent = await makeUser(otherOrganization.id, Role.STUDENT, 'northstar-pending', AccountStatus.PENDING);
   otherAdmin = await makeUser(otherOrganization.id, Role.ORG_ADMIN, 'other-admin');
   adminCookie = await login('org-admin', organization.code!, admin);
-  instructorCookie = await login('instructors', organization.code!, instructor);
+  instructorCookie = await login('tutors', organization.code!, instructor);
   studentCookie = await login('students', organization.code!, student);
   otherAdminCookie = await login('org-admin', otherOrganization.code!, otherAdmin);
 });
@@ -158,8 +160,8 @@ describe('course management and student enrollment', () => {
     expect(visibleToAssignedInstructor.body.data.courses.map((course: { id: string }) => course.id)).toContain(created.body.data.course.id);
     expect(visibleToAssignedInstructor.body.data.courses.map((course: { id: string }) => course.id)).not.toContain(otherTenantSameCode.body.data.course.id);
 
-    const secondInstructor = await makeUser(organization.id, Role.INSTRUCTOR, 'unassigned-instructor');
-    const secondInstructorCookie = await login('instructors', organization.code!, secondInstructor);
+    const secondInstructor = await makeUser(organization.id, Role.TUTOR, 'unassigned-tutor');
+    const secondInstructorCookie = await login('tutors', organization.code!, secondInstructor);
     expect((await request(app).get(`/api/courses/${draft.body.data.course.id}`).set('Cookie', secondInstructorCookie)).status).toBe(404);
     expect((await request(app).patch(`/api/courses/${draft.body.data.course.id}`).set('Cookie', secondInstructorCookie).send({ title: 'Forbidden update' })).status).toBe(404);
     expect((await request(app).get(`/api/courses/${created.body.data.course.id}`).set('Cookie', studentCookie)).status).toBe(403);
@@ -193,6 +195,49 @@ describe('course management and student enrollment', () => {
 
     const crossTenant = await request(app).get(`/api/student/courses/${courseId}`).set('Cookie', await login('students', otherOrganization.code!, await makeUser(otherOrganization.id, Role.STUDENT, 'other-student')));
     expect(crossTenant.status).toBe(404);
+  });
+
+  it('lists only active courses belonging to the authenticated student', async () => {
+    const activeCourse = await prisma.course.create({
+      data: {
+        organizationId: organization.id,
+        createdById: admin.id,
+        code: 'ACTIVE-ONLY-1',
+        title: 'Active-only course',
+        category: 'Test',
+        plannedHours: 2,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2026-12-31T00:00:00.000Z'),
+        status: 'PUBLISHED',
+      },
+    });
+    const otherStudentCourse = await prisma.course.create({
+      data: {
+        organizationId: organization.id,
+        createdById: admin.id,
+        code: 'ACTIVE-ONLY-2',
+        title: 'Another student course',
+        category: 'Test',
+        plannedHours: 2,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2026-12-31T00:00:00.000Z'),
+        status: 'PUBLISHED',
+      },
+    });
+    const activeEnrollment = await prisma.enrollment.create({
+      data: { organizationId: organization.id, courseId: activeCourse.id, studentId: student.id, status: 'ACTIVE' },
+    });
+    await prisma.enrollment.create({
+      data: { organizationId: organization.id, courseId: otherStudentCourse.id, studentId: secondStudent.id, status: 'ACTIVE' },
+    });
+
+    const activeCourses = await request(app).get('/api/student/courses/enrolled').set('Cookie', studentCookie);
+    expect(activeCourses.body.data.enrollments.map((item: { course: { id: string } }) => item.course.id)).toContain(activeCourse.id);
+    expect(activeCourses.body.data.enrollments.map((item: { course: { id: string } }) => item.course.id)).not.toContain(otherStudentCourse.id);
+
+    await prisma.enrollment.update({ where: { id: activeEnrollment.id }, data: { status: 'PENDING' } });
+    const pendingCourses = await request(app).get('/api/student/courses/enrolled').set('Cookie', studentCookie);
+    expect(pendingCourses.body.data.enrollments.map((item: { course: { id: string } }) => item.course.id)).not.toContain(activeCourse.id);
   });
 
   it('seeds all twelve course fixtures idempotently without deleting or overwriting seeded data', async () => {

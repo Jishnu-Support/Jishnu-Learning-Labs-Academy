@@ -3,13 +3,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter } from 'react-router-dom';
-import { App } from './app';
+import { BrowserRouter, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { App, LegacyStudentLearningRedirect } from './app';
 import { AuthProvider } from './auth/auth-provider';
 
 vi.mock('./components/brand-intro', () => ({
   BrandIntroGate: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
+
+function LocationResult() {
+  const location = useLocation();
+  return <output data-testid="location">{`${location.pathname}${location.search}`}</output>;
+}
 
 describe('Phase 1 portal shell', () => {
   it('shows the student sign-in screen and registration link', async () => {
@@ -20,8 +25,8 @@ describe('Phase 1 portal shell', () => {
     expect(screen.getByRole('link', { name: /register as student/i })).toHaveAttribute('href', '/student/register');
   });
 
-  it('redirects legacy instructor registration to Tutor registration', async () => {
-    window.history.pushState({}, '', '/instructor/register');
+  it('shows Tutor registration without an Instructor compatibility route', async () => {
+    window.history.pushState({}, '', '/tutor/register');
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
     expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
@@ -49,6 +54,14 @@ describe('Phase 1 portal shell', () => {
     expect(screen.getByLabelText('Email address')).toBeInTheDocument();
     expect(screen.queryByLabelText('Organization Code')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Platform Admin' })).toHaveAttribute('href', '/super-admin/login');
+  });
+
+  it('redirects legacy learning URLs to the selected course tab when the course is known', async () => {
+    render(<MemoryRouter initialEntries={['/student/notes?courseId=course-1']}><Routes>
+      <Route path="/student/notes" element={<LegacyStudentLearningRedirect tab="materials" />} />
+      <Route path="*" element={<LocationResult />} />
+    </Routes></MemoryRouter>);
+    expect(await screen.findByTestId('location')).toHaveTextContent('/student/courses/course-1/materials');
   });
 
   it('shows and fills local Org Admin demo credentials when enabled', async () => {

@@ -32,7 +32,7 @@ Attendance
 
 Library
 - "Library" page for all roles: browse published notes and documents of the organization (the existing Notes data, with categories and an optional book/document type), search and filter by course and category
-- Students can use "Save to My List" and "Remove" on every item (also in the viewer and on the Notes page). A "Saved" tab lists their saved items with search. A SavedItem table, unique per student and item, only for items of their own organization. The view-only rules stay: the watermarked viewer, no download, no direct file URL
+- Students can use "Save to My List" and "Remove" on every item (also in the viewer and on the Study Materials page). A "Saved" tab lists their saved items with search. A SavedItem table, unique per student and item, only for items of their own organization. The view-only rules stay: the watermarked viewer, no download, no direct file URL
 
 =====================================================
 CHECKPOINT SP3: MY TRACK AND MY CERTIFICATES

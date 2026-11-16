@@ -13,14 +13,20 @@ const envSchema = z.object({
   REQUIRE_ORG_APPROVAL: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   REQUIRE_ENROLLMENT_APPROVAL: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   SHOW_PARTNER_ORG_NAME: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  STUDY_MATERIALS_SAVED_ONLY: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   NOTE_STORAGE_DIR: z.string().default('storage/notes'),
   TUTOR_STORAGE_DIR: z.string().default('storage/tutors'),
+  STUDENT_STORAGE_DIR: z.string().default('storage/students'),
+  STUDENT_ID_ENCRYPTION_KEY: z.string().optional(),
   MEDIA_STORAGE_DIR: z.string().default('storage/media'),
   MEDIA_STORAGE_QUOTA_GB: z.coerce.number().positive().default(10),
   MAX_VIDEO_MB: z.coerce.number().int().positive().default(500),
   MAX_AUDIO_MB: z.coerce.number().int().positive().default(100),
   KEEP_ORIGINAL_MEDIA: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   MEDIA_PROCESSING_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
+  PAYMENT_PROVIDER: z.enum(['MOCK', 'RAZORPAY']).default('MOCK'),
+  RAZORPAY_KEY_ID: z.string().optional(),
+  RAZORPAY_KEY_SECRET: z.string().optional(),
 });
 
 export const env = envSchema.parse(process.env);

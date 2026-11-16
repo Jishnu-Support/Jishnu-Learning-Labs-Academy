@@ -43,11 +43,13 @@ Jishnu Learning Labs is a multi-organization learning platform. Each organizatio
 - Every new non-login page must use the shared `PageHeader` component with an explicit `backTo` route. Keep login pages and role dashboard home pages free of back navigation.
 - Keep upload storage behind an abstraction. Local files must be outside the web root and available only through authenticated routes.
 - For Checkpoint 1B notes, allow only PDF and PNG/JPG/WEBP attachments up to 20 MB, checking extension and MIME type. Tutors, instructors, and org admins can create and publish notes; non-admin authors can edit, unpublish, or soft-delete only their own notes.
+- Use “Study Materials” in user-facing labels and routes in every portal; the database model may remain named `Note`.
 - Students have read-only access to published notes through the authenticated inline viewer. Never expose a student download route or direct file URL; watermark each viewer page and document that browser controls are a deterrent, not DRM.
 - Keep the live-class integration behind a provider abstraction. The initial Jitsi Meet iframe integration is a basic live-class version, not a claim of full conferencing or DRM security.
 
 ## Brand and visual design
 - Use the Jishnu Learning Labs design tokens documented in `docs/design-system.md`: navy is primary, magenta is the action/focus colour, lime is a success/highlight fill, and gray is secondary text/borders.
+- Text and icons on navy or blue backgrounds must use the shared `--text-on-navy`, `--text-on-navy-muted`, and `--text-on-navy-link` tokens; never use dark text there. Normal text must meet WCAG AA contrast (4.5:1; large text 3:1), including links, controls, menus, tooltips, tables, toasts, badges, and disabled states. Validate all four portals.
 - Keep all theme colours and typography in shared CSS variables and Tailwind theme tokens; do not hard-code brand colours in page components. Never use lime text on white; use navy text on lime fills.
 - Use a bold serif for headings and a clean sans-serif for body copy, with Noto Sans Tamil in the body font fallback stack. Prefer optional/preloaded fonts or system fallbacks to avoid layout shift.
 - Keep the logo in the shared shell and portal navigation. Every portal login and organization registration surface must show the logo and platform-brand chrome without replacing an organization's own identity.

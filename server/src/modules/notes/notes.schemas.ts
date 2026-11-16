@@ -5,6 +5,7 @@ const noteFields = {
   subject: z.string().trim().min(1).max(100),
   description: z.string().trim().min(1).max(10000),
   courseId: z.string().cuid().nullable().optional(),
+  freePreview: z.preprocess((value) => value === 'true' ? true : value === 'false' ? false : value, z.boolean()).optional(),
 };
 
 export const createNoteSchema = z.object(noteFields);
@@ -17,6 +18,7 @@ export const notesListQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
   subject: z.string().trim().max(100).optional(),
   courseId: z.string().cuid().optional(),
+  saved: z.enum(['true', 'false', 'all']).optional(),
 });
 
 export const noteParamSchema = z.object({ noteId: z.string().cuid() });

@@ -1,20 +1,23 @@
 import Hls from 'hls.js';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/auth-context';
 import { PageHeader } from '../components/page-header';
 import { PortalSidebar } from '../components/portal-sidebar';
-import { api, apiUrl } from '../lib/api';
+import { ApiError, api, apiUrl } from '../lib/api';
 
 type StudentMediaItem = {
   id: string;
   title: string;
   description: string | null;
   type: 'VIDEO' | 'AUDIO';
+  source: 'UPLOAD' | 'YOUTUBE';
+  youtubeVideoId: string | null;
   durationSeconds: number | null;
   progressPercent: number;
   completed: boolean;
+  locked?: boolean;
   course: { id: string; title: string; code: string };
   topic: { id: string; title: string } | null;
   watchProgress: { lastPositionSeconds: number; watchedSeconds: number; completed: boolean } | null;
@@ -52,9 +55,10 @@ function groupMedia(items: StudentMediaItem[]) {
 }
 
 export function StudentMediaPage() {
+  const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<MediaTab>('ALL');
   const [search, setSearch] = useState('');
-  const [courseId, setCourseId] = useState('');
+  const [courseId, setCourseId] = useState(searchParams.get('courseId') ?? '');
 
   const queryParams = new URLSearchParams();
   if (search.trim()) queryParams.set('search', search.trim());
@@ -72,7 +76,7 @@ export function StudentMediaPage() {
     <div className="portal-layout">
       <PortalSidebar role="STUDENT" />
       <section className="portal-content">
-        <PageHeader title="Videos & Audios" backTo="/student" breadcrumbs={['Student', 'Learning']} />
+        <PageHeader title="Videos & Audios" backTo="/student/courses" breadcrumbs={['My Course', 'Learning']} />
         <div className="card media-shell">
           <div className="media-toolbar">
             <div className="media-tabs" role="tablist" aria-label="Media type filter">
@@ -113,7 +117,7 @@ export function StudentMediaPage() {
                 {group.items.map((item) => (
                   <article key={item.id} className="media-card card">
                     <div className="media-thumbnail">
-                      <div className="media-badge">{item.type}</div>
+                      <div className="media-badge">{item.source === 'YOUTUBE' ? 'YOUTUBE' : item.type}</div>
                       <span>{formatDuration(item.durationSeconds)}</span>
                     </div>
                     <div className="media-copy">
@@ -128,7 +132,9 @@ export function StudentMediaPage() {
                         </div>
                       )}
                       <div className="media-actions">
-                        <Link className="button button-secondary" to={`/student/media/${item.id}`}>{item.completed ? 'Replay' : 'Continue watching'}</Link>
+                        {item.locked
+                          ? <Link className="button" to="/student/payments">Pay My Fee</Link>
+                          : <Link className="button button-secondary" to={`/student/courses/${item.course.id}/media/${item.id}`}>{item.completed ? 'Replay' : 'Continue watching'}</Link>}
                         <span className="media-status">{item.completed ? 'Completed' : 'In progress'}</span>
                       </div>
                     </div>
@@ -144,9 +150,10 @@ export function StudentMediaPage() {
 }
 
 export function StudentMediaPlayerPage() {
-  const { mediaId } = useParams();
+  const { mediaId, courseId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const coursePath = courseId ? `/student/courses/${encodeURIComponent(courseId)}/media` : '/student/courses';
   const mediaQuery = useQuery({
     queryKey: ['student-media-item', mediaId],
     queryFn: () => api<{ media: StudentMediaItem }>(`/student/media/${mediaId}`),
@@ -157,6 +164,8 @@ export function StudentMediaPlayerPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [lastSavedAt, setLastSavedAt] = useState(0);
+  const [usingProgressive, setUsingProgressive] = useState(false);
+  const [playbackError, setPlaybackError] = useState('');
   const payload = useMutation({
     mutationFn: (input: { positionSeconds: number; watchedSeconds: number; completed: boolean }) =>
       api(`/student/media/${mediaId}/progress`, {
@@ -166,14 +175,25 @@ export function StudentMediaPlayerPage() {
   });
 
   const source = media ? `${apiUrl}/student/media/${media.id}/stream/${media.type === 'VIDEO' ? 'master.m3u8' : 'audio.m4a'}` : '';
+  const progressiveSource = media ? `${apiUrl}/student/media/${media.id}/progressive` : '';
+
+  useEffect(() => {
+    setUsingProgressive(false);
+    setPlaybackError('');
+  }, [mediaId]);
 
   useEffect(() => {
     const mediaElement = media?.type === 'VIDEO' ? videoRef.current : audioRef.current;
     if (!mediaElement || !media) return;
     const savedPosition = media.watchProgress?.lastPositionSeconds ?? 0;
-    mediaElement.currentTime = savedPosition;
-    mediaElement.playbackRate = playbackRate;
-  }, [media, playbackRate]);
+    const restorePlayback = () => {
+      if (savedPosition > 0) mediaElement.currentTime = savedPosition;
+      mediaElement.playbackRate = playbackRate;
+    };
+    mediaElement.addEventListener('loadedmetadata', restorePlayback);
+    restorePlayback();
+    return () => mediaElement.removeEventListener('loadedmetadata', restorePlayback);
+  }, [media, playbackRate, source, usingProgressive]);
 
   useEffect(() => {
     const element = media?.type === 'VIDEO' ? videoRef.current : audioRef.current;
@@ -203,24 +223,65 @@ export function StudentMediaPlayerPage() {
   }, [media, lastSavedAt, payload, source]);
 
   useEffect(() => {
-    if (!source || !media) return;
+    if (!source || !media || media.source === 'YOUTUBE') return;
     if (media.type === 'AUDIO') {
       if (audioRef.current) audioRef.current.src = source;
       return;
     }
     const video = videoRef.current;
     if (!video) return;
+    const showProgressiveFallback = () => {
+      if (usingProgressive) {
+        setPlaybackError('This video could not be played. Try again later or contact your organization.');
+      } else {
+        setUsingProgressive(true);
+      }
+    };
+    video.addEventListener('error', showProgressiveFallback);
+    if (usingProgressive) {
+      video.src = progressiveSource;
+      return () => {
+        video.removeEventListener('error', showProgressiveFallback);
+        video.removeAttribute('src');
+        video.load();
+      };
+    }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = source;
-      return;
+      return () => {
+        video.removeEventListener('error', showProgressiveFallback);
+        video.removeAttribute('src');
+        video.load();
+      };
     }
     if (Hls.isSupported()) {
       const hls = new Hls({ xhrSetup: (xhr) => { xhr.withCredentials = true; } });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) showProgressiveFallback();
+      });
       hls.loadSource(source);
       hls.attachMedia(video);
-      return () => hls.destroy();
+      return () => {
+        video.removeEventListener('error', showProgressiveFallback);
+        hls.destroy();
+      };
     }
-  }, [media, source]);
+    showProgressiveFallback();
+    return () => video.removeEventListener('error', showProgressiveFallback);
+  }, [media, progressiveSource, source, usingProgressive]);
+
+  if (mediaQuery.isError) {
+    return (
+      <div className="portal-layout">
+        <PortalSidebar role="STUDENT" />
+        <section className="portal-content">
+          <PageHeader title="Media unavailable" backTo={coursePath} breadcrumbs={['My Course', 'Videos & Audios']} />
+          <p role="alert" className="notice notice-error">{mediaQuery.error instanceof ApiError ? mediaQuery.error.message : 'Could not open this media.'}</p>
+          <Link className="button" to="/student/payments">Pay My Fee</Link>
+        </section>
+      </div>
+    );
+  }
 
   if (!media || mediaQuery.isLoading) {
     return (
@@ -237,10 +298,19 @@ export function StudentMediaPlayerPage() {
     <div className="portal-layout">
       <PortalSidebar role="STUDENT" />
       <section className="portal-content">
-        <PageHeader title={media.title} backTo="/student/media" breadcrumbs={['Student', 'Videos & Audios']} />
+        <PageHeader title={media.title} backTo={coursePath} breadcrumbs={['My Course', 'Videos & Audios']} />
         <div className="card media-player-shell">
           <div className="media-player-wrap" onContextMenu={(event) => event.preventDefault()}>
-            {media.type === 'VIDEO' ? (
+            {media.source === 'YOUTUBE' && media.youtubeVideoId ? (
+              <iframe
+                className="media-player"
+                src={`https://www.youtube-nocookie.com/embed/${media.youtubeVideoId}`}
+                title={media.title}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+                referrerPolicy="strict-origin-when-cross-origin"
+              />
+            ) : media.type === 'VIDEO' ? (
               <video ref={videoRef} controls preload="metadata" playsInline className="media-player" onContextMenu={(event) => event.preventDefault()} />
             ) : (
               <audio ref={audioRef} controls preload="metadata" className="media-player audio-player" onContextMenu={(event) => event.preventDefault()} />
@@ -263,10 +333,11 @@ export function StudentMediaPlayerPage() {
                   <option value={2}>2x</option>
                 </select>
               </label>
-              <button type="button" className="button button-secondary" onClick={() => navigate('/student/media')}>Back to library</button>
+              <button type="button" className="button button-secondary" onClick={() => navigate(coursePath)}>Back to course</button>
             </div>
           </div>
           {media.description && <p className="muted">{media.description}</p>}
+          {playbackError && <p role="alert" className="notice notice-error">{playbackError}</p>}
           {media.watchProgress && (
             <p className="muted">Resume at {formatDuration(Math.round(media.watchProgress.lastPositionSeconds))} • {Math.round(media.progressPercent)}% watched.</p>
           )}

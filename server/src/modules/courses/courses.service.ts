@@ -3,6 +3,7 @@ import {
   AssessmentStatus,
   CourseStatus,
   EnrollmentStatus,
+  ExpertSessionStatus,
   Prisma,
   Role,
 } from '@prisma/client';
@@ -14,6 +15,7 @@ type CourseInput = {
   code: string;
   title: string;
   description?: string | null;
+  thumbnailUrl?: string | null;
   category: string;
   plannedHours: number;
   startDate: string;
@@ -42,7 +44,7 @@ const courseInclude = {
 function courseWhere(organizationId: string, userId: string, role: Role, input: ListInput = {}): Prisma.CourseWhereInput {
   return {
     organizationId,
-    ...(role === Role.INSTRUCTOR ? { instructors: { some: { instructorId: userId } } } : {}),
+    ...(role === Role.TUTOR ? { instructors: { some: { instructorId: userId } } } : {}),
     ...(input.status ? { status: input.status } : {}),
     ...(input.search ? {
       OR: [
@@ -65,7 +67,7 @@ async function validateInstructors(organizationId: string, instructorIds: string
     where: {
       id: { in: distinctIds },
       organizationId,
-      role: Role.INSTRUCTOR,
+      role: Role.TUTOR,
       status: AccountStatus.APPROVED,
       isActive: true,
     },
@@ -81,7 +83,7 @@ async function managedCourse(organizationId: string, userId: string, role: Role,
     where: {
       id: courseId,
       organizationId,
-      ...(role === Role.INSTRUCTOR ? { instructors: { some: { instructorId: userId } } } : {}),
+      ...(role === Role.TUTOR ? { instructors: { some: { instructorId: userId } } } : {}),
     },
     include: courseInclude,
   });
@@ -115,10 +117,10 @@ export async function listAssignableInstructors(organizationId: string, actorId:
   return prisma.user.findMany({
     where: {
       organizationId,
-      role: Role.INSTRUCTOR,
+      role: Role.TUTOR,
       status: AccountStatus.APPROVED,
       isActive: true,
-      ...(role === Role.INSTRUCTOR ? { id: actorId } : {}),
+      ...(role === Role.TUTOR ? { id: actorId } : {}),
     },
     select: { id: true, name: true },
     orderBy: { name: 'asc' },
@@ -131,7 +133,7 @@ export async function getManagedCourse(organizationId: string, userId: string, r
 
 export async function createCourse(organizationId: string, actorId: string, role: Role, input: CourseInput) {
   if (isoDate(input.endDate) < isoDate(input.startDate)) throw new HttpError(400, 'End date must be on or after the start date');
-  if (role === Role.INSTRUCTOR && input.instructorIds.some((id) => id !== actorId)) {
+  if (role === Role.TUTOR && input.instructorIds.some((id) => id !== actorId)) {
     throw new HttpError(403, 'Only an organization administrator can assign other Tutors');
   }
   await validateInstructors(organizationId, input.instructorIds);
@@ -144,6 +146,7 @@ export async function createCourse(organizationId: string, actorId: string, role
           code: input.code,
           title: input.title,
           description: input.description ?? null,
+          thumbnailUrl: input.thumbnailUrl ?? null,
           category: input.category,
           plannedHours: input.plannedHours,
           startDate: isoDate(input.startDate),
@@ -201,6 +204,7 @@ export async function updateCourse(
           ...(input.code !== undefined ? { code: input.code } : {}),
           ...(input.title !== undefined ? { title: input.title } : {}),
           ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.thumbnailUrl !== undefined ? { thumbnailUrl: input.thumbnailUrl } : {}),
           ...(input.category !== undefined ? { category: input.category } : {}),
           ...(input.plannedHours !== undefined ? { plannedHours: input.plannedHours } : {}),
           ...(input.startDate !== undefined ? { startDate: nextStartDate } : {}),
@@ -395,18 +399,62 @@ export async function browseStudentCourses(organizationId: string, studentId: st
 }
 
 export async function listStudentEnrollments(organizationId: string, studentId: string) {
-  return prisma.enrollment.findMany({
-    where: { organizationId, studentId, status: { in: [EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING] }, course: { status: CourseStatus.PUBLISHED } },
+  const now = new Date();
+  const enrollments = await prisma.enrollment.findMany({
+    where: { organizationId, studentId, status: EnrollmentStatus.ACTIVE, course: { status: CourseStatus.PUBLISHED } },
     orderBy: { enrolledAt: 'desc' },
     include: {
       course: {
         include: {
           instructors: { select: { instructor: { select: { name: true } } }, orderBy: { assignedAt: 'asc' } },
           topics: { orderBy: { order: 'asc' } },
+          subscriptions: {
+            where: { organizationId, studentId },
+            select: { status: true, endsAt: true },
+            orderBy: { endsAt: 'desc' },
+            take: 1,
+          },
+          expertSessions: {
+            where: {
+              organizationId,
+              OR: [
+                { status: ExpertSessionStatus.LIVE },
+                { status: ExpertSessionStatus.SCHEDULED, startsAt: { gt: now } },
+              ],
+            },
+            select: { id: true, title: true, startsAt: true, durationMinutes: true, status: true },
+            orderBy: { startsAt: 'asc' },
+            take: 1,
+          },
           _count: { select: { topics: true } },
         },
       },
     },
+  });
+  return enrollments.map((enrollment) => {
+    const coveredTopics = enrollment.course.topics.filter((topic) => topic.covered).length;
+    const subscription = enrollment.course.subscriptions[0];
+    const subscriptionStatus = !subscription
+      ? 'NOT_SUBSCRIBED'
+      : subscription.status === 'ACTIVE' && subscription.endsAt <= now
+        ? 'EXPIRED'
+        : subscription.status;
+    return {
+      id: enrollment.id,
+      status: enrollment.status,
+      enrolledAt: enrollment.enrolledAt,
+      course: {
+        ...enrollment.course,
+        subscriptions: undefined,
+        expertSessions: undefined,
+        progressPercent: enrollment.course.topics.length === 0
+          ? 0
+          : Math.round((coveredTopics / enrollment.course.topics.length) * 100),
+        learnedHours: enrollment.course.topics.reduce((total, topic) => total + (topic.covered ? topic.plannedHours : 0), 0),
+        subscriptionStatus,
+        nextSession: enrollment.course.expertSessions[0] ?? null,
+      },
+    };
   });
 }
 
@@ -429,9 +477,23 @@ export async function getStudentCourse(organizationId: string, studentId: string
     },
   });
   if (!course) throw new HttpError(404, 'Course not found');
+  const activeEnrollment = course.enrollments.some((enrollment) => enrollment.status === EnrollmentStatus.ACTIVE);
   const coveredTopics = course.topics.filter((topic) => topic.covered).length;
   return {
     ...course,
+    description: course.description,
+    topics: activeEnrollment ? course.topics : [],
+    notes: activeEnrollment ? await prisma.note.findMany({
+      where: {
+        organizationId,
+        courseId,
+        published: true,
+        deletedAt: null,
+        savedBy: { some: { organizationId, studentId } },
+      },
+      select: { id: true, title: true, subject: true, description: true, originalName: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+    }) : [],
     progressPercent: course.topics.length === 0 ? 0 : Math.round((coveredTopics / course.topics.length) * 100),
     assessments: await prisma.assessment.findMany({
       where: { organizationId, courseId, status: AssessmentStatus.PUBLISHED },
