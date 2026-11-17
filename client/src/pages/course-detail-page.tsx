@@ -33,6 +33,14 @@ type Enrollment = {
   enrolledAt: string;
   student: { name: string; studentProfile: { studentId: string } | null };
 };
+type CourseAssessmentReport = {
+  rows: Array<{
+    studentId: string; studentName: string; assessmentId: string; assessment: string;
+    attempts: number; bestScore: number | null; totalMarks: number; percentage: number | null;
+    status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_ATTEMPTED'; passed: boolean | null;
+  }>;
+  pagination: { total: number; totalPages: number };
+};
 
 function courseListPath(role: Role) {
   return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/tutor/courses';
@@ -43,12 +51,12 @@ function safeReturnTo(value: string | null, base: string) {
 }
 
 function notesPath(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin/notes' : '/tutor/notes';
+  return role === 'ORG_ADMIN' ? '/org-admin/materials' : '/tutor/materials';
 }
 
 export function CourseDetailPage() {
   const { user } = useAuth();
-  const role = user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'INSTRUCTOR';
+  const role = user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'TUTOR';
   const base = courseListPath(role);
   const { courseId = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -59,6 +67,7 @@ export function CourseDetailPage() {
   const [topicTitle, setTopicTitle] = useState('');
   const [topicHours, setTopicHours] = useState('');
   const [error, setError] = useState('');
+  const [showAssessmentChoices, setShowAssessmentChoices] = useState(false);
   const courseQuery = useQuery({
     queryKey: ['course', courseId],
     queryFn: () => api<{ course: Course }>(`/courses/${courseId}`),
@@ -68,6 +77,11 @@ export function CourseDetailPage() {
     queryKey: ['course-enrollments', courseId, studentSearch],
     queryFn: () => api<{ enrollments: Enrollment[] }>(`/courses/${courseId}/enrollments?${new URLSearchParams(studentSearch ? { search: studentSearch } : {})}`),
     enabled: Boolean(courseId),
+  });
+  const assessmentReports = useQuery({
+    queryKey: ['learning', 'course-assessment-reports', courseId],
+    queryFn: () => api<CourseAssessmentReport>(`/learning/reports?${new URLSearchParams({ courseId, page: '1', pageSize: '100' })}`),
+    enabled: role === 'TUTOR' && Boolean(courseId),
   });
   const invalidate = async () => {
     await Promise.all([
@@ -115,6 +129,12 @@ export function CourseDetailPage() {
   const coveredCount = topics.filter((topic) => topic.covered).length;
   const progress = topics.length ? Math.round((coveredCount / topics.length) * 100) : 0;
   const roleNotes = course ? `${notesPath(role)}?courseId=${encodeURIComponent(course.id)}` : notesPath(role);
+  const assessmentGroups = new Map<string, CourseAssessmentReport['rows']>();
+  for (const row of assessmentReports.data?.rows ?? []) {
+    const group = assessmentGroups.get(row.assessmentId) ?? [];
+    group.push(row);
+    assessmentGroups.set(row.assessmentId, group);
+  }
 
   const moveTopic = (index: number, direction: -1 | 1) => {
     const next = [...topics];
@@ -141,10 +161,11 @@ export function CourseDetailPage() {
               <span><strong>Dates</strong>{new Date(course.startDate).toLocaleDateString()} – {new Date(course.endDate).toLocaleDateString()}</span>
               <span><strong>Minimum attendance</strong>{course.minimumAttendancePercent}%</span>
               <span><strong>Assessment pass required</strong>{course.requiresAssessmentPass ? 'Yes' : 'No'}</span>
-              <span><strong>Tutors</strong>{course.instructors.map(({ instructor }) => instructor.name).join(', ')}</span>
+              <span><strong>Faculty</strong>{course.instructors.map(({ instructor }) => instructor.name).join(', ')}</span>
             </div>
             <div className="course-actions">
               {course.status !== 'ARCHIVED' && <Link className="button button-secondary" to={`${base}/${course.id}/edit?returnTo=${encodeURIComponent(returnTo)}`}>Edit course</Link>}
+              {role === 'TUTOR' && <Link className="button button-secondary" to={roleNotes}>Publish Study Materials</Link>}
               {course.status === 'DRAFT' && <Button disabled={statusMutation.isPending || topics.length === 0} onClick={() => statusMutation.mutate('publish')}>Publish</Button>}
               {course.status !== 'ARCHIVED' && <Button variant="danger" disabled={statusMutation.isPending} onClick={() => {
                 if (window.confirm(`Archive ${course.title}? Students will no longer be able to browse or enroll in it.`)) statusMutation.mutate('archive');
@@ -192,14 +213,42 @@ export function CourseDetailPage() {
           </section>
 
           <section className="card course-section">
-            <div className="list-heading"><h2>Linked notes</h2><Link className="text-link" to={roleNotes}>Open notes</Link></div>
-            {course.notes.length === 0 ? <p className="muted">No notes are linked to this course.</p> : course.notes.map((note) => (
+            <div className="list-heading"><h2>Study Materials</h2><Link className="text-link" to={roleNotes}>Manage Study Materials</Link></div>
+            {course.notes.length === 0 ? <p className="muted">No Study Materials are linked to this course.</p> : course.notes.map((note) => (
               <Link className="linked-course-note" key={note.id} to={`${notesPath(role)}?view=${encodeURIComponent(note.id)}`}>
                 <span><strong>{note.title}</strong><small>{note.subject}</small></span>
                 <span className={`status-pill ${note.published ? 'status-published' : 'status-draft'}`}>{note.published ? 'PUBLISHED' : 'DRAFT'}</span>
               </Link>
             ))}
           </section>
+          {role === 'TUTOR' && <section className="card course-section">
+            <div className="list-heading"><div><h2>Assessment Reports</h2><p className="muted">Participation and progress for assessments in this course.</p></div>
+              <Button onClick={() => setShowAssessmentChoices((current) => !current)}>{showAssessmentChoices ? 'Close options' : 'Generate New Assessment'}</Button>
+            </div>
+            {showAssessmentChoices && <div className="assessment-generation-options" role="group" aria-label="Assessment creation method">
+              <p>How would you like to create the assessment?</p>
+              <div className="button-row">
+                <Link className="button" to={`/tutor/courses/${encodeURIComponent(course.id)}/assessments/new?mode=manual`}>Create My Own</Link>
+                <Link className="button button-secondary" to={`/tutor/courses/${encodeURIComponent(course.id)}/assessments/new?mode=ai`}>Generate by AI</Link>
+              </div>
+            </div>}
+            {assessmentReports.isPending && <p className="loading" role="status">Loading assessment progress…</p>}
+            {assessmentReports.isError && <p className="notice notice-error" role="alert">{assessmentReports.error instanceof ApiError ? assessmentReports.error.message : 'Assessment reports could not be loaded.'}</p>}
+            {assessmentReports.data && assessmentGroups.size === 0 && <p className="muted">Published assessments will appear here with student progress.</p>}
+            {[...assessmentGroups.entries()].map(([assessmentId, rows]) => {
+              const completed = rows.filter(({ status }) => status === 'COMPLETED');
+              const inProgress = rows.filter(({ status }) => status === 'IN_PROGRESS');
+              const attempted = completed.length + inProgress.length;
+              return <article className="card course-assessment-report" key={assessmentId}>
+                <div className="list-heading"><h3>{rows[0]?.assessment}</h3><span>{attempted} of {rows.length} students started</span></div>
+                <p className="muted">{completed.length} completed · {inProgress.length} in progress · {rows.length - attempted} not started</p>
+                <div className="table-scroll"><table className="data-table"><thead><tr><th>Student</th><th>Attempts</th><th>Best score</th><th>Progress</th></tr></thead><tbody>
+                  {rows.map((row) => <tr key={`${assessmentId}:${row.studentId}`}><td>{row.studentName} · {row.studentId || 'No Student ID'}</td><td>{row.attempts}</td><td>{row.bestScore === null ? '—' : `${row.bestScore} / ${row.totalMarks}`}</td><td>{row.status === 'COMPLETED' ? `${row.percentage?.toFixed(1) ?? '0.0'}% · ${row.passed ? 'Pass' : 'Fail'}` : row.status === 'IN_PROGRESS' ? 'In progress' : 'Not started'}</td></tr>)}
+                </tbody></table></div>
+              </article>;
+            })}
+            {assessmentReports.data && assessmentReports.data.pagination.totalPages > 1 && <p className="muted">Showing the first 100 student results. Use the full Assessment Reports page to browse additional records.</p>}
+          </section>}
           {error && <p className="notice notice-error" role="alert">{error}</p>}
         </>}
       </section>

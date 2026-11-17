@@ -7,12 +7,14 @@ import * as controller from './notes.controller.js';
 import { createNoteSchema, noteParamSchema, updateNoteSchema } from './notes.schemas.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
-const noteEditors = [Role.ORG_ADMIN, Role.INSTRUCTOR, Role.TUTOR] as const;
+const noteEditors = [Role.ORG_ADMIN, Role.TUTOR] as const;
 const noteViewers = [...noteEditors, Role.STUDENT] as const;
 
 export const notesRouter = Router();
 notesRouter.use(authenticate, requireOrganization);
 notesRouter.get('/', requireRoles(...noteViewers), controller.list);
+notesRouter.put('/:noteId/saved', requireRoles(Role.STUDENT), validateParams(noteParamSchema), controller.save);
+notesRouter.delete('/:noteId/saved', requireRoles(Role.STUDENT), validateParams(noteParamSchema), controller.unsave);
 notesRouter.post('/', requireRoles(...noteEditors), upload.single('file'), validateBody(createNoteSchema), controller.create);
 notesRouter.get('/:noteId/view', requireRoles(...noteViewers), validateParams(noteParamSchema), controller.view);
 notesRouter.get('/:noteId/download', requireRoles(...noteEditors), validateParams(noteParamSchema), controller.download);

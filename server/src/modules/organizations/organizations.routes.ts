@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { Role } from '@prisma/client';
-import { authenticate, requireRoles } from '../../middleware/authenticate.js';
+import { authenticate, requireOrganization, requireRoles } from '../../middleware/authenticate.js';
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.js';
 import { env } from '../../config/env.js';
 import * as controller from './organizations.controller.js';
 import {
   organizationParamSchema,
   organizationRegistrationSchema,
+  ratingSettingsSchema,
   platformOwnerActionSchema,
   publicBrandQuerySchema,
   rejectionSchema,
@@ -23,6 +24,11 @@ export function createOrganizationRegistrationLimiter(limit = env.NODE_ENV === '
   });
 }
 organizationsRouter.post('/register', createOrganizationRegistrationLimiter(), validateBody(organizationRegistrationSchema), controller.register);
+
+export const organizationAdminSettingsRouter = Router();
+organizationAdminSettingsRouter.use(authenticate, requireOrganization, requireRoles(Role.ORG_ADMIN));
+organizationAdminSettingsRouter.get('/tutor-ratings', controller.getRatingSettings);
+organizationAdminSettingsRouter.put('/tutor-ratings', validateBody(ratingSettingsSchema), controller.updateRatingSettings);
 
 export function createPublicBrandLimiter(limit = env.NODE_ENV === 'test' ? 1000 : 60) {
   return rateLimit({

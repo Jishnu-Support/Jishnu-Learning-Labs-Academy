@@ -60,6 +60,14 @@ async function makeUser(
           },
         },
       } : {}),
+      ...(role === Role.TUTOR ? {
+        tutorProfile: {
+          create: {
+            organizationId,
+            tutorId: `${prefix}-${suffix}`,
+          },
+        },
+      } : {}),
     },
   });
 }
@@ -179,6 +187,10 @@ describe('course management and student enrollment', () => {
     const enrolled = await request(app).post(`/api/student/courses/${courseId}/enroll`).set('Cookie', studentCookie);
     expect(enrolled.status).toBe(201);
     expect(enrolled.body.data.enrollment.status).toBe('ACTIVE');
+    expect((await request(app).put('/api/tutors/preferred').set('Cookie', studentCookie).send({
+      courseId,
+      tutorId: instructor.id,
+    })).status).toBe(200);
     expect((await request(app).post(`/api/student/courses/${courseId}/enroll`).set('Cookie', studentCookie)).status).toBe(409);
     const initialDetail = await request(app).get(`/api/student/courses/${courseId}`).set('Cookie', studentCookie);
     expect(initialDetail.body.data.course.progressPercent).toBe(0);

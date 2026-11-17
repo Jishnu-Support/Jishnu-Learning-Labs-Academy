@@ -17,6 +17,7 @@ type Organization = {
   status: 'ACTIVE' | 'APPROVED' | 'PENDING' | 'REJECTED' | 'SUSPENDED';
   createdAt: string;
   counts: { students: number; tutors: number };
+  tutorRating: { averageRating: number | null; reviewCount: number };
 };
 type Action = 'suspend' | 'reactivate' | 'approve' | 'reject';
 
@@ -108,6 +109,7 @@ export function OrganizationApprovalsPage() {
               <p>{organization.headName} · {organization.email}</p>
               <p className="muted">{organization.contactNumber} · {organization.city}, {organization.country}</p>
               <p className="muted">Registered {new Date(organization.createdAt).toLocaleDateString()} · {organization.counts.students} students · {organization.counts.tutors} Tutors</p>
+              <p className="muted">Tutor rating: {organization.tutorRating.averageRating === null ? 'No ratings' : `${organization.tutorRating.averageRating.toFixed(1)} / 5`} · {organization.tutorRating.reviewCount} reviews</p>
               {organization.isPlatformOwner && <span className="status-pill status-published">Platform owner</span>}
             </div>
             <div className="row-actions">

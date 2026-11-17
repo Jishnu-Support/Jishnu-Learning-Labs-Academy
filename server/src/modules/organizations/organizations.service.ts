@@ -135,12 +135,25 @@ export async function listOrganizations(search?: string) {
       users: { select: { role: true } },
     },
   });
+  const ratings = organizations.length
+    ? await prisma.tutorReview.groupBy({
+      by: ['organizationId'],
+      where: { organizationId: { in: organizations.map(({ id }) => id) } },
+      _avg: { rating: true },
+      _count: { _all: true },
+    })
+    : [];
+  const ratingByOrganization = new Map(ratings.map((rating) => [rating.organizationId, {
+    averageRating: rating._avg.rating === null ? null : Math.round(rating._avg.rating * 10) / 10,
+    reviewCount: rating._count._all,
+  }]));
   return organizations.map(({ users, ...organization }) => ({
     ...organization,
     counts: {
       students: users.filter(({ role }) => role === Role.STUDENT).length,
-      tutors: users.filter(({ role }) => role === Role.TUTOR || role === Role.INSTRUCTOR).length,
+      tutors: users.filter(({ role }) => role === Role.TUTOR).length,
     },
+    tutorRating: ratingByOrganization.get(organization.id) ?? { averageRating: null, reviewCount: 0 },
   }));
 }
 
@@ -214,6 +227,36 @@ export async function setPlatformOwner(organizationId: string, actorId: string) 
     }
     throw error;
   }
+}
+
+export async function getRatingSettings(organizationId: string) {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { ratingRequiresActivity: true },
+  });
+  if (!organization) throw new HttpError(404, 'Organization not found');
+  return organization;
+}
+
+export async function updateRatingSettings(organizationId: string, actorId: string, ratingRequiresActivity: boolean) {
+  return prisma.$transaction(async (tx) => {
+    const organization = await tx.organization.update({
+      where: { id: organizationId },
+      data: { ratingRequiresActivity },
+      select: { ratingRequiresActivity: true },
+    });
+    await tx.auditLog.create({
+      data: {
+        organizationId,
+        actorId,
+        action: 'TUTOR_RATING_SETTINGS_UPDATED',
+        targetType: 'Organization',
+        targetId: organizationId,
+        metadata: { ratingRequiresActivity },
+      },
+    });
+    return organization;
+  });
 }
 
 export async function approve(organizationId: string, actorId: string) {

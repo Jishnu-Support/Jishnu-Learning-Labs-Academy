@@ -8,7 +8,14 @@ export default defineConfig({
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: {
     port: 5173,
-    proxy: { '/api': 'http://localhost:4000' },
+    proxy: {
+      '/api': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+        timeout: 60 * 60 * 1000,
+        proxyTimeout: 60 * 60 * 1000,
+      },
+    },
   },
   test: { environment: 'jsdom', setupFiles: './src/test-setup.ts', globals: true },
 });

@@ -11,13 +11,17 @@ import { api, apiUrl, ApiError } from '../lib/api';
 
 type MediaType = 'VIDEO' | 'AUDIO';
 type MediaStatus = 'UPLOADING' | 'AWAITING_FILE' | 'PROCESSING' | 'READY' | 'FAILED';
+type MediaSource = 'UPLOAD' | 'YOUTUBE';
 type Media = {
   id: string;
   title: string;
   description: string | null;
   type: MediaType;
+  source: MediaSource;
+  youtubeVideoId: string | null;
   status: MediaStatus;
   visibility: 'DRAFT' | 'PUBLISHED';
+  freePreview: boolean;
   durationSeconds: number | null;
   sizeBytes: number;
   courseId: string;
@@ -33,10 +37,10 @@ type MediaListResponse = {
   media: Media[];
   storage: { usedBytes: number; quotaBytes: number; quotaGigabytes: number } | null;
 };
-type UploadDraft = { title: string; description: string; courseId: string; topicId: string; type: MediaType };
+type UploadDraft = { title: string; description: string; courseId: string; topicId: string; type: MediaType; source: MediaSource; youtubeUrl: string; freePreview: boolean };
 type PendingUpload = { id: string; file: File; progress: number };
 
-const initialDraft: UploadDraft = { title: '', description: '', courseId: '', topicId: '', type: 'VIDEO' };
+const initialDraft: UploadDraft = { title: '', description: '', courseId: '', topicId: '', type: 'VIDEO', source: 'UPLOAD', youtubeUrl: '', freePreview: false };
 
 function ControlField({ label, children }: { label: string; children: ReactNode }) {
   return <label className="field"><span>{label}</span>{children}</label>;
@@ -44,7 +48,7 @@ function ControlField({ label, children }: { label: string; children: ReactNode 
 
 function dashboardPath(role: string) {
   if (role === 'ORG_ADMIN') return '/org-admin';
-  if (role === 'INSTRUCTOR' || role === 'TUTOR') return '/tutor';
+  if (role === 'TUTOR') return '/tutor';
   return '/org-admin';
 }
 
@@ -64,6 +68,21 @@ function errorText(error: unknown) {
 
 function extensionFor(file: File) {
   return file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+}
+
+function youtubeVideoId(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return null;
+    let id: string | null = null;
+    if (url.hostname.toLowerCase() === 'youtu.be') id = url.pathname.split('/').filter(Boolean)[0] ?? null;
+    else if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com'].includes(url.hostname.toLowerCase())) {
+      id = url.pathname === '/watch' ? url.searchParams.get('v') : url.pathname.match(/^\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})\/?$/)?.[1] ?? null;
+    }
+    return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 function sendFile(
@@ -124,6 +143,9 @@ function MediaPreview({ media }: { media: Media }) {
     };
   }, [media.type, source]);
 
+  if (media.source === 'YOUTUBE' && media.youtubeVideoId) {
+    return <iframe className="media-player" src={`https://www.youtube-nocookie.com/embed/${media.youtubeVideoId}`} title={media.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />;
+  }
   if (media.type === 'AUDIO') {
     return <audio controls preload="metadata" src={source}>Your browser cannot preview this audio.</audio>;
   }
@@ -147,7 +169,7 @@ export function MediaPage() {
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [editing, setEditing] = useState<Media | null>(null);
-  const [editDraft, setEditDraft] = useState({ title: '', description: '', courseId: '', topicId: '' });
+  const [editDraft, setEditDraft] = useState({ title: '', description: '', courseId: '', topicId: '', freePreview: false });
   const [pendingDelete, setPendingDelete] = useState<Media | null>(null);
   const [preview, setPreview] = useState<Media | null>(null);
 
@@ -247,6 +269,32 @@ export function MediaPage() {
       setErrorMessage('Enter a title and select a course.');
       return;
     }
+    if (draft.source === 'YOUTUBE') {
+      try {
+        await api<{ media: Media }>('/media', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: draft.title,
+            description: draft.description,
+            courseId: draft.courseId,
+            topicId: draft.topicId || null,
+            type: 'VIDEO',
+            source: 'YOUTUBE',
+            youtubeUrl: draft.youtubeUrl,
+            publishOnReady: publishImmediately,
+            freePreview: draft.freePreview,
+          }),
+        });
+        setToast(publishImmediately ? 'YouTube video published to the course.' : 'YouTube video saved as a draft.');
+        await refreshMedia();
+        setDraft(initialDraft);
+        setSelectedFile(null);
+        return;
+      } catch (error) {
+        setErrorMessage(errorText(error));
+        return;
+      }
+    }
     if (!selectedFile) {
       if (publishImmediately) {
         setErrorMessage('Choose a video or audio file to upload before publishing.');
@@ -262,6 +310,7 @@ export function MediaPage() {
             topicId: draft.topicId || null,
             type: draft.type,
             publishOnReady: false,
+            freePreview: draft.freePreview,
           }),
         });
         setToast(`Draft saved for ${created.media.title}.`);
@@ -294,6 +343,7 @@ export function MediaPage() {
           mimeType: selectedFile.type,
           fileName: selectedFile.name,
           publishOnReady: publishImmediately,
+          freePreview: draft.freePreview,
         }),
       });
       await transmit(created.media.id, selectedFile);
@@ -324,6 +374,13 @@ export function MediaPage() {
     setErrorMessage('');
   };
 
+  const cancelDraft = () => {
+    setDraft(initialDraft);
+    setSelectedFile(null);
+    setErrorMessage('');
+    setToast('Draft changes cleared.');
+  };
+
   const retryUpload = async (event: ChangeEvent<HTMLInputElement>, media: Media) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -343,6 +400,7 @@ export function MediaPage() {
       description: media.description ?? '',
       courseId: media.courseId,
       topicId: media.topicId ?? '',
+      freePreview: media.freePreview,
     });
   };
 
@@ -384,14 +442,23 @@ export function MediaPage() {
         )}
 
         <section className="card media-upload-card">
-          <h2>Upload a video or audio file</h2>
+          <h2>Add course media</h2>
           <div className="media-form-grid">
             <Field label="Title" value={draft.title} maxLength={160} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
             <ControlField label="Media type"><select className="input" value={draft.type} disabled={isUploading} onChange={(event) => { setDraft({ ...draft, type: event.target.value as MediaType }); setSelectedFile(null); }}><option value="VIDEO">Video</option><option value="AUDIO">Audio</option></select></ControlField>
+            <ControlField label="Source"><select className="input" value={draft.source} disabled={isUploading || draft.type === 'AUDIO'} onChange={(event) => { setDraft({ ...draft, source: event.target.value as MediaSource }); setSelectedFile(null); }}><option value="UPLOAD">Upload file</option><option value="YOUTUBE">YouTube link</option></select></ControlField>
             <ControlField label="Course"><select className="input" value={draft.courseId} onChange={(event) => setDraft({ ...draft, courseId: event.target.value, topicId: '' })}><option value="">Select a course</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></ControlField>
             <ControlField label="Topic (optional)"><select className="input" value={draft.topicId} disabled={!draft.courseId} onChange={(event) => setDraft({ ...draft, topicId: event.target.value })}><option value="">No topic</option>{selectedCourseTopics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></ControlField>
             <label className="field media-description-field">Description<textarea className="input textarea" value={draft.description} maxLength={4000} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
+            <label className="field checkbox-field"><input type="checkbox" checked={draft.freePreview} onChange={(event) => setDraft({ ...draft, freePreview: event.target.checked })} /><span>Free preview (accessible without a subscription)</span></label>
           </div>
+          {draft.source === 'YOUTUBE' ? (
+            <div className="media-youtube-entry">
+              <Field label="YouTube video URL"><input className="input" type="url" value={draft.youtubeUrl} onChange={(event) => setDraft({ ...draft, youtubeUrl: event.target.value })} placeholder="https://www.youtube.com/watch?v=…" /></Field>
+              <p className="muted">Only Public or Unlisted videos should be linked. YouTube-hosted content is not protected by this platform and may be shared outside your organization.</p>
+              {youtubeVideoId(draft.youtubeUrl) && <iframe className="media-upload-youtube-preview" src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId(draft.youtubeUrl) ?? ''}`} title="YouTube link preview" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />}
+            </div>
+          ) : (
           <label
             className={`media-dropzone${dragging ? ' is-dragging' : ''}`}
             onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
@@ -408,6 +475,7 @@ export function MediaPage() {
             <strong>{selectedFile ? selectedFile.name : 'Drop a file here or browse'}</strong>
             <span>{selectedFile ? `${formatBytes(selectedFile.size)} · ${selectedFile.type || 'unknown MIME type'}` : draft.type === 'VIDEO' ? `MP4, MOV, WebM or MKV · max ${configuredLimits.data ? formatBytes(configuredLimits.data.limits.maxVideoBytes) : '…'}` : `MP3, M4A, AAC, WAV or OGG · max ${configuredLimits.data ? formatBytes(configuredLimits.data.limits.maxAudioBytes) : '…'}`}</span>
           </label>
+          )}
           {selectedFile && uploadLimit !== undefined && selectedFile.size > uploadLimit && <p className="notice notice-error">This file is above the configured upload limit.</p>}
           {isUploading && (
             <div className="media-progress" aria-live="polite">
@@ -419,7 +487,8 @@ export function MediaPage() {
           {errorMessage && <p className="notice notice-error" role="alert">{errorMessage}</p>}
           <div className="row-actions media-form-actions">
             {!isUploading && <Button type="button" disabled={!draft.title.trim() || !draft.courseId || courses.isLoading} onClick={() => void startUpload(false)}>Save as Draft</Button>}
-            {!isUploading && <Button type="button" variant="primary" disabled={!selectedFile || !draft.title.trim() || !draft.courseId || courses.isLoading} onClick={() => void startUpload(true)}>Upload & Publish</Button>}
+            {!isUploading && <Button type="button" variant="primary" disabled={(draft.source === 'UPLOAD' && !selectedFile) || !draft.title.trim() || !draft.courseId || courses.isLoading} onClick={() => void startUpload(true)}>{draft.source === 'YOUTUBE' ? 'Save & Publish' : 'Upload & Publish'}</Button>}
+            {!isUploading && <Button type="button" variant="secondary" onClick={cancelDraft}>Cancel</Button>}
             {pendingUpload && failedUploadId === pendingUpload.id && <Button type="button" variant="secondary" onClick={() => void transmit(pendingUpload.id, pendingUpload.file)}>Retry upload</Button>}
           </div>
         </section>
@@ -430,7 +499,7 @@ export function MediaPage() {
             <Field label="Search title" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search media" />
             <ControlField label="Course"><select className="input" value={courseFilter} onChange={(event) => setCourseFilter(event.target.value)}><option value="">All courses</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></ControlField>
             <ControlField label="Type"><select className="input" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="">All types</option><option value="VIDEO">Video</option><option value="AUDIO">Audio</option></select></ControlField>
-            <ControlField label="Status"><select className="input" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All statuses</option>{(['UPLOADING', 'PROCESSING', 'READY', 'FAILED'] as const).map((status) => <option key={status} value={status}>{status}</option>)}</select></ControlField>
+            <ControlField label="Status"><select className="input" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All statuses</option>{(['AWAITING_FILE', 'UPLOADING', 'PROCESSING', 'READY', 'FAILED'] as const).map((status) => <option key={status} value={status}>{status}</option>)}</select></ControlField>
           </div>
           {list.isLoading && <p className="loading">Loading media…</p>}
           {list.isError && <p className="notice notice-error" role="alert">{errorText(list.error)}</p>}
@@ -439,8 +508,9 @@ export function MediaPage() {
             {list.data?.media.map((media) => (
               <article className="card media-card" key={media.id}>
                 <div className="media-card-main">
-                  <div className="media-card-title"><span className={`status-pill status-${media.status.toLowerCase()}`}>{media.status === 'PROCESSING' ? `PROCESSING · ${media.job?.progressPercent ?? 0}%` : media.status}</span><span className={`status-pill ${media.visibility === 'PUBLISHED' ? 'status-published' : 'status-draft'}`}>{media.visibility}</span></div>
+                  <div className="media-card-title"><span className={`status-pill status-${media.status.toLowerCase()}`}>{media.status === 'PROCESSING' ? `PROCESSING · ${media.job?.progressPercent ?? 0}%` : media.status}</span><span className={`status-pill ${media.visibility === 'PUBLISHED' ? 'status-published' : 'status-draft'}`}>{media.visibility}</span>{media.freePreview && <span className="status-pill">FREE PREVIEW</span>}</div>
                   <h3>{media.title}</h3>
+                  {media.source === 'YOUTUBE' && <p className="muted">YouTube link</p>}
                   <p className="muted">{media.course.code} — {media.course.title}{media.topic ? ` · ${media.topic.title}` : ''}</p>
                   <p className="media-card-description">{media.description || 'No description'} · {media.type.toLowerCase()} · {formatBytes(media.sizeBytes)}{media.durationSeconds ? ` · ${Math.floor(media.durationSeconds / 60)}:${String(media.durationSeconds % 60).padStart(2, '0')}` : ''}</p>
                   {role === 'ORG_ADMIN' && <p className="media-uploader">Uploaded by {media.uploadedBy.name}</p>}
@@ -458,6 +528,7 @@ export function MediaPage() {
                   {media.status === 'READY' && <Button type="button" variant="secondary" onClick={() => setPreview(media)}>Preview</Button>}
                   {media.status !== 'UPLOADING' && <Button type="button" variant="secondary" disabled={uploadMutationInFlight} onClick={() => beginEdit(media)}>Edit</Button>}
                   {media.status === 'READY' && <Button type="button" disabled={uploadMutationInFlight} onClick={() => visibilityMutation.mutate({ id: media.id, publish: media.visibility !== 'PUBLISHED' })}>{media.visibility === 'PUBLISHED' ? 'Unpublish' : 'Publish'}</Button>}
+                  {(media.status === 'UPLOADING' || media.status === 'PROCESSING') && <Button type="button" disabled title={`Publish is available when processing finishes. Current status: ${media.status}.`}>Publish unavailable: {media.status.toLowerCase()}</Button>}
                   <Button type="button" variant="danger" disabled={uploadMutationInFlight} onClick={() => setPendingDelete(media)}>Delete</Button>
                 </div>
                 {editing?.id === media.id && (
@@ -466,6 +537,7 @@ export function MediaPage() {
                     <ControlField label="Description"><textarea className="input textarea" value={editDraft.description} onChange={(event) => setEditDraft({ ...editDraft, description: event.target.value })} /></ControlField>
                     <ControlField label="Course"><select className="input" value={editDraft.courseId} onChange={(event) => setEditDraft({ ...editDraft, courseId: event.target.value, topicId: '' })}>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></ControlField>
                     <ControlField label="Topic"><select className="input" value={editDraft.topicId} onChange={(event) => setEditDraft({ ...editDraft, topicId: event.target.value })}><option value="">No topic</option>{editTopics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></ControlField>
+                    <label className="field checkbox-field"><input type="checkbox" checked={editDraft.freePreview} onChange={(event) => setEditDraft({ ...editDraft, freePreview: event.target.checked })} /><span>Free preview (accessible without a subscription)</span></label>
                     <div className="row-actions"><Button type="submit" disabled={updateMutation.isPending}>Save</Button><Button type="button" variant="secondary" onClick={() => setEditing(null)}>Cancel</Button></div>
                   </form>
                 )}

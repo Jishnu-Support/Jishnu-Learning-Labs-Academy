@@ -33,8 +33,16 @@ export const list: RequestHandler = async (req, res) => {
   });
 };
 
+export const save: RequestHandler = async (req, res) => {
+  res.json({ data: await notesService.saveNote(getOrganizationId(req), noteId(req), req.auth!.userId, true) });
+};
+
+export const unsave: RequestHandler = async (req, res) => {
+  res.json({ data: await notesService.saveNote(getOrganizationId(req), noteId(req), req.auth!.userId, false) });
+};
+
 export const create: RequestHandler = async (req, res) => {
-  const note = await notesService.createNote(getOrganizationId(req), req.auth!.userId, req.body, req.file);
+  const note = await notesService.createNote(getOrganizationId(req), req.auth!.userId, req.auth!.role, req.body, req.file);
   res.status(201).json({ data: { note } });
 };
 

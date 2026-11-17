@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 server/storage/
+docs/dev-credentials.local.md
 .env
 .env.*
 !.env.example

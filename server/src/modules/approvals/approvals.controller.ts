@@ -30,18 +30,3 @@ export const rejectTutor: RequestHandler = async (req, res) => {
   const result = await service.rejectTutor(req.auth!.organizationId, req.params.userId as string, req.auth!.userId, req.body.reason);
   res.json({ data: result });
 };
-
-export const listPendingInstructors: RequestHandler = async (req, res) => {
-  const registrations = await service.listPendingInstructors(req.auth!.organizationId);
-  res.json({ data: { registrations } });
-};
-
-export const approveInstructor: RequestHandler = async (req, res) => {
-  const result = await service.approveInstructor(req.auth!.organizationId, req.params.userId as string, req.auth!.userId);
-  res.json({ data: result });
-};
-
-export const rejectInstructor: RequestHandler = async (req, res) => {
-  const result = await service.rejectInstructor(req.auth!.organizationId, req.params.userId as string, req.auth!.userId, req.body.reason);
-  res.json({ data: result });
-};

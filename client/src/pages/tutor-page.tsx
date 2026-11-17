@@ -19,6 +19,14 @@ type Tutor = {
   bio: string | null;
   expertise: string[];
   hasPhoto: boolean;
+  ratingSummary: { averageRating: number | null; reviewCount: number };
+  reviews?: Array<{
+    id: string;
+    rating: number;
+    review: string | null;
+    createdAt: string;
+    student: { name: string; studentId: string | null } | null;
+  }>;
   createdAt: string;
   user: { id: string; name: string; email: string; phone: string | null; status: AccountStatus; createdAt: string };
 };
@@ -158,9 +166,10 @@ function TutorDirectory({ allowManage }: { allowManage: boolean }) {
       {tutor.data && tutor.data.tutors.length > 0 && <>
         <div className="table-scroll card">
           <table className="data-table">
-            <thead><tr><th>Tutor ID</th><th>Name</th><th>Email</th><th>Contact</th><th>Status</th><th>Joining Date</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Tutor ID</th><th>Name</th><th>Email</th><th>Contact</th><th>Rating</th><th>Status</th><th>Joining Date</th><th>Actions</th></tr></thead>
             <tbody>{tutor.data.tutors.map((member) => <tr key={member.user.id}>
               <td>{member.tutorId}</td><td>{member.user.name}</td><td>{member.user.email}</td><td>{member.user.phone ?? '—'}</td>
+              <td>{member.ratingSummary.averageRating === null ? 'No ratings' : `${member.ratingSummary.averageRating.toFixed(1)} / 5 · ${member.ratingSummary.reviewCount} review${member.ratingSummary.reviewCount === 1 ? '' : 's'}`}</td>
               <td><span className={`status-pill status-${member.user.status.toLowerCase()}`}>{member.user.status}</span></td><td>{dateLabel(member.joiningDate)}</td>
               <td className="table-actions">
                 <Button variant="secondary" onClick={() => openOverlay('detail', member)}>Details</Button>
@@ -189,7 +198,18 @@ function TutorDirectory({ allowManage }: { allowManage: boolean }) {
           <dt>Joining date</dt><dd>{dateLabel(detail.data.tutor.joiningDate)}</dd>
           <dt>Expertise</dt><dd>{detail.data.tutor.expertise.join(', ') || '—'}</dd>
           <dt>Bio</dt><dd>{detail.data.tutor.bio || '—'}</dd>
+          <dt>Average rating</dt><dd>{detail.data.tutor.ratingSummary.averageRating === null ? 'No ratings yet' : `${detail.data.tutor.ratingSummary.averageRating.toFixed(1)} / 5`}</dd>
+          <dt>Total reviews</dt><dd>{detail.data.tutor.ratingSummary.reviewCount}</dd>
         </dl>}
+        {detail.data?.tutor.reviews && <section className="tutor-review-list">
+          <h3>Student feedback</h3>
+          {detail.data.tutor.reviews.length === 0 ? <p className="muted">No student reviews yet.</p> : detail.data.tutor.reviews.map((review) => <article className="tutor-review-item" key={review.id}>
+            <strong>{review.rating} / 5 stars</strong>
+            {review.student && <span className="muted"> · {review.student.name} ({review.student.studentId ?? 'Student'})</span>}
+            <p>{review.review || 'No written feedback.'}</p>
+            <small>{dateLabel(review.createdAt)}</small>
+          </article>)}
+        </section>}
         {detail.data?.tutor.hasPhoto && <img className="tutor-profile-photo" src={`/api/tutors/${detail.data.tutor.user.id}/photo`} alt={`${detail.data.tutor.user.name} profile`} />}
         <div className="row-actions"><Button variant="secondary" onClick={() => closeOverlay('detail')}>Close</Button></div>
       </section></div>}
@@ -326,7 +346,7 @@ export function TutorDetailsPage() {
   const allowManage = user?.role === 'ORG_ADMIN';
   const dashboardPath = user?.role === 'ORG_ADMIN' ? '/org-admin' : '/tutor';
   return <div className="portal-layout">
-    <PortalSidebar role={user?.role ?? 'INSTRUCTOR'} />
+    <PortalSidebar role={user?.role ?? 'TUTOR'} />
     <section className="portal-content">
       <p className="eyebrow">ORGANIZATION DIRECTORY</p><PageHeader title="Tutor Details" backTo={dashboardPath} breadcrumbs={['Dashboard', 'Tutor Details']} />
       <p className="muted">Search Tutor ID or name, and review organization Tutor records.</p>

@@ -16,6 +16,7 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/org-admin/create-tutor', label: 'Create Tutor' },
     { href: '/org-admin/students', label: 'Student Details' },
     { href: '/org-admin/tutors', label: 'Tutor Details' },
+    { href: '/org-admin/tutor-ratings', label: 'Tutor Ratings' },
     { href: '/org-admin/materials', label: 'Publish Study Materials' },
     { href: '/org-admin/library', label: 'Library' },
     { href: '/org-admin/sessions', label: 'Experts Session' },
@@ -25,23 +26,15 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/org-admin/learning/reports', label: 'Assessment Reports' },
   ],
   TUTOR: [
-    { href: '/tutor', label: 'Overview' },
-    { href: '/tutor/payments', label: 'My Fees and Earnings' },
-    { href: '/tutor/courses', label: 'Courses' },
-    { href: '/tutor/approvals', label: 'Pending Students' },
-    { href: '/tutor/students', label: 'Student Details' },
-    { href: '/tutor/tutors', label: 'Tutor Details' },
-    { href: '/tutor/materials', label: 'Publish Study Materials' },
-    { href: '/tutor/library', label: 'Library' },
-    { href: '/tutor/sessions', label: 'Experts Session' },
-    { href: '/tutor/media', label: 'Upload Media' },
-    { href: '/tutor/learning/questions', label: 'Practice Q/A' },
-    { href: '/tutor/learning/assessments', label: 'Assessments' },
-    { href: '/tutor/learning/reports', label: 'Assessment Reports' },
+    { href: '/tutor', label: 'Dashboard' },
+    { href: '/tutor/courses', label: 'My Course' },
+    { href: '/tutor/sessions', label: 'Expert Sessions' },
+    { href: '/my-profile', label: 'My Profile' },
   ],
   STUDENT: [
     { href: '/student', label: 'Dashboard' },
     { href: '/student/courses', label: 'My Course' },
+    { href: '/student/question-paper', label: 'Question Paper Generator' },
     { href: '/student/library', label: 'Library' },
     { href: '/student/attendance', label: 'My Attendance' },
     { href: '/student/certificates', label: 'My Certificates' },
@@ -59,7 +52,9 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
 export function PortalSidebar({ role }: { role: Role }) {
   const links = role === 'STUDENT'
     ? [...(linksByRole[role] ?? [])]
-    : [...(linksByRole[role] ?? []), { href: '/notifications', label: 'Notifications' }, { href: '/my-profile', label: 'My Profile' }];
+    : role === 'TUTOR'
+      ? [...(linksByRole[role] ?? [])]
+      : [...(linksByRole[role] ?? []), { href: '/notifications', label: 'Notifications' }, { href: '/my-profile', label: 'My Profile' }];
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {

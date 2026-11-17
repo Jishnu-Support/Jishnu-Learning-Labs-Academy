@@ -32,3 +32,7 @@ export const platformOwnerActionSchema = z.object({}).strict();
 export const rejectionSchema = z.object({
   reason: z.string().trim().min(1, 'Provide a rejection reason').max(1000),
 });
+
+export const ratingSettingsSchema = z.object({
+  ratingRequiresActivity: z.boolean(),
+}).strict();

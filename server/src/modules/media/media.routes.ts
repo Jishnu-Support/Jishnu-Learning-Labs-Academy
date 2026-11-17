@@ -13,7 +13,7 @@ import {
   updateMediaSchema,
 } from './media.schemas.js';
 
-const mediaManagers = [Role.TUTOR, Role.INSTRUCTOR, Role.ORG_ADMIN] as const;
+const mediaManagers = [Role.TUTOR, Role.ORG_ADMIN] as const;
 const uploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: env.NODE_ENV === 'test' ? 1000 : 20,
@@ -22,6 +22,14 @@ const uploadLimiter = rateLimit({
 });
 
 export const mediaRouter = Router();
+mediaRouter.get(
+  '/:mediaId/key',
+  authenticate,
+  requireOrganization,
+  requireRoles(...mediaManagers, Role.STUDENT),
+  validateParams(mediaIdSchema),
+  controller.key,
+);
 mediaRouter.use(authenticate, requireOrganization, requireRoles(...mediaManagers));
 mediaRouter.get('/limits', controller.limits);
 mediaRouter.get('/courses', controller.courses);
@@ -29,7 +37,6 @@ mediaRouter.get('/storage', requireRoles(Role.ORG_ADMIN), controller.storage);
 mediaRouter.get('/', controller.list);
 mediaRouter.post('/', uploadLimiter, controller.create);
 mediaRouter.put('/:mediaId/file', uploadLimiter, validateParams(mediaIdSchema), controller.upload);
-mediaRouter.get('/:mediaId/key', validateParams(mediaIdSchema), controller.key);
 mediaRouter.get('/:mediaId/stream/:rendition/:asset', validateParams(mediaRenditionParamsSchema), controller.streamRenditionAsset);
 mediaRouter.get('/:mediaId/stream/:asset', validateParams(mediaAssetParamsSchema), controller.streamAsset);
 mediaRouter.patch('/:mediaId', validateParams(mediaIdSchema), validateBody(updateMediaSchema), controller.update);
@@ -44,4 +51,6 @@ studentMediaRouter.use(authenticate, requireOrganization, requireRoles(Role.STUD
 studentMediaRouter.get('/', controller.listStudentMedia);
 studentMediaRouter.get('/:mediaId', validateParams(mediaIdSchema), controller.getStudentMedia);
 studentMediaRouter.post('/:mediaId/progress', validateParams(mediaIdSchema), validateBody(studentMediaProgressSchema), controller.recordStudentProgress);
+studentMediaRouter.get('/:mediaId/progressive', validateParams(mediaIdSchema), controller.streamStudentProgressiveMp4);
+studentMediaRouter.get('/:mediaId/stream/:rendition/:asset', validateParams(mediaRenditionParamsSchema), controller.streamStudentRenditionAsset);
 studentMediaRouter.get('/:mediaId/stream/:asset', validateParams(mediaAssetParamsSchema), controller.streamStudentAsset);

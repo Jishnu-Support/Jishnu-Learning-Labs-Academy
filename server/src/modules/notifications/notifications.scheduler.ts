@@ -3,6 +3,7 @@ import cron from 'node-cron';
 import { logger } from '../../config/logger.js';
 import { prisma } from '../../config/prisma.js';
 import { notifyUsers } from './notifications.service.js';
+import { runSubscriptionLifecycle } from '../payments/subscriptions.scheduler.js';
 
 const lockName = 'notification-scheduler';
 let running = false;
@@ -42,13 +43,13 @@ async function createSessionReminders(now: Date) {
   ];
   const scheduledSessions = await prisma.expertSession.findMany({
     where: { createdAt: { gt: new Date(now.getTime() - 60_000), lte: now }, startsAt: { gt: now } },
-    select: { id: true, organizationId: true, batchId: true, audienceType: true, title: true },
+    select: { id: true, organizationId: true, batchId: true, audienceType: true, title: true, courseId: true },
     take: 100,
   });
   for (const range of ranges) {
     const sessions = await prisma.expertSession.findMany({
       where: { startsAt: { gt: range.start, lte: range.end } },
-      select: { id: true, organizationId: true, batchId: true, audienceType: true, title: true },
+      select: { id: true, organizationId: true, batchId: true, audienceType: true, title: true, courseId: true },
       take: 100,
     });
     for (const session of sessions) {
@@ -57,7 +58,7 @@ async function createSessionReminders(now: Date) {
         type: range.type,
         title: range.key === 'start' ? 'Learning session starting now' : 'Upcoming learning session',
         body: range.key === 'start' ? `${session.title} is starting now.` : `${session.title} starts ${range.label}.`,
-        link: '/student/online-classes',
+        link: session.courseId ? `/student/courses/${session.courseId}/sessions` : '/student/courses',
         dedupeKey: `expert-session:${session.id}:reminder:${range.key}`,
       });
     }
@@ -67,7 +68,7 @@ async function createSessionReminders(now: Date) {
         type: NotificationType.SESSION_SCHEDULED,
         title: 'New learning session scheduled',
         body: `${session.title} has been scheduled.`,
-        link: '/student/online-classes',
+        link: session.courseId ? `/student/courses/${session.courseId}/sessions` : '/student/courses',
         dedupeKey: `expert-session:${session.id}:scheduled`,
       });
     }
@@ -92,7 +93,7 @@ async function createAssessmentClosingReminders(now: Date) {
       type: NotificationType.ASSESSMENT_CLOSING,
       title: 'Assessment closing soon',
       body: `${assessment.title} closes within 24 hours.`,
-      link: '/student/assessments',
+      link: `/student/courses/${assessment.courseId}/assessments`,
       dedupeKey: `assessment:${assessment.id}:closing`,
     });
   }
@@ -111,6 +112,7 @@ export async function runNotificationScheduler(now = new Date()) {
     if (!acquired) return;
     await createSessionReminders(now);
     await createAssessmentClosingReminders(now);
+    await runSubscriptionLifecycle(now);
     await cleanupExpiredNotifications();
   } finally {
     try {

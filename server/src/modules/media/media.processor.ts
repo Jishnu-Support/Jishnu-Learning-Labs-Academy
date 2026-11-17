@@ -46,8 +46,10 @@ function runProcess(
       stdoutBuffer = lines.pop() ?? '';
       for (const line of lines) {
         const [key, value] = line.split('=');
-        if (key === 'out_time_us' && value && onProgress) onProgress(Number(value));
-        if (key === 'out_time_ms' && value && onProgress) onProgress(Number(value));
+        if ((key === 'out_time_us' || key === 'out_time_ms') && value && onProgress) {
+          const outTime = Number(value);
+          if (Number.isFinite(outTime)) onProgress(outTime);
+        }
       }
     });
     process.stderr.on('data', (chunk: string) => {

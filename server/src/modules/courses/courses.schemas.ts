@@ -4,6 +4,7 @@ const courseFields = {
   code: z.string().trim().min(2).max(24).regex(/^[A-Z0-9][A-Z0-9-]*$/, 'Use uppercase letters, numbers, and hyphens'),
   title: z.string().trim().min(2).max(160),
   description: z.string().trim().max(5000).nullable().optional(),
+  thumbnailUrl: z.string().trim().url().refine((value) => new URL(value).protocol === 'https:', 'Use a secure HTTPS thumbnail URL').nullable().optional(),
   category: z.string().trim().min(2).max(100),
   plannedHours: z.number().int().min(1).max(10000),
   startDate: z.iso.date(),

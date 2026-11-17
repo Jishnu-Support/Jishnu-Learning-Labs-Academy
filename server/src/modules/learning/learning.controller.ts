@@ -3,7 +3,7 @@ import { getOrganizationId } from '../../middleware/authenticate.js';
 import { HttpError } from '../../utils/http-error.js';
 import * as service from './learning.service.js';
 import {
-  createQuestionSchema, eventSchema, practiceStartSchema, questionListQuerySchema,
+  createQuestionSchema, eventSchema, generateAssessmentQuestionsSchema, practiceStartSchema, questionListQuerySchema,
   practiceSetListQuerySchema, regradeSchema,
 } from './learning.schemas.js';
 
@@ -109,6 +109,11 @@ export const getAssessment: RequestHandler = async (req, res) => {
 
 export const createAssessment: RequestHandler = async (req, res) => {
   res.status(201).json({ data: { assessment: await service.createAssessment(actor(req), req.body) } });
+};
+
+export const generateAssessmentQuestions: RequestHandler = async (req, res) => {
+  const input = generateAssessmentQuestionsSchema.parse(req.body);
+  res.json({ data: await service.generateAssessmentQuestions(actor(req), input) });
 };
 
 export const updateAssessment: RequestHandler = async (req, res) => {

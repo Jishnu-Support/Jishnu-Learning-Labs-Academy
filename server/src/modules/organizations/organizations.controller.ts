@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express';
+import { getOrganizationId } from '../../middleware/authenticate.js';
 import * as service from './organizations.service.js';
-import { organizationSearchSchema, publicBrandQuerySchema } from './organizations.schemas.js';
+import { organizationSearchSchema, publicBrandQuerySchema, ratingSettingsSchema } from './organizations.schemas.js';
 
 export const register: RequestHandler = async (req, res) => {
   const organization = await service.register(req.body);
@@ -56,4 +57,17 @@ export const reject: RequestHandler = async (req, res) => {
 export const setPlatformOwner: RequestHandler = async (req, res) => {
   const organization = await service.setPlatformOwner(req.params.organizationId as string, req.auth!.userId);
   res.json({ data: { organization } });
+};
+
+export const getRatingSettings: RequestHandler = async (req, res) => {
+  res.json({ data: { settings: await service.getRatingSettings(getOrganizationId(req)) } });
+};
+
+export const updateRatingSettings: RequestHandler = async (req, res) => {
+  const input = ratingSettingsSchema.parse(req.body);
+  res.json({
+    data: {
+      settings: await service.updateRatingSettings(getOrganizationId(req), req.auth!.userId, input.ratingRequiresActivity),
+    },
+  });
 };

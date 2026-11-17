@@ -27,19 +27,29 @@ type CourseInput = {
 type CourseUpdate = Partial<CourseInput>;
 type ListInput = { search?: string; status?: CourseStatus };
 
-const courseInclude = {
-  instructors: {
-    select: { instructor: { select: { id: true, name: true } } },
-    orderBy: { assignedAt: 'asc' as const },
-  },
-  topics: { orderBy: { order: 'asc' as const } },
-  notes: {
-    where: { deletedAt: null },
-    select: { id: true, title: true, subject: true, published: true, updatedAt: true },
-    orderBy: { updatedAt: 'desc' as const },
-  },
-  _count: { select: { enrollments: true, notes: true } },
-} satisfies Prisma.CourseInclude;
+function courseInclude(organizationId: string, role: Role, userId: string): Prisma.CourseInclude {
+  return {
+    instructors: {
+      where: role === Role.TUTOR ? { instructorId: userId } : {},
+      select: { instructor: { select: { id: true, name: true } } },
+      orderBy: { assignedAt: 'asc' },
+    },
+    topics: { orderBy: { order: 'asc' } },
+    notes: {
+      where: { deletedAt: null },
+      select: { id: true, title: true, subject: true, published: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+    },
+    _count: {
+      select: {
+        enrollments: role === Role.TUTOR
+          ? { where: { organizationId, status: EnrollmentStatus.ACTIVE, selectedTutorId: userId } }
+          : true,
+        notes: true,
+      },
+    },
+  };
+}
 
 function courseWhere(organizationId: string, userId: string, role: Role, input: ListInput = {}): Prisma.CourseWhereInput {
   return {
@@ -85,7 +95,7 @@ async function managedCourse(organizationId: string, userId: string, role: Role,
       organizationId,
       ...(role === Role.TUTOR ? { instructors: { some: { instructorId: userId } } } : {}),
     },
-    include: courseInclude,
+    include: courseInclude(organizationId, role, userId),
   });
   if (!course) throw new HttpError(404, 'Course not found');
   return course;
@@ -109,7 +119,7 @@ export async function listCourses(organizationId: string, userId: string, role: 
   return prisma.course.findMany({
     where: courseWhere(organizationId, userId, role, input),
     orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
-    include: courseInclude,
+    include: courseInclude(organizationId, role, userId),
   });
 }
 
@@ -158,7 +168,7 @@ export async function createCourse(organizationId: string, actorId: string, role
       await tx.courseInstructor.createMany({
         data: input.instructorIds.map((instructorId) => ({ organizationId, courseId: created.id, instructorId })),
       });
-      const course = await tx.course.findUniqueOrThrow({ where: { id: created.id }, include: courseInclude });
+      const course = await tx.course.findUniqueOrThrow({ where: { id: created.id }, include: courseInclude(organizationId, role, actorId) });
       await audit(tx, organizationId, actorId, 'COURSE_CREATED', 'Course', course.id, { code: course.code });
       return course;
     });
@@ -212,7 +222,7 @@ export async function updateCourse(
           ...(input.minimumAttendancePercent !== undefined ? { minimumAttendancePercent: input.minimumAttendancePercent } : {}),
           ...(input.requiresAssessmentPass !== undefined ? { requiresAssessmentPass: input.requiresAssessmentPass } : {}),
         },
-        include: courseInclude,
+        include: courseInclude(organizationId, role, actorId),
       });
       await audit(tx, organizationId, actorId, 'COURSE_UPDATED', 'Course', course.id, { changedFields: Object.keys(input) });
       return course;
@@ -229,7 +239,7 @@ export async function archiveCourse(organizationId: string, actorId: string, rol
   const existing = await managedCourse(organizationId, actorId, role, courseId);
   if (existing.status === CourseStatus.ARCHIVED) throw new HttpError(409, 'Course is already archived');
   return prisma.$transaction(async (tx) => {
-    const course = await tx.course.update({ where: { id: courseId }, data: { status: CourseStatus.ARCHIVED }, include: courseInclude });
+    const course = await tx.course.update({ where: { id: courseId }, data: { status: CourseStatus.ARCHIVED }, include: courseInclude(organizationId, role, actorId) });
     await audit(tx, organizationId, actorId, 'COURSE_ARCHIVED', 'Course', course.id);
     return course;
   });
@@ -240,7 +250,7 @@ export async function publishCourse(organizationId: string, actorId: string, rol
   if (existing.status !== CourseStatus.DRAFT) throw new HttpError(409, 'Only draft courses can be published');
   if (existing.topics.length === 0) throw new HttpError(409, 'Add at least one topic before publishing');
   return prisma.$transaction(async (tx) => {
-    const course = await tx.course.update({ where: { id: courseId }, data: { status: CourseStatus.PUBLISHED }, include: courseInclude });
+    const course = await tx.course.update({ where: { id: courseId }, data: { status: CourseStatus.PUBLISHED }, include: courseInclude(organizationId, role, actorId) });
     await audit(tx, organizationId, actorId, 'COURSE_PUBLISHED', 'Course', course.id);
     return course;
   });
@@ -324,6 +334,7 @@ export async function listEnrollments(organizationId: string, actorId: string, r
     where: {
       organizationId,
       courseId,
+      ...(role === Role.TUTOR ? { status: EnrollmentStatus.ACTIVE, selectedTutorId: actorId } : {}),
       ...(search ? {
         student: {
           OR: [
@@ -410,7 +421,11 @@ export async function listStudentEnrollments(organizationId: string, studentId: 
           topics: { orderBy: { order: 'asc' } },
           subscriptions: {
             where: { organizationId, studentId },
-            select: { status: true, endsAt: true },
+            select: {
+              status: true,
+              endsAt: true,
+              tutor: { select: { id: true, name: true } },
+            },
             orderBy: { endsAt: 'desc' },
             take: 1,
           },
@@ -429,6 +444,8 @@ export async function listStudentEnrollments(organizationId: string, studentId: 
           _count: { select: { topics: true } },
         },
       },
+      selectedTutor: { select: { id: true, name: true, tutorProfile: { select: { expertise: true, photoStorageKey: true } } } },
+      pendingTutor: { select: { id: true, name: true } },
     },
   });
   return enrollments.map((enrollment) => {
@@ -443,6 +460,13 @@ export async function listStudentEnrollments(organizationId: string, studentId: 
       id: enrollment.id,
       status: enrollment.status,
       enrolledAt: enrollment.enrolledAt,
+      selectedTutor: enrollment.selectedTutor ? {
+        id: enrollment.selectedTutor.id,
+        name: enrollment.selectedTutor.name,
+        expertise: enrollment.selectedTutor.tutorProfile?.expertise ?? [],
+        hasPhoto: Boolean(enrollment.selectedTutor.tutorProfile?.photoStorageKey),
+      } : enrollment.course.subscriptions[0]?.tutor ?? null,
+      pendingTutor: enrollment.pendingTutor,
       course: {
         ...enrollment.course,
         subscriptions: undefined,
@@ -466,7 +490,11 @@ export async function getStudentCourse(organizationId: string, studentId: string
       topics: { orderBy: { order: 'asc' } },
       enrollments: {
         where: { studentId, status: { in: [EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING] } },
-        select: { id: true, status: true, enrolledAt: true },
+        select: {
+          id: true, status: true, enrolledAt: true, selectedTutorId: true, pendingTutorId: true,
+          selectedTutor: { select: { id: true, name: true } },
+          pendingTutor: { select: { id: true, name: true } },
+        },
         take: 1,
       },
       notes: {

@@ -5,7 +5,6 @@ import { validateBody } from '../../middleware/validate.js';
 import { env } from '../../config/env.js';
 import * as controller from './auth.controller.js';
 import {
-  instructorRegistrationSchema,
   changePasswordSchema,
   portalLoginSchema,
   tutorLoginSchema,
@@ -24,10 +23,10 @@ const authLimiter = rateLimit({
 });
 
 authRouter.post('/students/register', authLimiter, validateBody(studentRegistrationSchema), controller.registerStudent);
-authRouter.post('/instructors/register', authLimiter, validateBody(instructorRegistrationSchema), controller.registerInstructor);
+authRouter.post('/instructors/register', authLimiter, controller.deprecatedInstructorRegistration);
 authRouter.post('/tutors/register', authLimiter, validateBody(tutorRegistrationSchema), controller.registerTutor);
 authRouter.post('/students/login', authLimiter, validateBody(studentLoginSchema), controller.studentLogin);
-authRouter.post('/instructors/login', authLimiter, validateBody(portalLoginSchema), controller.instructorLogin);
+authRouter.post('/instructors/login', authLimiter, controller.deprecatedInstructorLogin);
 authRouter.post('/tutors/login', authLimiter, validateBody(tutorLoginSchema), controller.tutorLogin);
 authRouter.post('/org-admin/login', authLimiter, validateBody(portalLoginSchema), controller.orgAdminLogin);
 authRouter.post('/super-admin/login', authLimiter, validateBody(superAdminLoginSchema), controller.superAdminLogin);

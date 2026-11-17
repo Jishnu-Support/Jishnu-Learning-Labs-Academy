@@ -16,6 +16,7 @@ type Course = {
   code: string;
   title: string;
   description: string | null;
+  thumbnailUrl: string | null;
   category: string;
   plannedHours: number;
   startDate: string;
@@ -32,6 +33,7 @@ type CourseForm = {
   code: string;
   title: string;
   description: string;
+  thumbnailUrl: string;
   category: string;
   plannedHours: string;
   startDate: string;
@@ -60,19 +62,20 @@ function emptyForm(instructors: Instructor[], role: Role, userId?: string): Cour
     code: '',
     title: '',
     description: '',
+    thumbnailUrl: '',
     category: '',
     plannedHours: '',
     startDate: '',
     endDate: '',
     minimumAttendancePercent: '75',
     requiresAssessmentPass: true,
-    instructorIds: role === 'INSTRUCTOR' && userId ? [userId] : instructors.slice(0, 1).map(({ id }) => id),
+    instructorIds: role === 'TUTOR' && userId ? [userId] : instructors.slice(0, 1).map(({ id }) => id),
   };
 }
 
 export function CoursesPage() {
   const { user } = useAuth();
-  const role = user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'INSTRUCTOR';
+  const role = user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'TUTOR';
   const base = routeForRole(role);
   const [searchParams, setSearchParams] = useSearchParams();
   const search = searchParams.get('search') ?? '';
@@ -101,7 +104,7 @@ export function CoursesPage() {
       <PortalSidebar role={role} />
       <section className="portal-content">
         <PageHeader title="Courses" backTo={roleDashboard(role)} breadcrumbs={['Dashboard', 'Courses']} />
-        <p className="muted">Build course outlines, assign Tutors, and track topic delivery.</p>
+        <p className="muted">Build course outlines, assign faculty, and track topic delivery.</p>
         <div className="directory-filters">
           <label className="field search-field"><span>Search courses</span><input className="input" value={search} onChange={(event) => updateQuery('search', event.target.value)} /></label>
           <label className="field"><span>Status</span><select className="input" value={status} onChange={(event) => updateQuery('status', event.target.value)}><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="PUBLISHED">Published</option><option value="ARCHIVED">Archived</option></select></label>
@@ -117,7 +120,7 @@ export function CoursesPage() {
               <h3>{course.title}</h3>
               <p className="muted course-description">{course.category} · {course.plannedHours} planned hours</p>
               <p className="course-description">{course.description || 'No description yet.'}</p>
-              <p className="muted course-description">Tutors: {course.instructors.map(({ instructor }) => instructor.name).join(', ') || 'None'} · {course._count.enrollments} enrollments · {course._count.notes} notes</p>
+              <p className="muted course-description">Faculty: {course.instructors.map(({ instructor }) => instructor.name).join(', ') || 'None'} · {course._count.enrollments} enrollments · {course._count.notes} notes</p>
               <div className="course-actions">
                 <Link className="button button-secondary" to={`${base}/${course.id}?returnTo=${encodeURIComponent(`${base}${window.location.search}`)}`}>Manage course</Link>
                 {course.status !== 'ARCHIVED' && <Link className="button button-ghost" to={`${base}/${course.id}/edit?returnTo=${encodeURIComponent(`${base}${window.location.search}`)}`}>Edit</Link>}
@@ -137,14 +140,14 @@ export function CoursesPage() {
 
 export function CourseFormPage() {
   const { user } = useAuth();
-  const role = user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'INSTRUCTOR';
+  const role = user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'TUTOR';
   const base = routeForRole(role);
   const navigate = useNavigate();
   const params = useParams();
   const [searchParams] = useSearchParams();
   const courseId = params.courseId;
   const returnTo = safeReturnTo(searchParams.get('returnTo'), base);
-  const instructorQuery = useQuery({ queryKey: ['course-instructors'], queryFn: () => api<{ instructors: Instructor[] }>('/courses/instructors') });
+  const instructorQuery = useQuery({ queryKey: ['course-faculty'], queryFn: () => api<{ instructors: Instructor[] }>('/courses/faculty') });
   const courseQuery = useQuery({
     queryKey: ['course', courseId],
     queryFn: () => api<{ course: Course }>(`/courses/${courseId}`),
@@ -162,6 +165,7 @@ export function CourseFormPage() {
         code: course.code,
         title: course.title,
         description: course.description ?? '',
+        thumbnailUrl: course.thumbnailUrl ?? '',
         category: course.category,
         plannedHours: String(course.plannedHours),
         startDate: course.startDate.slice(0, 10),
@@ -190,6 +194,7 @@ export function CourseFormPage() {
         plannedHours: Number(form.plannedHours),
         minimumAttendancePercent: Number(form.minimumAttendancePercent),
         description: form.description || null,
+        thumbnailUrl: form.thumbnailUrl || null,
       };
       return api<{ course: Course }>(courseId ? `/courses/${courseId}` : '/courses', {
         method: courseId ? 'PATCH' : 'POST',
@@ -209,7 +214,7 @@ export function CourseFormPage() {
   const invalidDateOrder = Boolean(form.startDate && form.endDate && form.endDate < form.startDate);
   const instructorChecks = instructors.map((instructor) => (
     <label key={instructor.id} className="course-instructor-option">
-      <input type="checkbox" checked={form.instructorIds.includes(instructor.id)} disabled={role === 'INSTRUCTOR'}
+      <input type="checkbox" checked={form.instructorIds.includes(instructor.id)} disabled={role === 'TUTOR'}
         onChange={(event) => update('instructorIds', event.target.checked
           ? [...form.instructorIds, instructor.id]
           : form.instructorIds.filter((id) => id !== instructor.id))} />
@@ -235,8 +240,9 @@ export function CourseFormPage() {
             <Field label="Minimum attendance (%)" type="number" min={0} max={100} value={form.minimumAttendancePercent} onChange={(event) => update('minimumAttendancePercent', event.target.value)} required />
           </div>
           <label className="field"><span>Description</span><textarea className="input textarea" value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={5000} /></label>
+          <Field label="Course thumbnail URL (HTTPS)" type="url" value={form.thumbnailUrl} onChange={(event) => update('thumbnailUrl', event.target.value)} maxLength={2000} />
           <label className="course-instructor-option"><input type="checkbox" checked={form.requiresAssessmentPass} onChange={(event) => update('requiresAssessmentPass', event.target.checked)} /><span>Require passing the course assessment for completion</span></label>
-          <fieldset className="course-instructor-list"><legend>Assigned Tutors</legend>{instructors.length ? instructorChecks : <p className="muted">No approved Tutors are available.</p>}</fieldset>
+          <fieldset className="course-instructor-list"><legend>Course faculty</legend>{instructors.length ? instructorChecks : <p className="muted">No approved Tutors are available.</p>}</fieldset>
           {invalidDateOrder && <p className="notice notice-error" role="alert">End date must be on or after the start date.</p>}
           {error && <p className="notice notice-error" role="alert">{error}</p>}
           <div className="row-actions">

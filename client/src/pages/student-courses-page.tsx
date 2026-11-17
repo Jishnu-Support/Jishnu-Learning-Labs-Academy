@@ -23,6 +23,8 @@ type Enrollment = {
   id: string;
   status: string;
   enrolledAt: string;
+  selectedTutor: { id: string; name: string; expertise: string[]; hasPhoto: boolean } | null;
+  pendingTutor: { id: string; name: string } | null;
   course: CourseCard & {
     topics: Array<{ covered: boolean }>;
     learnedHours: number;
@@ -84,6 +86,10 @@ function StudentCourseListPage({ catalogOnly }: { catalogOnly: boolean }) {
         <PageHeader title={catalogOnly ? 'Explore Courses' : 'My Course'} backTo="/student" breadcrumbs={['Dashboard', catalogOnly ? 'Explore Courses' : 'My Course']} />
         <p className="muted">{catalogOnly ? 'Explore published courses from your organization.' : 'Continue with courses you are actively enrolled in.'}</p>
         {catalogOnly && <p><Link className="text-link" to="/student/courses">Back to My Course</Link></p>}
+        {!catalogOnly && <nav className="media-tabs student-course-page-tabs" role="tablist" aria-label="My Course sections">
+          <Link className="tab-button active" role="tab" aria-selected="true" to="/student/courses">My Course</Link>
+          <Link className="tab-button" role="tab" aria-selected="false" to="/student/courses/reports">My Reports</Link>
+        </nav>}
         {tab === 'browse' && <>
           <label className="field search-field course-search"><span>Search courses</span><input className="input" value={search} onChange={(event) => updateQuery('search', event.target.value)} /></label>
           {browse.isLoading && <p className="loading">Loading published courses…</p>}
@@ -117,18 +123,22 @@ function StudentCourseListPage({ catalogOnly }: { catalogOnly: boolean }) {
           {enrolled.isLoading && <p className="loading">Loading enrolled courses…</p>}
           {enrolled.error && <p className="notice notice-error" role="alert">Your courses could not be loaded.</p>}
           {enrolled.data && enrollments.length === 0 && <div className="card empty-state"><h2>No active courses yet</h2><p>Explore published courses to find one to join.</p><Link className="button" to="/student/course-catalog">Explore courses</Link></div>}
-          <div className="student-course-grid">{enrollments.map(({ id, status, course }) => {
+          <div className="student-course-grid">{enrollments.map(({ id, status, course, selectedTutor, pendingTutor }) => {
             const progress = course.progressPercent;
             return <article className="card course-card" key={id}>
               {course.thumbnailUrl ? <img className="course-card-thumbnail" src={course.thumbnailUrl} alt={`${course.title} course thumbnail`} referrerPolicy="no-referrer" /> : <div className="course-card-thumbnail course-card-thumbnail-placeholder" aria-label={`${course.title} course thumbnail`}><span>{course.category}</span></div>}
               <div className="course-meta"><span>{course.code}</span><span className={`status-pill status-${status.toLowerCase()}`}>{status}</span></div>
               <h2>{course.title}</h2>
               <p>{course.description || 'No description provided.'}</p>
-              <p className="muted">Tutor: {course.instructors.map(({ instructor }) => instructor.name).join(', ') || 'Not assigned'}</p>
+              <p className="muted">My tutor: {selectedTutor?.name ?? 'Choose your Tutor'}</p>
+              {pendingTutor && <p className="notice notice-info">Tutor change to {pendingTutor.name} takes effect at the next renewal.</p>}
               <p className="muted">{course.learnedHours} of {course.plannedHours} hours learned · {progress}% course progress</p>
               <p className="muted">Subscription: {course.subscriptionStatus.replaceAll('_', ' ')}</p>
               {course.nextSession && <p className="muted">Next session: {course.nextSession.title} · {new Date(course.nextSession.startsAt).toLocaleString()}</p>}
-              <div className="course-actions"><Link className="button button-secondary" to={`/student/courses/${course.id}/overview?returnTo=${encodeURIComponent(returnTo)}`}>Continue course</Link></div>
+              <div className="course-actions">
+                {!pendingTutor && <Link className="button button-secondary" to={`/student/tutors?courseId=${encodeURIComponent(course.id)}`}>{selectedTutor ? 'Change tutor' : 'Choose your tutor'}</Link>}
+                <Link className="button button-secondary" to={`/student/courses/${course.id}/overview?returnTo=${encodeURIComponent(returnTo)}`}>Continue course</Link>
+              </div>
             </article>;
           })}</div>
         </>}

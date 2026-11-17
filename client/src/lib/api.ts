@@ -42,7 +42,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers,
   };
   let response = await fetch(`${apiUrl}${path}`, options);
-  const mayRefresh = response.status === 401 && path !== '/auth/refresh' && path !== '/auth/logout' && path !== '/auth/students/login' && path !== '/auth/instructors/login' && path !== '/auth/tutor/login' && path !== '/auth/tutors/login' && path !== '/auth/org-admin/login' && path !== '/auth/super-admin/login';
+  const mayRefresh = response.status === 401 && path !== '/auth/refresh' && path !== '/auth/logout' && path !== '/auth/students/login' && path !== '/auth/tutor/login' && path !== '/auth/tutors/login' && path !== '/auth/org-admin/login' && path !== '/auth/super-admin/login';
   if (mayRefresh) {
     const refreshed = await refreshSessionOnce();
     if (refreshed) {
@@ -60,7 +60,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 export async function apiBlob(path: string): Promise<Blob> {
   const request = () => fetch(`${apiUrl}${path}`, { credentials: 'include' });
   let response = await request();
-  const mayRefresh = response.status === 401 && path !== '/auth/refresh' && path !== '/auth/logout' && path !== '/auth/students/login' && path !== '/auth/instructors/login' && path !== '/auth/tutor/login' && path !== '/auth/tutors/login' && path !== '/auth/org-admin/login' && path !== '/auth/super-admin/login';
+  const mayRefresh = response.status === 401 && path !== '/auth/refresh' && path !== '/auth/logout' && path !== '/auth/students/login' && path !== '/auth/tutor/login' && path !== '/auth/tutors/login' && path !== '/auth/org-admin/login' && path !== '/auth/super-admin/login';
   if (mayRefresh) {
     const refreshed = await refreshSessionOnce();
     if (refreshed) {

@@ -14,13 +14,13 @@ import {
   updateTopicSchema,
 } from './courses.schemas.js';
 
-const courseEditors = [Role.ORG_ADMIN, Role.INSTRUCTOR] as const;
+const courseEditors = [Role.ORG_ADMIN, Role.TUTOR] as const;
 const studentRouter = Router();
 
 export const coursesRouter = Router();
 coursesRouter.use(authenticate, requireOrganization, requireRoles(...courseEditors));
 coursesRouter.get('/', controller.list);
-coursesRouter.get('/instructors', controller.instructors);
+coursesRouter.get('/faculty', controller.instructors);
 coursesRouter.post('/', validateBody(createCourseSchema), controller.create);
 coursesRouter.get('/:courseId/enrollments', validateParams(courseIdSchema), controller.enrollments);
 coursesRouter.post('/:courseId/enrollments/:enrollmentId/approve', validateParams(enrollmentIdSchema), controller.approveEnrollment);

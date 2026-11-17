@@ -5,8 +5,12 @@ import { prisma } from './config/prisma.js';
 import { startMediaWorker } from './modules/media/media.worker.js';
 import { startLearningWorker } from './modules/learning/learning.worker.js';
 import { startNotificationScheduler } from './modules/notifications/notifications.scheduler.js';
+import { assertPaymentProviderAllowed } from './modules/payments/payment.provider.js';
 
+assertPaymentProviderAllowed();
 const server = app.listen(env.PORT, () => logger.info({ port: env.PORT }, 'API server listening'));
+server.headersTimeout = 2 * 60 * 1000;
+server.requestTimeout = 60 * 60 * 1000;
 const stopMediaWorker = startMediaWorker();
 const stopLearningWorker = startLearningWorker();
 const stopNotificationScheduler = startNotificationScheduler();

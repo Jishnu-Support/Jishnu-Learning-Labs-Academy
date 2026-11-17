@@ -1,6 +1,7 @@
 import type { Request, RequestHandler, Response } from 'express';
 import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
+import { HttpError } from '../../utils/http-error.js';
 import * as authService from './auth.service.js';
 
 const accessCookie = 'accessToken';
@@ -38,9 +39,8 @@ export const registerStudent: RequestHandler = async (req, res) => {
   res.status(201).json({ data: { user, message: 'Registration submitted. A Tutor must approve your account before you can sign in.' } });
 };
 
-export const registerInstructor: RequestHandler = async (req, res) => {
-  const user = await authService.registerInstructor(req.body);
-  res.status(201).json({ data: { user, message: 'Registration submitted. An organization admin must approve your account before you can sign in.' } });
+export const deprecatedInstructorRegistration: RequestHandler = () => {
+  throw new HttpError(410, 'Instructor registration is no longer supported. Register as a Tutor instead.');
 };
 
 export const registerTutor: RequestHandler = async (req, res) => {
@@ -52,8 +52,8 @@ export const studentLogin: RequestHandler = async (req, res) => {
   loginResponse(res, await authService.loginStudent(req.body, requestMeta(req)));
 };
 
-export const instructorLogin: RequestHandler = async (req, res) => {
-  loginResponse(res, await authService.loginInstructor(req.body, requestMeta(req)));
+export const deprecatedInstructorLogin: RequestHandler = () => {
+  throw new HttpError(410, 'Instructor login is no longer supported. Sign in through the Tutor portal.');
 };
 
 export const orgAdminLogin: RequestHandler = async (req, res) => {

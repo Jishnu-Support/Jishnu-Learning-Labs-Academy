@@ -10,20 +10,10 @@ type Registration = {
   email: string;
   phone: string | null;
 };
-type Queue = 'INSTRUCTOR' | 'TUTOR';
-
-export function InstructorApprovalsPage() {
+export function TutorApprovalsPage() {
   const queryClient = useQueryClient();
-  const [queue, setQueue] = useState<Queue>('INSTRUCTOR');
   const [selected, setSelected] = useState<Registration | null>(null);
   const [reason, setReason] = useState('');
-  const instructors = useQuery({
-    queryKey: ['pending-instructors'],
-    queryFn: async () => {
-      const data = await api<{ registrations: Registration[] }>('/org-admin/instructors/pending');
-      return data.registrations;
-    },
-  });
   const tutors = useQuery({
     queryKey: ['org-admin-pending-tutors'],
     queryFn: async () => {
@@ -42,16 +32,16 @@ export function InstructorApprovalsPage() {
       action: 'approve' | 'reject';
       rejectionReason?: string;
     }) => api(
-      `/org-admin/${queue === 'INSTRUCTOR' ? 'instructors' : 'tutors'}/${encodeURIComponent(registration.id)}/${action}`,
+      `/org-admin/tutors/${encodeURIComponent(registration.id)}/${action}`,
       { method: 'POST', body: JSON.stringify(rejectionReason ? { reason: rejectionReason } : {}) },
     ),
     onSuccess: async () => {
       setSelected(null);
       setReason('');
-      await queryClient.invalidateQueries({ queryKey: [queue === 'INSTRUCTOR' ? 'pending-instructors' : 'org-admin-pending-tutors'] });
+      await queryClient.invalidateQueries({ queryKey: ['org-admin-pending-tutors'] });
     },
   });
-  const query = queue === 'INSTRUCTOR' ? instructors : tutors;
+  const query = tutors;
   if (query.isLoading) return <p className="loading">Loading registrations…</p>;
   if (query.error) return <p className="notice notice-error">{query.error instanceof ApiError ? query.error.message : 'Could not load registrations.'}</p>;
   const registrations = query.data ?? [];
@@ -59,10 +49,6 @@ export function InstructorApprovalsPage() {
     <section>
       <p className="eyebrow">ORG ADMIN PORTAL</p>
       <PageHeader title="Pending registrations" backTo="/org-admin" breadcrumbs={['Dashboard', 'Pending Registrations']} />
-      <div className="row-actions" role="tablist" aria-label="Registration type">
-        <Button variant={queue === 'INSTRUCTOR' ? 'primary' : 'secondary'} role="tab" aria-selected={queue === 'INSTRUCTOR'} onClick={() => setQueue('INSTRUCTOR')}>Pending Tutors</Button>
-        <Button variant={queue === 'TUTOR' ? 'primary' : 'secondary'} role="tab" aria-selected={queue === 'TUTOR'} onClick={() => setQueue('TUTOR')}>Pending Tutor accounts</Button>
-      </div>
       <p className="muted">Approve or reject Tutor registrations in your organization.</p>
       {mutation.error && <p className="notice notice-error" role="alert">{mutation.error instanceof ApiError ? mutation.error.message : 'The decision could not be saved.'}</p>}
       {registrations.length === 0

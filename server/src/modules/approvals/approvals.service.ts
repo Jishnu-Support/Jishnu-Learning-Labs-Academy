@@ -41,6 +41,7 @@ async function decideStudent(
     select: { id: true, userId: true, status: true },
   });
   if (!profile) throw new HttpError(404, 'Student registration not found');
+  if (profile.userId === actorId) throw new HttpError(403, 'You cannot approve your own account');
   if (profile.status !== StudentStatus.PENDING) throw new HttpError(409, 'This registration is no longer pending');
 
   const profileStatus = status === AccountStatus.APPROVED ? StudentStatus.APPROVED : StudentStatus.REJECTED;
@@ -108,30 +109,20 @@ export async function listPendingTutor(organizationId: string | null) {
   return pending.map(({ tutorId, ...profile }) => ({ ...profile, tutorId: tutorId }));
 }
 
-export async function listPendingInstructors(organizationId: string | null) {
-  const tenantId = requireOrganizationId(organizationId);
-  return prisma.user.findMany({
-    where: { organizationId: tenantId, role: Role.INSTRUCTOR, status: AccountStatus.PENDING },
-    orderBy: { createdAt: 'asc' },
-    select: { id: true, name: true, email: true, phone: true, status: true, createdAt: true },
-  });
-}
-
 async function decideAccount(
   organizationId: string | null,
   userId: string,
   actorId: string,
-  role: typeof Role.INSTRUCTOR | typeof Role.TUTOR,
   status: DecisionStatus,
   reason?: string,
 ) {
   const tenantId = requireOrganizationId(organizationId);
   if (actorId === userId) throw new HttpError(403, 'You cannot approve your own registration');
   const user = await prisma.user.findFirst({
-    where: { id: userId, organizationId: tenantId, role, status: AccountStatus.PENDING },
+    where: { id: userId, organizationId: tenantId, role: Role.TUTOR, status: AccountStatus.PENDING },
     select: { id: true, email: true, accountRegistration: { select: { id: true } } },
   });
-  if (!user) throw new HttpError(404, `${role.toLowerCase()} registration not found or no longer pending`);
+  if (!user) throw new HttpError(404, 'Tutor registration not found or no longer pending');
 
   const legacyStatus = status === AccountStatus.APPROVED ? StudentStatus.APPROVED : StudentStatus.REJECTED;
   const now = new Date();
@@ -156,7 +147,7 @@ async function decideAccount(
       data: {
         organizationId: tenantId,
         actorId,
-        action: `${role}_${status}`,
+        action: `TUTOR_${status}`,
         targetType: 'User',
         targetId: user.id,
         metadata: { email: user.email, reason: reason ?? null },
@@ -172,21 +163,13 @@ async function decideAccount(
       dedupeKey: `account:${user.id}:approved`,
     }), 'Tutor approval');
   }
-  return { userId: user.id, role, status, rejectionReason: status === AccountStatus.REJECTED ? reason ?? null : null };
-}
-
-export function approveInstructor(organizationId: string | null, userId: string, actorId: string) {
-  return decideAccount(organizationId, userId, actorId, Role.INSTRUCTOR, AccountStatus.APPROVED);
-}
-
-export function rejectInstructor(organizationId: string | null, userId: string, actorId: string, reason: string) {
-  return decideAccount(organizationId, userId, actorId, Role.INSTRUCTOR, AccountStatus.REJECTED, reason);
+  return { userId: user.id, role: Role.TUTOR, status, rejectionReason: status === AccountStatus.REJECTED ? reason ?? null : null };
 }
 
 export function approveTutor(organizationId: string | null, userId: string, actorId: string) {
-  return decideAccount(organizationId, userId, actorId, Role.TUTOR, AccountStatus.APPROVED);
+  return decideAccount(organizationId, userId, actorId, AccountStatus.APPROVED);
 }
 
 export function rejectTutor(organizationId: string | null, userId: string, actorId: string, reason: string) {
-  return decideAccount(organizationId, userId, actorId, Role.TUTOR, AccountStatus.REJECTED, reason);
+  return decideAccount(organizationId, userId, actorId, AccountStatus.REJECTED, reason);
 }

@@ -30,7 +30,11 @@ import { TutorDetailsPage, TutorManagementPage } from './pages/tutor-page';
 import { StudentCourseDetailPage } from './pages/student-course-detail-page';
 import { StudentCourseCatalogPage, StudentCoursesPage } from './pages/student-courses-page';
 import { StudentTutorsPage } from './pages/student-tutors-page';
+import { OrganizationTutorRatingsPage } from './pages/tutor-ratings-page';
 import { StudentMediaPlayerPage } from './pages/student-media-page';
+import { StudentReportsPage } from './pages/student-reports-page';
+import { QuestionPaperGeneratorPage } from './pages/question-paper-generator-page';
+import { TutorCourseAssessmentPage } from './pages/tutor-course-assessment-page';
 import { StudentPaymentsPage } from './pages/student-payments-page';
 import { PaymentsManagementPage } from './pages/payments-management-page';
 import { StudentsPage } from './pages/students-page';
@@ -84,7 +88,9 @@ export function App() {
         <Route element={<RouteGuard roles={['STUDENT']} />}>
           <Route path="/student" element={<Dashboard role="STUDENT" />} />
           <Route path="/student/courses" element={<StudentCoursesPage />} />
+          <Route path="/student/courses/reports" element={<StudentReportsPage />} />
           <Route path="/student/course-catalog" element={<StudentCourseCatalogPage />} />
+          <Route path="/student/question-paper" element={<QuestionPaperGeneratorPage />} />
           <Route path="/student/tutors" element={<StudentTutorsPage />} />
           <Route path="/student/payments" element={<StudentPaymentsPage />} />
           <Route path="/student/courses/:courseId/:tab?" element={<StudentCourseDetailPage />} />
@@ -113,9 +119,10 @@ export function App() {
         </Route>
         <Route element={<RouteGuard roles={['TUTOR']} />}>
           <Route path="/tutor" element={<TutorDashboard />} />
+          <Route path="/tutor/ratings" element={<Navigate to="/my-profile#ratings" replace />} />
           <Route path="/tutor/payments" element={<PaymentsManagementPage />} />
           <Route path="/tutor/students" element={<StudentsPage />} />
-          <Route path="/tutor/tutors" element={<TutorDetailsPage />} />
+          <Route path="/tutor/tutors" element={<Navigate to="/my-profile" replace />} />
           <Route path="/tutor/materials" element={<NotesPage />} />
           <Route path="/tutor/notes" element={<Navigate to="/tutor/materials" replace />} />
           <Route path="/tutor/media" element={<MediaPage />} />
@@ -125,10 +132,11 @@ export function App() {
           <Route path="/tutor/sessions/:sessionId/attendees" element={<SessionAttendeesPage />} />
           <Route path="/tutor/sessions/:sessionId/host" element={<SessionHostPage />} />
           <Route element={<RouteGuard roles={['TUTOR']} />}>
-            <Route path="/tutor/approvals" element={<ApprovalsPage />} />
-            <Route path="/tutor/learning/questions" element={<PracticeQuestionBankPage />} />
-            <Route path="/tutor/learning/assessments" element={<TeacherAssessmentsPage />} />
-            <Route path="/tutor/learning/reports" element={<AssessmentReportsPage />} />
+            <Route path="/tutor/approvals" element={<Navigate to="/tutor" replace />} />
+            <Route path="/tutor/learning/questions" element={<Navigate to="/tutor/courses" replace />} />
+            <Route path="/tutor/learning/assessments" element={<Navigate to="/tutor/courses" replace />} />
+            <Route path="/tutor/learning/reports" element={<Navigate to="/tutor/courses" replace />} />
+            <Route path="/tutor/courses/:courseId/assessments/new" element={<TutorCourseAssessmentPage />} />
             <Route path="/tutor/courses" element={<CoursesPage />} />
             <Route path="/tutor/courses/new" element={<CourseFormPage />} />
             <Route path="/tutor/courses/:courseId/edit" element={<CourseFormPage />} />
@@ -143,6 +151,7 @@ export function App() {
           <Route path="/org-admin/create-tutor" element={<TutorManagementPage />} />
           <Route path="/org-admin/students" element={<StudentsPage />} />
           <Route path="/org-admin/tutors" element={<TutorDetailsPage />} />
+          <Route path="/org-admin/tutor-ratings" element={<OrganizationTutorRatingsPage />} />
           <Route path="/org-admin/materials" element={<NotesPage />} />
           <Route path="/org-admin/notes" element={<Navigate to="/org-admin/materials" replace />} />
           <Route path="/org-admin/media" element={<MediaPage />} />

@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { fileTypeFromFile } from 'file-type';
-import { AccountStatus, MediaJobStatus, MediaStatus, MediaType, PrismaClient, Role } from '@prisma/client';
+import { AccountStatus, MediaJobStatus, MediaStatus, MediaType, MediaVisibility, PrismaClient, Role } from '@prisma/client';
 import { env } from '../src/config/env.js';
 import { createMedia } from '../src/modules/media/media.service.js';
 import { localMediaStorage } from '../src/modules/media/media.storage.js';
@@ -45,9 +45,39 @@ async function registerSample(input: {
       type: input.type,
       deletedAt: null,
     },
-    select: { id: true, status: true },
+    select: { id: true, status: true, visibility: true, publishOnReady: true, freePreview: true },
   });
   if (existing) {
+    if (existing.status === MediaStatus.READY && (existing.visibility !== MediaVisibility.PUBLISHED || !existing.freePreview)) {
+      await prisma.$transaction(async (tx) => {
+        await tx.mediaItem.update({
+          where: { id: existing.id },
+          data: {
+            visibility: MediaVisibility.PUBLISHED,
+            ...(existing.visibility === MediaVisibility.PUBLISHED ? {} : { publishedAt: new Date() }),
+            freePreview: true,
+          },
+        });
+        if (existing.visibility !== MediaVisibility.PUBLISHED) {
+          await tx.auditLog.create({
+            data: {
+              organizationId: input.organizationId,
+              actorId: input.uploaderId,
+              action: 'MEDIA_SAMPLE_PUBLISHED',
+              targetType: 'MediaItem',
+              targetId: existing.id,
+              metadata: { courseCode: input.course.code, type: input.type },
+            },
+          });
+        }
+      });
+    } else if (existing.status !== MediaStatus.READY &&
+      (!existing.publishOnReady || !existing.freePreview)) {
+      await prisma.mediaItem.update({
+        where: { id: existing.id },
+        data: { publishOnReady: true, freePreview: true },
+      });
+    }
     console.log(`Already registered: ${input.course.code} ${input.title} (${existing.status})`);
     return;
   }
@@ -76,6 +106,8 @@ async function registerSample(input: {
       extension: input.extension,
       mimeType: input.mimeType,
       fileName: `sample${input.extension}`,
+      freePreview: true,
+      publishOnReady: true,
     });
     mediaId = media.id;
     originalKey = await localMediaStorage.adoptIncoming(temporary.path, input.organizationId, media.id, input.extension);
@@ -116,11 +148,6 @@ async function main() {
   if (!ffmpeg) throw new Error('The ffmpeg-static package has no binary for this platform');
   const organization = await prisma.organization.findUnique({ where: { code: 'jll-demo' }, select: { id: true } });
   if (!organization) throw new Error('Seed the jll-demo organization before generating media samples');
-  const uploader = await prisma.user.findFirst({
-    where: { organizationId: organization.id, role: Role.TUTOR, status: AccountStatus.APPROVED, isActive: true },
-    select: { id: true },
-  });
-  if (!uploader) throw new Error('An approved jll-demo Tutor account is required to register media samples');
   const courses = await prisma.course.findMany({
     where: { organizationId: organization.id, code: { in: ['PY101', 'JAV101', 'JS101'] } },
     select: { id: true, code: true },
@@ -128,6 +155,17 @@ async function main() {
   const byCode = new Map(courses.map((course) => [course.code, course]));
   const missing = ['PY101', 'JAV101', 'JS101'].filter((code) => !byCode.has(code));
   if (missing.length) throw new Error(`Missing sample courses: ${missing.join(', ')}`);
+  const uploader = await prisma.user.findFirst({
+    where: {
+      organizationId: organization.id,
+      role: Role.TUTOR,
+      status: AccountStatus.APPROVED,
+      isActive: true,
+      instructedCourses: { some: { courseId: byCode.get('PY101')!.id } },
+    },
+    select: { id: true },
+  });
+  if (!uploader) throw new Error('An approved Tutor assigned to the PY101 sample course is required to register media samples');
 
   const sharedVideoArgs = [
     '-f', 'lavfi',
@@ -173,6 +211,17 @@ async function main() {
     mimeType: 'audio/wav',
     format: 'wav',
     args: ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=10', '-t', '10', '-c:a', 'pcm_s16le', '-ar', '44100'],
+  });
+  await registerSample({
+    organizationId: organization.id,
+    uploaderId: uploader.id,
+    course: byCode.get('PY101')!,
+    title: 'Part B Sample Audio 2',
+    type: MediaType.AUDIO,
+    extension: '.wav',
+    mimeType: 'audio/wav',
+    format: 'wav',
+    args: ['-f', 'lavfi', '-i', 'sine=frequency=660:duration=10', '-t', '10', '-c:a', 'pcm_s16le', '-ar', '44100'],
   });
   console.log(`Media sample generation complete. Video max: ${env.MAX_VIDEO_MB} MB; audio max: ${env.MAX_AUDIO_MB} MB.`);
 }

@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/auth-context';
 import { PortalSidebar } from '../components/portal-sidebar';
 import { Toast } from '../components/feedback';
+import { DailyWisdomCards } from '../components/daily-wisdom-cards';
 import type { Role } from '../types';
 
 const roleTitles: Record<Role, string> = {
@@ -33,10 +34,8 @@ export function Dashboard({ role }: { role: Role }) {
       { title: 'Media', description: 'Upload and manage course videos and audio.', href: '/org-admin/media', label: 'Upload media' },
     ],
     TUTOR: [
-      { title: 'My Fees and Earnings', description: 'Set course fee prices, view paid students, and track collections.', href: '/tutor/payments', label: 'View fees and earnings' },
-      { title: 'Courses', description: 'Manage courses assigned to you and mark topics as delivered.', href: '/tutor/courses', label: 'Open courses' },
-      { title: 'Pending students', description: 'Approve or reject student registrations for your organization.', href: '/tutor/approvals', label: 'Review students' },
-      { title: 'Media', description: 'Upload and manage course videos and audio.', href: '/tutor/media', label: 'Upload media' },
+      { title: 'My Course', description: 'Manage your assigned courses, study materials, assessments, and progress.', href: '/tutor/courses', label: 'Open My Course' },
+      { title: 'Expert Sessions', description: 'Schedule or host sessions for your assigned courses.', href: '/tutor/sessions', label: 'Open Expert Sessions' },
     ],
   };
   const cards = links[role] ?? [];
@@ -48,6 +47,7 @@ export function Dashboard({ role }: { role: Role }) {
         <p className="eyebrow">{roleTitles[role]} PORTAL</p>
         <h1>Good to have you here, {user?.name.split(' ')[0]}.</h1>
         <p className="muted">You are signed in to your organization’s Jishnu Learning Labs workspace.</p>
+        <DailyWisdomCards />
         {cards.length > 0
           ? <div className="dashboard-grid">{cards.map((card, index) => (
             <article className="card feature-card" key={card.href}>

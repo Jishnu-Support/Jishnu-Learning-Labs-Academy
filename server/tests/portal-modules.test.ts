@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import bcrypt from 'bcrypt';
-import { AccountStatus, OrganizationStatus, PrismaClient, Role, StudentStatus } from '@prisma/client';
+import {
+  AccountStatus, AssessmentAttemptStatus, AssessmentStatus, OrganizationStatus, PrismaClient, ResultReleaseMode,
+  Role, StudentStatus,
+} from '@prisma/client';
 import { app } from '../src/app.js';
 import { localDiskStorage } from '../src/modules/notes/storage.service.js';
 import { createSamplePdf } from '../prisma/library-sample.js';
@@ -216,12 +219,38 @@ describe('Checkpoint 1B tutor and student directories', () => {
     const first = await makeOrganization('directory-a');
     const second = await makeOrganization('directory-b');
     const adminA = await makeUser(first.id, Role.ORG_ADMIN, 'directory-admin-a');
+    const adminB = await makeUser(second.id, Role.ORG_ADMIN, 'directory-admin-b');
     const instructorB = await makeUser(second.id, Role.TUTOR, 'directory-unassigned-tutor-b');
     const tutorA = await makeUser(first.id, Role.TUTOR, 'directory-tutor-a', { identifier: 'TUT-SEARCH-1' });
     const tutorB = await makeUser(second.id, Role.TUTOR, 'directory-tutor-b', { identifier: 'TUT-SEARCH-1' });
     const studentA = await makeUser(first.id, Role.STUDENT, 'directory-student-a', { identifier: 'STUDENT-SEARCH-1' });
     const studentB = await makeUser(second.id, Role.STUDENT, 'directory-student-b', { identifier: 'STUDENT-SEARCH-1' });
     await makeUser(second.id, Role.STUDENT, 'directory-student-b-other', { identifier: 'OTHER-STU-1' });
+    const tutorCourse = await prisma.course.create({
+      data: {
+        organizationId: second.id,
+        createdById: adminB.id,
+        code: 'DIRECTORY-TUTOR-COURSE',
+        title: 'Directory Tutor Course',
+        category: 'Testing',
+        plannedHours: 1,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2027-01-01T00:00:00.000Z'),
+        status: 'PUBLISHED',
+      },
+    });
+    await prisma.courseInstructor.create({
+      data: { organizationId: second.id, courseId: tutorCourse.id, instructorId: instructorB.id },
+    });
+    await prisma.enrollment.create({
+      data: {
+        organizationId: second.id,
+        courseId: tutorCourse.id,
+        studentId: studentB.id,
+        selectedTutorId: instructorB.id,
+        status: 'ACTIVE',
+      },
+    });
     const adminLogin = await login('org-admin', first.code!, adminA.email);
     const instructorLogin = await login('tutors', second.code!, instructorB.email);
     const tutorLogin = await login('tutor', first.code!, 'TUT-SEARCH-1');
@@ -252,8 +281,34 @@ describe('Checkpoint 1B tutor and student directories', () => {
 
   it('returns safe student profile login summaries and audits suspension actions', async () => {
     const organization = await makeOrganization('student-details');
+    const admin = await makeUser(organization.id, Role.ORG_ADMIN, 'student-details-admin');
     const instructor = await makeUser(organization.id, Role.TUTOR, 'student-details-tutor');
     const student = await makeUser(organization.id, Role.STUDENT, 'student-details-student', { identifier: 'DETAIL-STU-1' });
+    const course = await prisma.course.create({
+      data: {
+        organizationId: organization.id,
+        createdById: admin.id,
+        code: 'STUDENT-DETAILS-COURSE',
+        title: 'Student Details Course',
+        category: 'Testing',
+        plannedHours: 1,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2027-01-01T00:00:00.000Z'),
+        status: 'PUBLISHED',
+      },
+    });
+    await prisma.courseInstructor.create({
+      data: { organizationId: organization.id, courseId: course.id, instructorId: instructor.id },
+    });
+    await prisma.enrollment.create({
+      data: {
+        organizationId: organization.id,
+        courseId: course.id,
+        studentId: student.id,
+        selectedTutorId: instructor.id,
+        status: 'ACTIVE',
+      },
+    });
     await prisma.loginLog.createMany({
       data: Array.from({ length: 12 }, (_, index) => ({
         organizationId: organization.id,
@@ -266,17 +321,22 @@ describe('Checkpoint 1B tutor and student directories', () => {
     const cookie = cookieHeader(instructorLogin);
     const detail = await request(app).get('/api/students/DETAIL-STU-1').set('Cookie', cookie);
     expect(detail.status).toBe(200);
-    expect(detail.body.data.student.loginHistory.recentLogins).toHaveLength(10);
-    expect(detail.body.data.student.loginHistory.lastLoginAt).toBeTruthy();
+    expect(detail.body.data.student.loginHistory).toBeUndefined();
+    expect(detail.body.data.student.user.name).toBe(student.name);
     expect(JSON.stringify(detail.body)).not.toContain('passwordHash');
     expect(JSON.stringify(detail.body)).not.toContain('refreshToken');
-    expect((await request(app).post('/api/students/DETAIL-STU-1/suspend').set('Cookie', cookie)).status).toBe(200);
+    expect((await request(app).post('/api/students/DETAIL-STU-1/suspend').set('Cookie', cookie)).status).toBe(403);
+    const adminCookie = cookieHeader(await login('org-admin', organization.code!, admin.email));
+    const adminDetail = await request(app).get('/api/students/DETAIL-STU-1').set('Cookie', adminCookie);
+    expect(adminDetail.body.data.student.loginHistory.recentLogins).toHaveLength(10);
+    expect(adminDetail.body.data.student.loginHistory.lastLoginAt).toBeTruthy();
+    expect((await request(app).post('/api/students/DETAIL-STU-1/suspend').set('Cookie', adminCookie)).status).toBe(200);
     const studentProfile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: student.id } });
     const suspensionAuditCount = await prisma.auditLog.count({
       where: { organizationId: organization.id, action: 'STUDENT_SUSPENDED', targetId: studentProfile.id },
     });
     expect(suspensionAuditCount).toBe(1);
-    expect((await request(app).post('/api/students/DETAIL-STU-1/reactivate').set('Cookie', cookie)).status).toBe(200);
+    expect((await request(app).post('/api/students/DETAIL-STU-1/reactivate').set('Cookie', adminCookie)).status).toBe(200);
   });
 });
 
@@ -317,6 +377,14 @@ describe('Checkpoint 1B protected notes', () => {
     const studentList = await request(app).get('/api/notes').set('Cookie', studentCookie);
     expect(studentList.status).toBe(200);
     expect(studentList.body.data.notes).toHaveLength(0);
+    const tutorList = await request(app).get('/api/notes').set('Cookie', tutorCookie);
+    expect(tutorList.status).toBe(200);
+    expect(tutorList.body.data.notes.find((note: { id: string }) => note.id === instructorNoteId).author).toMatchObject({
+      id: '',
+      name: 'Tutor',
+      role: Role.TUTOR,
+    });
+    expect(JSON.stringify(tutorList.body)).not.toContain(instructor.name);
     const browseAll = await request(app).get('/api/notes?saved=all').set('Cookie', studentCookie);
     expect(browseAll.body.data.notes.map((note: { id: string }) => note.id)).toContain(tutorNoteId);
     expect(browseAll.body.data.notes.map((note: { id: string }) => note.id)).not.toContain(adminNoteId);
@@ -382,6 +450,70 @@ describe('Checkpoint 1B protected notes', () => {
 });
 
 describe('PF-2 student portal APIs', () => {
+  it('returns only this student’s released assessment marks for My Reports', async () => {
+    const organization = await makeOrganization('student-reports');
+    const admin = await makeUser(organization.id, Role.ORG_ADMIN, 'reports-admin');
+    const student = await makeUser(organization.id, Role.STUDENT, 'reports-student', { identifier: 'REPORT-STU-1' });
+    const otherStudent = await makeUser(organization.id, Role.STUDENT, 'reports-other-student', { identifier: 'REPORT-STU-2' });
+    const course = await prisma.course.create({
+      data: {
+        organizationId: organization.id,
+        code: 'PF2-REPORTS',
+        title: 'Report Subject',
+        category: 'Testing',
+        plannedHours: 10,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2027-01-01T00:00:00.000Z'),
+        status: 'PUBLISHED',
+        createdById: admin.id,
+      },
+    });
+    const immediate = await prisma.assessment.create({
+      data: {
+        organizationId: organization.id, courseId: course.id, createdById: admin.id, title: 'Released assessment',
+        instructions: '', totalMarks: 20, passMark: 10, durationMinutes: 30, status: AssessmentStatus.PUBLISHED,
+        resultReleaseMode: ResultReleaseMode.IMMEDIATE,
+      },
+    });
+    const manual = await prisma.assessment.create({
+      data: {
+        organizationId: organization.id, courseId: course.id, createdById: admin.id, title: 'Held assessment',
+        instructions: '', totalMarks: 20, passMark: 10, durationMinutes: 30, status: AssessmentStatus.PUBLISHED,
+        resultReleaseMode: ResultReleaseMode.MANUAL,
+      },
+    });
+    const releasedManual = await prisma.assessment.create({
+      data: {
+        organizationId: organization.id, courseId: course.id, createdById: admin.id, title: 'Released later assessment',
+        instructions: '', totalMarks: 20, passMark: 10, durationMinutes: 30, status: AssessmentStatus.PUBLISHED,
+        resultReleaseMode: ResultReleaseMode.MANUAL, resultsReleasedAt: new Date(),
+      },
+    });
+    const addAttempt = (assessmentId: string, studentId: string, score: number, submittedAt: Date) => prisma.assessmentAttempt.create({
+      data: {
+        organizationId: organization.id, assessmentId, studentId, status: AssessmentAttemptStatus.SUBMITTED,
+        snapshot: [], expiresAt: new Date(submittedAt.getTime() + 30 * 60_000), submittedAt, score, percentage: score * 5,
+      },
+    });
+    await addAttempt(immediate.id, student.id, 14, new Date('2026-01-10T00:00:00.000Z'));
+    await addAttempt(manual.id, student.id, 19, new Date('2026-01-11T00:00:00.000Z'));
+    await addAttempt(releasedManual.id, student.id, 16, new Date('2026-01-12T00:00:00.000Z'));
+    await addAttempt(immediate.id, otherStudent.id, 20, new Date('2026-01-13T00:00:00.000Z'));
+
+    const studentCookie = cookieHeader(await login('students', organization.code!, 'REPORT-STU-1'));
+    const otherStudentCookie = cookieHeader(await login('students', organization.code!, 'REPORT-STU-2'));
+    const reports = await request(app).get('/api/portal/student/reports').set('Cookie', studentCookie);
+    expect(reports.status).toBe(200);
+    expect(reports.body.data.studentReports).toHaveLength(2);
+    expect(reports.body.data.studentReports.map((item: { marks: number }) => item.marks)).toEqual([14, 16]);
+    expect(reports.body.data.studentReports[0]).toMatchObject({
+      subject: course.title, totalMarks: 20, percentage: 70,
+    });
+    expect((await request(app).get('/api/portal/student/reports').set('Cookie', otherStudentCookie)).body.data.studentReports)
+      .toHaveLength(1);
+    expect((await request(app).get('/api/portal/student/reports')).status).toBe(401);
+  });
+
   it('schedules and joins an enrolled class, records attendance, and blocks other-tenant students', async () => {
     const organization = await makeOrganization('portal-session');
     const otherOrganization = await makeOrganization('portal-session-other');
@@ -404,7 +536,15 @@ describe('PF-2 student portal APIs', () => {
     });
 
     await prisma.courseInstructor.create({ data: { organizationId: organization.id, courseId: course.id, instructorId: tutor.id } });
-    await prisma.enrollment.create({ data: { organizationId: organization.id, courseId: course.id, studentId: student.id } });
+    await prisma.enrollment.create({
+      data: {
+        organizationId: organization.id,
+        courseId: course.id,
+        studentId: student.id,
+        selectedTutorId: tutor.id,
+        status: 'ACTIVE',
+      },
+    });
     const tutorCookie = cookieHeader(await login('tutor', organization.code!, tutor.email));
     const studentCookie = cookieHeader(await login('students', organization.code!, 'PORTAL-STU-1'));
     const otherStudentCookie = cookieHeader(await login('students', otherOrganization.code!, 'PORTAL-STU-2'));
@@ -541,56 +681,88 @@ describe('Student profile, preferred Tutors, reviews, and saved notes', () => {
     });
     await prisma.enrollment.createMany({
       data: [
-        { organizationId: organization.id, courseId: course.id, studentId: student.id },
-        { organizationId: organization.id, courseId: course.id, studentId: otherStudent.id },
+        { organizationId: organization.id, courseId: course.id, studentId: student.id, selectedTutorId: tutor.id, status: 'ACTIVE' },
+        { organizationId: organization.id, courseId: course.id, studentId: otherStudent.id, selectedTutorId: otherTutor.id, status: 'ACTIVE' },
       ],
+    });
+    await prisma.courseInstructor.createMany({
+      data: [
+        { organizationId: organization.id, courseId: course.id, instructorId: tutor.id },
+        { organizationId: organization.id, courseId: course.id, instructorId: otherTutor.id },
+      ],
+      skipDuplicates: true,
     });
     const studentCookie = cookieHeader(await login('students', organization.code!, 'ENH-STU-1'));
     const otherStudentCookie = cookieHeader(await login('students', organization.code!, 'ENH-STU-2'));
     const adminCookie = cookieHeader(await login('org-admin', organization.code!, admin.email));
 
     const updatedProfile = await request(app).put('/api/students/me').set('Cookie', studentCookie).send({
+      piiConsent: true,
       fatherName: 'Parent One',
       motherName: 'Parent Two',
       currentEducation: 'Undergraduate',
+      educationLevel: 'UG',
+      educationYear: 'Year 2',
       currentCourse: 'Computer Science',
       institutionName: 'Example College',
-      aadhaarNumber: '123456789012',
+      aadhaarNumber: '200000000009',
       apaarId: '987654321098',
     });
     expect(updatedProfile.status).toBe(200);
     expect(updatedProfile.body.data.profile).toMatchObject({
       fatherName: 'Parent One',
-      aadhaarNumber: '•••• •••• 9012',
-      apaarId: '•••• •••• 1098',
+      aadhaarNumber: 'XXXX XXXX 0009',
+      apaarId: 'XXXX XXXX 1098',
     });
+    expect(JSON.stringify(updatedProfile.body)).not.toContain('200000000009');
+    const originalConsentAt = (await prisma.studentProfile.findUniqueOrThrow({ where: { userId: student.id }, select: { piiConsentAt: true } })).piiConsentAt;
+    await request(app).put('/api/students/me').set('Cookie', studentCookie).send({ piiConsent: true, fatherName: 'Parent One' });
+    expect((await prisma.studentProfile.findUniqueOrThrow({ where: { userId: student.id }, select: { piiConsentAt: true } })).piiConsentAt)
+      .toEqual(originalConsentAt);
+    expect((await request(app).put('/api/students/me').set('Cookie', studentCookie).send({
+      piiConsent: true,
+      aadhaarNumber: '200000000010',
+    })).status).toBe(400);
     const storedProfile = await prisma.studentProfile.findUniqueOrThrow({ where: { userId: student.id } });
-    expect(storedProfile.aadhaarEncrypted).not.toContain('123456789012');
+    expect(storedProfile.aadhaarEncrypted).not.toContain('200000000009');
     expect(storedProfile.apaarIdEncrypted).not.toContain('987654321098');
+    const maskedAdminProfile = await request(app).get('/api/students/ENH-STU-1').set('Cookie', adminCookie);
+    expect(maskedAdminProfile.body.data.student).toMatchObject({
+      aadhaarNumber: 'XXXX XXXX 0009',
+      apaarId: 'XXXX XXXX 1098',
+      fatherName: 'Parent One',
+      hasPhoto: false,
+    });
+    expect(JSON.stringify(maskedAdminProfile.body)).not.toContain('200000000009');
     const revealed = await request(app).post('/api/students/ENH-STU-1/sensitive/reveal')
-      .set('Cookie', adminCookie).send({ reason: 'Identity verification for account support' });
+      .set('Cookie', adminCookie).send({ field: 'aadhaar', password, reason: 'Identity verification for account support' });
     expect(revealed.status).toBe(200);
-    expect(revealed.body.data.identifiers).toEqual({ aadhaarNumber: '123456789012', apaarId: '987654321098' });
+    expect(revealed.body.data.identifier).toEqual({ field: 'aadhaar', value: '200000000009' });
+    const failedReveal = await request(app).post('/api/students/ENH-STU-1/sensitive/reveal')
+      .set('Cookie', adminCookie).send({ field: 'apaar', password: 'wrong-password', reason: 'Identity verification for account support' });
+    expect(failedReveal.status).toBe(401);
     expect(await prisma.auditLog.findFirst({
-      where: { organizationId: organization.id, actorId: admin.id, action: 'STUDENT_IDENTIFIERS_REVEALED', targetId: storedProfile.id },
+      where: { organizationId: organization.id, actorId: admin.id, action: 'STUDENT_IDENTIFIER_REVEALED', targetId: storedProfile.id },
     })).not.toBeNull();
+    const selfReveal = await request(app).post('/api/students/me/sensitive/reveal')
+      .set('Cookie', studentCookie).send({ field: 'apaar', password });
+    expect(selfReveal.status).toBe(200);
+    expect(selfReveal.body.data.identifier).toEqual({ field: 'apaar', value: '987654321098' });
+    const tutorCookie = cookieHeader(await login('tutor', organization.code!, tutor.email));
+    const tutorStudentDetails = await request(app).get('/api/students/ENH-STU-1').set('Cookie', tutorCookie);
+    expect(JSON.stringify(tutorStudentDetails.body)).not.toContain('Parent One');
+    expect(JSON.stringify(tutorStudentDetails.body)).not.toContain('0009');
+    expect(tutorStudentDetails.body.data.student.user.name).toBe(student.name);
+    expect((await request(app).post('/api/students/ENH-STU-1/sensitive/reveal').set('Cookie', tutorCookie).send({})).status).toBe(403);
 
-    const available = await request(app).get('/api/tutors/available').set('Cookie', studentCookie);
+    const available = await request(app).get(`/api/tutors/available?courseId=${course.id}`).set('Cookie', studentCookie);
     expect(available.status).toBe(200);
     expect(available.body.data.tutors.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining([tutor.id, otherTutor.id]));
-    expect((await request(app).put('/api/tutors/preferred').set('Cookie', studentCookie).send({ tutorId: tutor.id })).status).toBe(200);
-    const firstReview = await request(app).put(`/api/tutors/${tutor.id}/review`).set('Cookie', studentCookie).send({ rating: 4, review: 'Helpful explanations.' });
-    expect(firstReview.status).toBe(200);
-    const updatedReview = await request(app).put(`/api/tutors/${tutor.id}/review`).set('Cookie', studentCookie).send({ rating: 5, review: 'Excellent support.' });
-    expect(updatedReview.status).toBe(200);
-    expect(await prisma.tutorReview.count({ where: { organizationId: organization.id, studentId: student.id, tutorId: tutor.id } })).toBe(1);
-    const tutorDetail = await request(app).get(`/api/tutors/${tutor.id}`).set('Cookie', adminCookie);
-    expect(tutorDetail.body.data.tutor.ratingSummary).toEqual({ averageRating: 5, reviewCount: 1 });
-    expect(tutorDetail.body.data.tutor.reviews[0].student.studentId).toBe('ENH-STU-1');
-    const tutorCookie = cookieHeader(await login('tutor', organization.code!, tutor.email));
-    const tutorReviews = await request(app).get(`/api/tutors/${tutor.id}/reviews`).set('Cookie', tutorCookie);
-    expect(tutorReviews.body.data.reviews.reviews[0].student).toBeNull();
-
+    expect((await request(app).put('/api/tutors/preferred').set('Cookie', studentCookie).send({ tutorId: tutor.id, courseId: course.id })).status).toBe(200);
+    const firstReviewBlocked = await request(app).put(`/api/tutors/${tutor.id}/review`).set('Cookie', studentCookie).send({
+      courseId: course.id, rating: 4, review: 'Helpful explanations.',
+    });
+    expect(firstReviewBlocked.status).toBe(403);
     const note = await request(app).post('/api/notes').set('Cookie', tutorCookie)
       .field('title', 'Course-specific note')
       .field('subject', 'Testing')
@@ -600,6 +772,35 @@ describe('Student profile, preferred Tutors, reviews, and saved notes', () => {
     expect(note.status).toBe(201);
     const noteId = note.body.data.note.id as string;
     expect((await request(app).post(`/api/notes/${noteId}/publish`).set('Cookie', tutorCookie)).status).toBe(200);
+    expect((await request(app).get(`/api/notes/${noteId}/view`).set('Cookie', studentCookie)).status).toBe(200);
+    const firstReview = await request(app).put(`/api/tutors/${tutor.id}/review`).set('Cookie', studentCookie).send({
+      courseId: course.id, rating: 4, review: 'Helpful explanations.',
+    });
+    expect(firstReview.status).toBe(200);
+    const updatedReview = await request(app).put(`/api/tutors/${tutor.id}/review`).set('Cookie', studentCookie).send({
+      courseId: course.id, rating: 5, review: 'Excellent support.',
+    });
+    expect(updatedReview.status).toBe(200);
+    expect(await prisma.tutorReview.count({ where: { organizationId: organization.id, studentId: student.id, tutorId: tutor.id, courseId: course.id } })).toBe(1);
+    const tutorDetail = await request(app).get(`/api/tutors/${tutor.id}`).set('Cookie', adminCookie);
+    expect(tutorDetail.body.data.tutor.ratingSummary).toEqual({ averageRating: 5, reviewCount: 1 });
+    expect(tutorDetail.body.data.tutor.reviews[0].student.studentId).toBe('ENH-STU-1');
+    const tutorReviews = await request(app).get(`/api/tutors/${tutor.id}/reviews`).set('Cookie', tutorCookie);
+    expect(tutorReviews.body.data.reviews.reviews[0].student).toBeNull();
+    const hidden = await request(app).put(`/api/tutors/reviews/${tutorDetail.body.data.tutor.reviews[0].id}/visibility`)
+      .set('Cookie', adminCookie).send({ hidden: true, reason: 'Contains private information' });
+    expect(hidden.status).toBe(200);
+    const tutorHiddenReview = await request(app).get(`/api/tutors/${tutor.id}/reviews`).set('Cookie', tutorCookie);
+    expect(tutorHiddenReview.body.data.reviews.reviews[0].review).toBeNull();
+    expect(tutorHiddenReview.body.data.reviews.ratingSummary).toEqual({ averageRating: 5, reviewCount: 1 });
+    const unhidden = await request(app).put(`/api/tutors/reviews/${tutorDetail.body.data.tutor.reviews[0].id}/visibility`)
+      .set('Cookie', adminCookie).send({ hidden: false, reason: 'Review verified as appropriate' });
+    expect(unhidden.status).toBe(200);
+    const setting = await request(app).get('/api/organizations/settings/tutor-ratings').set('Cookie', adminCookie);
+    expect(setting.body.data.settings.ratingRequiresActivity).toBe(true);
+    const settingUpdated = await request(app).put('/api/organizations/settings/tutor-ratings')
+      .set('Cookie', adminCookie).send({ ratingRequiresActivity: false });
+    expect(settingUpdated.body.data.settings.ratingRequiresActivity).toBe(false);
     expect((await request(app).put(`/api/notes/${noteId}/saved`).set('Cookie', studentCookie)).status).toBe(200);
     const savedByOwner = await request(app).get(`/api/notes?courseId=${course.id}&saved=true`).set('Cookie', studentCookie);
     const savedByOther = await request(app).get(`/api/notes?courseId=${course.id}&saved=true`).set('Cookie', otherStudentCookie);

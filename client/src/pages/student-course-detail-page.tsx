@@ -4,8 +4,9 @@ import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-ro
 import { ConfirmDialog } from '../components/feedback';
 import { PageHeader } from '../components/page-header';
 import { PortalSidebar } from '../components/portal-sidebar';
+import { StudentMediaEmbed, type StudentPlayableMedia } from '../components/student-media-embed';
 import { Button } from '../components/ui/button';
-import { ApiError, api } from '../lib/api';
+import { ApiError, api, apiUrl } from '../lib/api';
 import { NotesPage } from './notes-page';
 import { StudentAssessmentsPage, StudentPracticePage } from './learning-pages';
 import { ExpertSessionsPage, LibraryPage } from './student-portal-pages';
@@ -26,7 +27,15 @@ type Course = {
   instructors: Array<{ instructor: { name: string } }>;
   topics: Array<{ id: string; title: string; plannedHours: number; order: number; covered: boolean; coveredAt: string | null }>;
   notes: Array<{ id: string; title: string; subject: string; description: string; originalName: string | null; updatedAt: string }>;
-  enrollments: Array<{ id: string; status: 'PENDING' | 'ACTIVE'; enrolledAt: string }>;
+  enrollments: Array<{
+    id: string;
+    status: 'PENDING' | 'ACTIVE';
+    enrolledAt: string;
+    selectedTutorId: string | null;
+    pendingTutorId: string | null;
+    selectedTutor: { id: string; name: string } | null;
+    pendingTutor: { id: string; name: string } | null;
+  }>;
 };
 type EnrollmentSummary = {
   status: string;
@@ -36,10 +45,13 @@ type EnrollmentSummary = {
     nextSession: { id: string; title: string; startsAt: string; durationMinutes: number; status: string } | null;
   };
 };
-type CourseMedia = {
-  id: string; title: string; type: string; source: string; durationSeconds: number | null;
+type CourseMedia = StudentPlayableMedia & {
+  description: string | null;
   progressPercent: number; completed: boolean; locked?: boolean;
   course: { id: string; code: string; title: string };
+  topic: { id: string; title: string } | null;
+  createdAt: string;
+  publishedAt: string | null;
 };
 type PreferredTutor = {
   id: string; name: string;
@@ -91,8 +103,9 @@ export function StudentCourseDetailPage() {
     queryFn: () => api<{ enrollments: EnrollmentSummary[] }>('/student/courses/enrolled'),
   });
   const preferredTutor = useQuery({
-    queryKey: ['student-preferred-tutor'],
-    queryFn: () => api<{ tutor: PreferredTutor | null }>('/tutors/preferred'),
+    queryKey: ['student-preferred-tutor', courseId],
+    queryFn: () => api<{ tutor: PreferredTutor | null }>(`/tutors/preferred?courseId=${encodeURIComponent(courseId)}`),
+    enabled: Boolean(query.data?.course.enrollments.some((item) => item.status === 'ACTIVE')),
   });
   const mutation = useMutation({
     mutationFn: (action: 'enroll' | 'drop') => api(`/student/courses/${courseId}/${action}`, { method: 'POST' }),
@@ -108,7 +121,7 @@ export function StudentCourseDetailPage() {
   const enrollment = course?.enrollments[0];
   const summary = enrolled.data?.enrollments.find((item) => item.course.id === courseId);
   const activeEnrollment = enrollment?.status === 'ACTIVE';
-  const selectedTutor = preferredTutor.data?.tutor;
+  const selectedTutor = preferredTutor.data?.tutor ?? null;
   const media = useQuery({
     queryKey: ['student-course-media', courseId],
     queryFn: () => api<{ items: CourseMedia[] }>(`/student/media?courseId=${encodeURIComponent(courseId)}`),
@@ -148,10 +161,17 @@ export function StudentCourseDetailPage() {
           {media.isLoading && <p className="loading">Loading videos and audios…</p>}
           {media.isError && <p className="notice notice-error" role="alert">{errorText(media.error)}</p>}
           {media.data?.items.length === 0 && <div className="card empty-state"><h2>No media in this course</h2><p>Published videos and audios linked to this course will appear here.</p></div>}
-          {media.data?.items.map((item) => <article className="card linked-course-note" key={item.id}>
-            <span><strong>{item.title}</strong><small>{item.source === 'YOUTUBE' ? 'YouTube' : item.type} · {item.completed ? 'Completed' : `${Math.round(item.progressPercent)}% complete`}{item.durationSeconds ? ` · ${Math.round(item.durationSeconds / 60)} min` : ''}</small></span>
-            {item.locked ? <Link className="button" to="/student/payments">Pay My Fee</Link> : <Link className="button button-secondary" to={`/student/courses/${encodeURIComponent(courseId)}/media/${item.id}`}>{item.completed ? 'Replay' : 'Continue watching'}</Link>}
-          </article>)}
+          <div className="course-media-grid">{media.data?.items.map((item) => <article className="card course-media-card" key={item.id}>
+            {item.thumbnailUrl && !item.locked
+              ? <img className="library-media-thumbnail" src={`${apiUrl}${item.thumbnailUrl}`} alt={`${item.title} thumbnail`} />
+              : <div className="library-content-thumbnail library-media-placeholder" aria-hidden="true">{item.type === 'VIDEO' ? 'VIDEO' : 'AUDIO'}</div>}
+            <p className="eyebrow">{item.topic?.title ?? 'General lesson'} · {item.source === 'YOUTUBE' ? 'YouTube embed' : item.type}</p>
+            <h3>{item.title}</h3>
+            <p className="muted">{item.completed ? 'Completed' : `${Math.round(item.progressPercent)}% complete`}{item.durationSeconds ? ` · ${Math.round(item.durationSeconds / 60)} min` : ''}</p>
+            <time className="library-content-date" dateTime={item.publishedAt ?? item.createdAt}>Published {new Date(item.publishedAt ?? item.createdAt).toLocaleDateString()}</time>
+            {item.locked ? <Link className="button" to="/student/payments">Pay My Fee</Link> : <StudentMediaEmbed media={item} />}
+            {!item.locked && <Link className="button button-secondary" to={`/student/courses/${encodeURIComponent(courseId)}/media/${encodeURIComponent(item.id)}`}>{item.completed ? 'Replay in full player' : 'Open full player'}</Link>}
+          </article>)}</div>
         </section>;
       case 'books':
         return <LibraryPage embeddedCourseId={courseId} />;
@@ -180,13 +200,14 @@ export function StudentCourseDetailPage() {
           <div className="course-meta"><span>{course.code}</span><span>{course.category}</span></div>
           {!activeEnrollment && <p>{course.description || 'No description provided.'}</p>}
           {activeEnrollment && <div className="course-facts">
-            <span><strong>My tutor</strong>{selectedTutor?.name ?? (course.instructors.map(({ instructor }) => instructor.name).join(', ') || 'Not selected')}</span>
+            <span><strong>My tutor</strong>{selectedTutor?.name ?? enrollment?.selectedTutor?.name ?? 'Choose your Tutor'}</span>
+            {enrollment?.pendingTutor && <span><strong>Next renewal</strong>{enrollment.pendingTutor.name}</span>}
             {selectedTutor && <span><strong>Tutor rating</strong>{selectedTutor.ratingSummary.averageRating === null ? 'No ratings yet' : `${selectedTutor.ratingSummary.averageRating.toFixed(1)} / 5 · ${selectedTutor.ratingSummary.reviewCount} reviews`}</span>}
             <span><strong>Progress</strong>{course.progressPercent}%</span>
             <span><strong>Subscription</strong>{displaySubscription(summary?.course.subscriptionStatus)}</span>
           </div>}
           <div className="course-actions">
-            {activeEnrollment && <Link className="button button-secondary" to={`/student/tutors?courseId=${encodeURIComponent(course.id)}`}>Change tutor</Link>}
+            {activeEnrollment && <Link className="button button-secondary" to={`/student/tutors?courseId=${encodeURIComponent(course.id)}`}>{enrollment?.selectedTutorId ? 'Change tutor' : 'Choose your tutor'}</Link>}
             {activeEnrollment && <Link className="button" to={`/student/payments?courseId=${encodeURIComponent(course.id)}`}>Pay My Fee</Link>}
             {enrollment?.status === 'ACTIVE' && <Button variant="danger" onClick={() => setConfirmDrop(true)}>Drop course</Button>}
             {enrollment?.status === 'PENDING' && <span className="status-pill status-pending">ENROLLMENT PENDING</span>}

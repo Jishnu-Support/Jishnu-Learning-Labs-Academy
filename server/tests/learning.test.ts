@@ -1,15 +1,16 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import bcrypt from 'bcrypt';
 import {
-  AccountStatus, CourseStatus, OrganizationStatus,
+  AccountStatus, AssessmentAttemptStatus, CourseStatus, EnrollmentStatus, OrganizationStatus,
   PrismaClient, Role, StudentStatus,
 } from '@prisma/client';
 import { app } from '../src/app.js';
+import { env } from '../src/config/env.js';
 
 const prisma = new PrismaClient();
 const password = 'LearningTest!1234';
-const prefix = `learning-${Date.now()}`;
+const prefix = `l-${Date.now()}`;
 const organizationIds: string[] = [];
 
 async function makeOrganization(suffix: string) {
@@ -68,7 +69,9 @@ let instructor: Awaited<ReturnType<typeof makeUser>>;
 let unassignedInstructor: Awaited<ReturnType<typeof makeUser>>;
 let student: Awaited<ReturnType<typeof makeUser>>;
 let otherStudent: Awaited<ReturnType<typeof makeUser>>;
+let secondTutorStudent: Awaited<ReturnType<typeof makeUser>>;
 let tutor: Awaited<ReturnType<typeof makeUser>>;
+let secondInstructor: Awaited<ReturnType<typeof makeUser>>;
 let courseId: string;
 let otherCourseId: string;
 let adminCookie = '';
@@ -76,6 +79,7 @@ let instructorCookie = '';
 let studentCookie = '';
 let otherStudentCookie = '';
 let tutorCookie = '';
+let secondInstructorCookie = '';
 
 beforeAll(async () => {
   await prisma.$connect();
@@ -83,8 +87,10 @@ beforeAll(async () => {
   otherOrganization = await makeOrganization('other');
   admin = await makeUser(organization.id, Role.ORG_ADMIN, 'admin');
   instructor = await makeUser(organization.id, Role.TUTOR, 'assigned-tutor');
+  secondInstructor = await makeUser(organization.id, Role.TUTOR, 'second-assigned-tutor');
   unassignedInstructor = await makeUser(organization.id, Role.TUTOR, 'unassigned-tutor');
   student = await makeUser(organization.id, Role.STUDENT, 'student');
+  secondTutorStudent = await makeUser(organization.id, Role.STUDENT, 'second-tutor-student');
   otherStudent = await makeUser(otherOrganization.id, Role.STUDENT, 'other-student');
   tutor = await makeUser(organization.id, Role.TUTOR, 'practice-tutor');
   const course = await prisma.course.create({
@@ -105,11 +111,16 @@ beforeAll(async () => {
     },
   });
   otherCourseId = otherCourse.id;
-  await prisma.courseInstructor.create({ data: { organizationId: organization.id, courseId, instructorId: instructor.id } });
-  await prisma.enrollment.create({ data: { organizationId: organization.id, courseId, studentId: student.id } });
-  await prisma.enrollment.create({ data: { organizationId: otherOrganization.id, courseId: otherCourseId, studentId: otherStudent.id } });
+  await prisma.courseInstructor.createMany({ data: [
+    { organizationId: organization.id, courseId, instructorId: instructor.id },
+    { organizationId: organization.id, courseId, instructorId: secondInstructor.id },
+  ] });
+  await prisma.enrollment.create({ data: { organizationId: organization.id, courseId, studentId: student.id, selectedTutorId: instructor.id, status: EnrollmentStatus.ACTIVE } });
+  await prisma.enrollment.create({ data: { organizationId: organization.id, courseId, studentId: secondTutorStudent.id, selectedTutorId: secondInstructor.id, status: EnrollmentStatus.ACTIVE } });
+  await prisma.enrollment.create({ data: { organizationId: otherOrganization.id, courseId: otherCourseId, studentId: otherStudent.id, status: EnrollmentStatus.ACTIVE } });
   adminCookie = await login('org-admin', organization.code!, admin);
   instructorCookie = await login('tutors', organization.code!, instructor);
+  secondInstructorCookie = await login('tutors', organization.code!, secondInstructor);
   studentCookie = await login('students', organization.code!, student);
   otherStudentCookie = await login('students', otherOrganization.code!, otherStudent);
   tutorCookie = await login('tutor', organization.code!, tutor);
@@ -117,6 +128,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (organizationIds.length) {
+    await prisma.expertSession.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.course.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.auditLog.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.user.deleteMany({ where: { organizationId: { in: organizationIds } } });
@@ -145,6 +157,114 @@ async function createAssessment(cookieValue: string, options: { mode?: 'IMMEDIAT
 }
 
 describe('SP1 practice and assessment workflows', () => {
+  it('limits Tutor visibility to accepted students and the Tutor’s own profile', async () => {
+    const listedStudents = await request(app).get('/api/students').set('Cookie', instructorCookie);
+    expect(listedStudents.status).toBe(200);
+    expect(listedStudents.body.data.students.map((item: { studentId: string }) => item.studentId)).toEqual([`${prefix}-student`]);
+    expect((await request(app).get(`/api/students/${prefix}-second-tutor-student`).set('Cookie', instructorCookie)).status).toBe(404);
+    expect((await request(app).get(`/api/students/${prefix}-second-tutor-student`).set('Cookie', secondInstructorCookie)).status).toBe(200);
+
+    const enrollments = await request(app).get(`/api/courses/${courseId}/enrollments`).set('Cookie', instructorCookie);
+    expect(enrollments.status).toBe(200);
+    expect(enrollments.body.data.enrollments.map((item: { student: { name: string } }) => item.student.name)).toEqual([student.name]);
+    const course = await request(app).get(`/api/courses/${courseId}`).set('Cookie', instructorCookie);
+    expect(course.body.data.course.instructors).toEqual([{ instructor: { id: instructor.id, name: instructor.name } }]);
+
+    const tutorDirectory = await request(app).get('/api/tutors?page=1&pageSize=100').set('Cookie', instructorCookie);
+    expect(tutorDirectory.status).toBe(200);
+    expect(tutorDirectory.body.data.tutors.map((item: { user: { id: string } }) => item.user.id)).toEqual([instructor.id]);
+    expect((await request(app).get(`/api/tutors/${secondInstructor.id}`).set('Cookie', instructorCookie)).status).toBe(403);
+    expect((await request(app).get(`/api/tutors/${secondInstructor.id}/photo`).set('Cookie', instructorCookie)).status).toBe(403);
+
+    const assessment = await createAssessment(instructorCookie);
+    await request(app).post(`/api/learning/teacher/assessments/${assessment.id}/publish`).set('Cookie', instructorCookie).expect(200);
+    const submittedAt = new Date();
+    await prisma.assessmentAttempt.createMany({
+      data: [student, secondTutorStudent].map((candidate) => ({
+        organizationId: organization.id,
+        assessmentId: assessment.id,
+        studentId: candidate.id,
+        status: AssessmentAttemptStatus.SUBMITTED,
+        snapshot: [],
+        expiresAt: new Date(submittedAt.getTime() + 30 * 60_000),
+        submittedAt,
+        score: 1,
+        percentage: 50,
+      })),
+    });
+    const results = await request(app).get(`/api/learning/teacher/assessments/${assessment.id}/results`).set('Cookie', instructorCookie);
+    expect(results.status).toBe(200);
+    expect(results.body.data.attempts.map((item: { studentId: string }) => item.studentId)).toEqual([student.id]);
+    const reports = await request(app).get(`/api/learning/reports?courseId=${courseId}&pageSize=100`).set('Cookie', instructorCookie);
+    expect(reports.status).toBe(200);
+    expect(reports.body.data.rows.map((item: { studentId: string }) => item.studentId)).toEqual([`${prefix}-student`]);
+  });
+
+  it('limits Tutor session attendance to students who selected that Tutor', async () => {
+    const scheduled = await request(app).post('/api/portal/manage/sessions').set('Cookie', instructorCookie).send({
+      courseId,
+      title: 'Tutor scope test session',
+      description: '',
+      startsAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      durationMinutes: 45,
+      freePreview: false,
+    });
+    expect(scheduled.status).toBe(201);
+    const sessionId = scheduled.body.data.session.id as string;
+    const attendees = await request(app).get(`/api/portal/manage/sessions/${sessionId}/attendees`).set('Cookie', instructorCookie);
+    expect(attendees.status).toBe(200);
+    expect(attendees.body.data.attendees.map((item: { student: { id: string } }) => item.student.id)).toEqual([student.id]);
+    expect((await request(app).put(`/api/portal/manage/sessions/${sessionId}/attendance/${secondTutorStudent.id}`)
+      .set('Cookie', instructorCookie).send({ status: 'PRESENT' })).status).toBe(404);
+  });
+
+  it('uses the configured Azure OpenAI endpoint and validates generated questions before returning them', async () => {
+    const prior = {
+      endpoint: env.AZURE_OPENAI_ENDPOINT,
+      key: env.AZURE_OPENAI_API_KEY,
+      deployment: env.AZURE_OPENAI_DEPLOYMENT,
+    };
+    const generated = {
+      questions: [{
+        prompt: 'What is one half of 8?',
+        options: ['2', '4', '6', '8'],
+        correctAnswer: '4',
+        explanation: '8 divided by 2 is 4.',
+        topic: 'Fractions',
+        difficulty: 'INTERMEDIATE',
+        marks: 2,
+      }],
+    };
+    const mockFetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(url)).toContain('/openai/deployments/test-deployment/chat/completions');
+      expect(new Headers(init?.headers).get('api-key')).toBe('test-only-key');
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(generated) } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    try {
+      env.AZURE_OPENAI_ENDPOINT = 'https://azure-openai.example.test';
+      env.AZURE_OPENAI_API_KEY = 'test-only-key';
+      env.AZURE_OPENAI_DEPLOYMENT = 'test-deployment';
+      vi.stubGlobal('fetch', mockFetch);
+      const response = await request(app).post('/api/learning/teacher/assessments/generate-questions')
+        .set('Cookie', instructorCookie)
+        .send({ courseId, topic: 'Fractions', count: 1, difficulty: 'INTERMEDIATE', marksPerQuestion: 2 });
+      expect(response.status).toBe(200);
+      expect(response.body.data.questions).toEqual(generated.questions);
+      expect(mockFetch).toHaveBeenCalledOnce();
+      expect(String(mockFetch.mock.calls[0]?.[0])).toContain('/openai/deployments/test-deployment/chat/completions');
+      expect((mockFetch.mock.calls[0]?.[1]?.headers as Record<string, string>)['api-key']).toBe('test-only-key');
+      expect(await prisma.auditLog.count({ where: { organizationId: organization.id, action: 'ASSESSMENT_QUESTIONS_AI_GENERATED' } })).toBe(1);
+    } finally {
+      env.AZURE_OPENAI_ENDPOINT = prior.endpoint;
+      env.AZURE_OPENAI_API_KEY = prior.key;
+      env.AZURE_OPENAI_DEPLOYMENT = prior.deployment;
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('limits teacher question management by role and assigned course', async () => {
     const created = await request(app).post('/api/learning/teacher/questions').set('Cookie', instructorCookie).send(question());
     expect(created.status).toBe(201);

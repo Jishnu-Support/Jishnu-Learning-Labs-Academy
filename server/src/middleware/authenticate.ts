@@ -58,7 +58,7 @@ export function requireRoles(...roles: Role[]): RequestHandler {
   };
 }
 
-export const requireInstructor = requireRoles(Role.INSTRUCTOR);
+export const requireTutor = requireRoles(Role.TUTOR);
 
 export const requireOrganization: RequestHandler = (req, _res, next) => {
   if (!req.auth?.organizationId) return next(new HttpError(403, 'An organization-scoped account is required'));

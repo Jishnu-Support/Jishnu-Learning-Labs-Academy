@@ -1,7 +1,10 @@
 import 'dotenv/config';
 import { pathToFileURL } from 'node:url';
 import bcrypt from 'bcrypt';
-import { AccountStatus, AssessmentStatus, EnrollmentStatus, OrganizationStatus, Prisma, PrismaClient, QuestionDifficulty, QuestionType, Role, StudentStatus, type User } from '@prisma/client';
+import { AccountStatus, AssessmentStatus, EnrollmentStatus, LibraryKind, OrganizationStatus, PaymentProviderKind, PaymentStatus, Prisma, PrismaClient, QuestionDifficulty, QuestionType, Role, StudentStatus, SubscriptionPeriod, SubscriptionStatus, type User } from '@prisma/client';
+import { localDiskStorage } from '../src/modules/notes/storage.service.js';
+import { encryptStudentIdentifier } from '../src/modules/students/student-identifiers.crypto.js';
+import { createSamplePdf } from './library-sample.js';
 
 const prisma = new PrismaClient();
 const developmentPassword = process.env.SEED_PASSWORD ?? 'JishnuDevOnly!2026';
@@ -73,6 +76,7 @@ async function seedUser(input: {
   passwordHash: string;
   phone?: string;
   legacyEmail?: string;
+  syncPassword?: boolean;
 }) {
   const existingByEmail = input.organizationId
     ? await prisma.user.findUnique({
@@ -88,10 +92,14 @@ async function seedUser(input: {
     if (existing.role !== input.role) {
       throw new Error(`Seed account ${input.email} already exists with role ${existing.role}, expected ${input.role}`);
     }
-    if (existing.email === input.email && existing.name === input.name) return existing;
+    if (existing.email === input.email && existing.name === input.name && !input.syncPassword) return existing;
     return prisma.user.update({
       where: { id: existing.id },
-      data: { email: input.email, name: input.name },
+      data: {
+        email: input.email,
+        name: input.name,
+        ...(input.syncPassword ? { passwordHash: input.passwordHash } : {}),
+      },
     });
   }
 
@@ -112,22 +120,6 @@ async function seedUser(input: {
     },
   });
   await ensureSeedAudit(prisma, input.organizationId, 'ACCOUNT_CREATED', 'User', user.id, { role: input.role });
-  return user;
-}
-
-async function seedInstructor(organizationId: string, passwordHash: string, email: string, name: string, status: AccountStatus) {
-  const user = await seedUser({ organizationId, email, name, role: Role.INSTRUCTOR, status, passwordHash });
-  const approval = await prisma.accountApproval.findUnique({ where: { userId: user.id } });
-  if (!approval) {
-    await prisma.accountApproval.create({
-      data: {
-      organizationId,
-      userId: user.id,
-      status: studentStatus(user.status),
-      approvedAt: user.status === AccountStatus.APPROVED ? user.approvedAt : null,
-      },
-    });
-  }
   return user;
 }
 
@@ -170,7 +162,10 @@ async function seedTutor(
 async function seedStudent(
   organizationId: string,
   passwordHash: string,
-  input: { studentId: string; email: string; name: string; status: AccountStatus },
+  input: {
+    studentId: string; email: string; name: string; status: AccountStatus;
+    demoProfile?: { aadhaar: string; apaarId: string; educationYear: string; course: string };
+  },
 ) {
   const user = await seedUser({
     organizationId,
@@ -182,6 +177,21 @@ async function seedStudent(
     phone: '+15555550101',
   });
   const profile = await prisma.studentProfile.findUnique({ where: { userId: user.id } });
+  const demoProfileData = input.demoProfile ? {
+    fatherName: 'Demo Father',
+    motherName: 'Demo Mother',
+    currentEducation: 'Demo learner profile',
+    educationLevel: 'UG',
+    educationYear: input.demoProfile.educationYear,
+    currentCourse: input.demoProfile.course,
+    institutionName: 'Demo Learning Institute',
+    aadhaarEncrypted: encryptStudentIdentifier(input.demoProfile.aadhaar),
+    aadhaarLast4: input.demoProfile.aadhaar.slice(-4),
+    apaarIdEncrypted: encryptStudentIdentifier(input.demoProfile.apaarId),
+    apaarIdLast4: input.demoProfile.apaarId.slice(-4),
+    piiConsentAt: new Date('2026-01-01T00:00:00.000Z'),
+    isDemoIdentityData: true,
+  } : {};
   if (!profile) {
     const conflictingProfile = await prisma.studentProfile.findUnique({
       where: { organizationId_studentId: { organizationId, studentId: input.studentId } },
@@ -194,10 +204,31 @@ async function seedStudent(
         organizationId,
         userId: user.id,
         studentId: input.studentId,
+        ...demoProfileData,
         status: studentStatus(user.status),
         rejectionReason: user.status === AccountStatus.REJECTED ? 'Please contact your Tutor.' : null,
         approvedAt: user.status === AccountStatus.APPROVED ? user.approvedAt : null,
       },
+    });
+  } else if (input.demoProfile && !profile.isDemoIdentityData
+    && !profile.fatherName && !profile.motherName && !profile.currentEducation && !profile.educationLevel
+    && !profile.educationYear && !profile.currentCourse && !profile.institutionName
+    && !profile.aadhaarEncrypted && !profile.apaarIdEncrypted) {
+    await prisma.studentProfile.updateMany({
+      where: {
+        id: profile.id,
+        fatherName: null,
+        motherName: null,
+        currentEducation: null,
+        educationLevel: null,
+        educationYear: null,
+        currentCourse: null,
+        institutionName: null,
+        aadhaarEncrypted: null,
+        apaarIdEncrypted: null,
+        isDemoIdentityData: false,
+      },
+      data: demoProfileData,
     });
   }
   return user;
@@ -259,9 +290,11 @@ async function seedTenant(
   passwordHash: string,
   input: {
     adminEmail: string;
-    instructors: Array<{ email: string; name: string; status: AccountStatus }>;
     tutors: Array<{ email: string; tutorId: string; name: string; status: AccountStatus; legacyEmail?: string }>;
-    students: Array<{ studentId: string; email: string; name: string; status: AccountStatus }>;
+    students: Array<{
+      studentId: string; email: string; name: string; status: AccountStatus;
+      demoProfile?: { aadhaar: string; apaarId: string; educationYear: string; course: string };
+    }>;
   },
 ) {
   const admin = await seedUser({
@@ -273,13 +306,9 @@ async function seedTenant(
     passwordHash,
     phone: '+15555550100',
   });
-  const instructors = [];
-  for (const instructor of input.instructors) {
-    instructors.push(await seedInstructor(organization.id, passwordHash, instructor.email, instructor.name, instructor.status));
-  }
-  const tutorUsers: User[] = [];
+  const tutors: User[] = [];
   for (const tutor of input.tutors) {
-    tutorUsers.push(await seedTutor(organization.id, passwordHash, tutor.email, tutor.tutorId, tutor.name, tutor.status, tutor.legacyEmail));
+    tutors.push(await seedTutor(organization.id, passwordHash, tutor.email, tutor.tutorId, tutor.name, tutor.status, tutor.legacyEmail));
   }
   const students = [];
   for (const student of input.students) students.push(await seedStudent(organization.id, passwordHash, student));
@@ -289,7 +318,7 @@ async function seedTenant(
     create: { organizationId: organization.id, name: 'Foundations' },
   });
   await prisma.batchInstructor.createMany({
-    data: instructors.filter((user) => user.status === AccountStatus.APPROVED).map((user) => ({
+    data: tutors.filter((user) => user.status === AccountStatus.APPROVED).map((user) => ({
       organizationId: organization.id,
       batchId: batch.id,
       instructorId: user.id,
@@ -304,16 +333,17 @@ async function seedTenant(
     })),
     skipDuplicates: true,
   });
-  const host = instructors.find((instructor) => instructor.status === AccountStatus.APPROVED);
-  const sampleTutor = tutorUsers.find((tutor) => tutor.status === AccountStatus.APPROVED);
-  if (!host || !sampleTutor) throw new Error(`Seed data for ${organization.name} needs approved instructor and tutor accounts`);
+  const approvedTutors = tutors.filter((tutor) => tutor.status === AccountStatus.APPROVED);
+  const host = approvedTutors[0];
+  const sampleTutor = approvedTutors[1] ?? host;
+  if (!host || !sampleTutor) throw new Error(`Seed data for ${organization.name} needs an approved Tutor account`);
   await seedSampleContent(organization.id, host.id, organization.code, organization.name);
   await seedAuthoredNotes(organization.id, organization.name, [
     { user: admin, label: 'Org Admin' },
-    { user: host, label: 'Instructor' },
+    { user: host, label: 'Tutor' },
     { user: sampleTutor, label: 'Tutor' },
   ]);
-  return { admin, instructors, students };
+  return { admin, tutors, students };
 }
 
 const courseFixtures = [
@@ -518,19 +548,19 @@ export async function seedCourses(
   database: PrismaClient,
   organization: { id: string; name: string; code?: string | null },
   admin: User,
-  instructors: User[],
+  tutors: User[],
   students: User[],
 ) {
-  const activeInstructors = instructors.filter((user) => user.status === AccountStatus.APPROVED);
+  const activeTutors = tutors.filter((user) => user.status === AccountStatus.APPROVED);
   const activeStudents = students.filter((user) => user.status === AccountStatus.APPROVED);
-  if (!activeInstructors.length) throw new Error(`No approved instructors found for ${organization.name}`);
+  if (!activeTutors.length) throw new Error(`No approved Tutors found for ${organization.name}`);
   const today = new Date();
   const startDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 14));
   const endDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 90));
   const seededCourseCodes: string[] = [];
 
   for (const [index, fixture] of courseFixtures.entries()) {
-    const instructor = activeInstructors[index % activeInstructors.length]!;
+    const tutor = activeTutors[index % activeTutors.length]!;
     let course = await database.course.findUnique({
       where: { organizationId_code: { organizationId: organization.id, code: fixture.code } },
     });
@@ -559,7 +589,7 @@ export async function seedCourses(
     }
 
     await database.courseInstructor.createMany({
-      data: [{ organizationId: organization.id, courseId: course.id, instructorId: instructor.id }],
+      data: [{ organizationId: organization.id, courseId: course.id, instructorId: tutor.id }],
       skipDuplicates: true,
     });
 
@@ -600,7 +630,7 @@ export async function seedCourses(
     });
     const noteData = {
       organizationId: organization.id,
-      authorId: instructor.id,
+      authorId: tutor.id,
       title: linkedNoteTitle,
       subject: fixture.category,
       description: `Published learning notes for ${fixture.title} (${fixture.code}).`,
@@ -632,7 +662,7 @@ export async function seedCourses(
           id: existingAssessment ? supplementalId : assessmentId,
           organizationId: organization.id,
           courseId: course.id,
-          createdById: instructor.id,
+          createdById: tutor.id,
           title: existingAssessment ? `${fixture.title} Published Sample Assessment` : assessmentTitle,
           instructions: `Sample assessment for ${fixture.title}.`,
           totalMarks: examples.length,
@@ -682,7 +712,7 @@ export async function seedCourses(
             organizationId: organization.id,
             courseId: course.id,
             topicId: topic.id,
-            createdById: instructor.id,
+            createdById: tutor.id,
             type: example.type,
             prompt: example.prompt,
             options: questionOptions,
@@ -711,10 +741,11 @@ export async function seedCourses(
   const enrollments = activeStudents.map((student, studentIndex) => ({
     student,
     courseIndexes: organization.code === 'northstar-academy'
-      ? studentIndex === 0 ? [7] : []
+      ? studentIndex === 0 ? [7, 8] : []
       : studentIndex === 0 ? [0, 1, 2, 3, 9, 10, 11]
         : studentIndex === 1 ? [0, 4, 6, 8]
-          : studentIndex === 2 ? [7] : [],
+        : studentIndex === 2 ? [7]
+          : [studentIndex % 6, (studentIndex + 1) % 6],
   }));
   for (const { student, courseIndexes } of enrollments) {
     for (const courseIndex of courseIndexes) {
@@ -727,9 +758,369 @@ export async function seedCourses(
         update: {},
         create: { organizationId: organization.id, courseId: course.id, studentId: student.id, status: EnrollmentStatus.ACTIVE },
       });
+      const currentEnrollment = await database.enrollment.findUniqueOrThrow({
+        where: { organizationId_courseId_studentId: { organizationId: organization.id, courseId: course.id, studentId: student.id } },
+        select: { id: true, selectedTutorId: true, pendingTutorId: true },
+      });
+      if (!currentEnrollment.selectedTutorId && !currentEnrollment.pendingTutorId) {
+        const activeSubscription = await database.subscription.findFirst({
+          where: {
+            organizationId: organization.id,
+            studentId: student.id,
+            courseId: course.id,
+            status: SubscriptionStatus.ACTIVE,
+            endsAt: { gt: new Date() },
+          },
+          select: { id: true },
+        });
+        if (!activeSubscription) {
+          const assignment = await database.courseInstructor.findFirst({
+            where: { organizationId: organization.id, courseId: course.id, instructorId: { in: activeTutors.map(({ id }) => id) } },
+            orderBy: { assignedAt: 'asc' },
+            select: { instructorId: true },
+          });
+          if (assignment) {
+            await database.enrollment.updateMany({
+              where: {
+                id: currentEnrollment.id,
+                organizationId: organization.id,
+                selectedTutorId: null,
+                pendingTutorId: null,
+              },
+              data: { selectedTutorId: assignment.instructorId },
+            });
+          }
+        }
+      }
+    }
+  }
+  const demoComments = [
+    'Clear explanations and helpful course guidance.',
+    'Supportive Tutor with well-organized lessons.',
+    'The examples made the topics easier to understand.',
+    'Good pacing and useful feedback.',
+  ];
+  for (const [studentIndex, student] of activeStudents.entries()) {
+    const courseIndexes = enrollments.find((entry) => entry.student.id === student.id)?.courseIndexes ?? [];
+    for (const courseIndex of courseIndexes.slice(0, 2)) {
+      const course = await database.course.findUniqueOrThrow({
+        where: { organizationId_code: { organizationId: organization.id, code: courseFixtures[courseIndex]!.code } },
+        select: { id: true },
+      });
+      const enrollment = await database.enrollment.findFirst({
+        where: { organizationId: organization.id, studentId: student.id, courseId: course.id, status: EnrollmentStatus.ACTIVE },
+        select: { selectedTutorId: true },
+      });
+      if (!enrollment?.selectedTutorId) continue;
+      const existingReview = await database.tutorReview.findUnique({
+        where: {
+          organizationId_studentId_tutorId_courseId: {
+            organizationId: organization.id,
+            studentId: student.id,
+            tutorId: enrollment.selectedTutorId,
+            courseId: course.id,
+          },
+        },
+        select: { id: true },
+      });
+      if (!existingReview) {
+        await database.tutorReview.create({
+          data: {
+            organizationId: organization.id,
+            studentId: student.id,
+            tutorId: enrollment.selectedTutorId,
+            courseId: course.id,
+            rating: 2 + ((studentIndex + courseIndex) % 4),
+            review: demoComments[(studentIndex + courseIndex) % demoComments.length],
+          },
+        });
+      }
     }
   }
   console.log(`${organization.code ?? organization.id}: seeded course codes ${seededCourseCodes.join(', ')}`);
+}
+
+async function seedDemoPayments(database: PrismaClient, organization: { id: string; code: string }, students: User[]) {
+  const profiles = await database.studentProfile.findMany({
+    where: {
+      organizationId: organization.id,
+      userId: { in: students.filter((student) => student.status === AccountStatus.APPROVED).map((student) => student.id) },
+    },
+    select: { userId: true, studentId: true },
+  });
+  const studentsById = new Map(profiles.map((profile) => [profile.studentId, profile.userId]));
+  const courses = await database.course.findMany({
+    where: { organizationId: organization.id },
+    orderBy: { code: 'asc' },
+    select: { id: true, code: true, title: true },
+  });
+  if (!courses.length) throw new Error(`No courses available to seed payments for ${organization.code}`);
+  const approvedTutors = await database.user.findMany({
+    where: { organizationId: organization.id, role: Role.TUTOR, status: AccountStatus.APPROVED },
+    select: { id: true },
+  });
+  if (!approvedTutors.length) throw new Error(`No approved Tutors are available to seed payments for ${organization.code}`);
+  const plans = new Map<string, { id: string; tutorId: string; courseId: string; period: SubscriptionPeriod; price: Prisma.Decimal }>();
+  const courseTutorIds = new Map<string, string[]>();
+  const plansByTutor = new Map<string, { id: string; tutorId: string; courseId: string; period: SubscriptionPeriod; price: Prisma.Decimal }[]>();
+  const periodValues = [SubscriptionPeriod.MONTHLY, SubscriptionPeriod.QUARTERLY, SubscriptionPeriod.YEARLY];
+
+  for (const [courseIndex, course] of courses.entries()) {
+    const assignments = await database.courseInstructor.findMany({
+      where: { organizationId: organization.id, courseId: course.id },
+      select: { instructorId: true },
+      orderBy: { assignedAt: 'asc' },
+    });
+    const assignedTutorIds = [...new Set(assignments
+      .map((assignment) => assignment.instructorId)
+      .filter((tutorId) => approvedTutors.some((tutor) => tutor.id === tutorId)))];
+    const tutorIds = assignedTutorIds.length
+      ? assignedTutorIds
+      : [approvedTutors[courseIndex % approvedTutors.length]!.id];
+    courseTutorIds.set(course.id, tutorIds);
+
+    for (const tutorId of tutorIds) {
+      for (const [periodIndex, period] of periodValues.entries()) {
+        const price = new Prisma.Decimal([600, 1650, 6000][periodIndex]! + courseIndex * 50);
+        const plan = await database.tutorCoursePlan.upsert({
+          where: { organizationId_tutorId_courseId_period: { organizationId: organization.id, tutorId, courseId: course.id, period } },
+          update: {},
+          create: { organizationId: organization.id, tutorId, courseId: course.id, period, price, isActive: true },
+        });
+        const history = await database.tutorCoursePlanHistory.findFirst({
+          where: { organizationId: organization.id, planId: plan.id },
+          select: { id: true },
+        });
+        if (!history) {
+          await database.tutorCoursePlanHistory.create({
+            data: {
+              organizationId: organization.id,
+              planId: plan.id,
+              changedById: tutorId,
+              previousPrice: null,
+              newPrice: plan.price,
+              reason: 'Development seed initial fee plan',
+            },
+          });
+          await ensureSeedAudit(database, organization.id, 'TUTOR_PAYMENT_PLAN_PRICE_SET', 'TutorCoursePlan', plan.id, {
+            tutorId, courseId: course.id, period, price: plan.price.toString(),
+          });
+        }
+        plans.set(`${course.id}:${tutorId}:${period}`, { id: plan.id, tutorId, courseId: course.id, period, price: plan.price });
+        const tutorPlans = plansByTutor.get(tutorId) ?? [];
+        tutorPlans.push({ id: plan.id, tutorId, courseId: course.id, period, price: plan.price });
+        plansByTutor.set(tutorId, tutorPlans);
+      }
+    }
+  }
+
+  const activeStudents = [...studentsById.values()];
+  if (!activeStudents.length) throw new Error(`No approved Students are available to seed payments for ${organization.code}`);
+  for (const studentId of activeStudents) {
+    for (const course of courses) {
+      await database.enrollment.upsert({
+        where: { organizationId_courseId_studentId: { organizationId: organization.id, courseId: course.id, studentId } },
+        update: { status: EnrollmentStatus.ACTIVE },
+        create: { organizationId: organization.id, courseId: course.id, studentId, status: EnrollmentStatus.ACTIVE },
+      });
+    }
+  }
+
+  const now = new Date();
+  const scenarios = organization.code === 'northstar-academy'
+    ? [
+      { studentCode: 'STU-1001', courseIndex: 0, period: SubscriptionPeriod.MONTHLY, status: SubscriptionStatus.ACTIVE, days: 30, periodsPaid: 1 },
+      { studentCode: 'STU-1001', courseIndex: 1, period: SubscriptionPeriod.QUARTERLY, status: SubscriptionStatus.INACTIVE, days: 45, periodsPaid: 2 },
+      { studentCode: 'STU-1001', courseIndex: 2, period: SubscriptionPeriod.YEARLY, status: SubscriptionStatus.EXPIRED, days: -5, periodsPaid: 1 },
+    ] as const
+    : [
+      { studentCode: 'STU-1003', courseIndex: 0, period: SubscriptionPeriod.MONTHLY, status: SubscriptionStatus.ACTIVE, days: 30, periodsPaid: 1 },
+      { studentCode: 'STU-1004', courseIndex: 0, period: SubscriptionPeriod.MONTHLY, status: SubscriptionStatus.ACTIVE, days: 3, periodsPaid: 1 },
+      { studentCode: 'STU-1007', courseIndex: 1, period: SubscriptionPeriod.MONTHLY, status: SubscriptionStatus.EXPIRED, days: -5, periodsPaid: 1 },
+      { studentCode: 'STU-1008', courseIndex: 2, period: SubscriptionPeriod.QUARTERLY, status: SubscriptionStatus.ACTIVE, days: 60, periodsPaid: 3 },
+    ] as const;
+  for (const scenario of scenarios) {
+    const studentId = studentsById.get(scenario.studentCode);
+    const course = courses[scenario.courseIndex];
+    if (!studentId || !course) continue;
+    const tutorId = courseTutorIds.get(course.id)?.[0];
+    const plan = tutorId ? plans.get(`${course.id}:${tutorId}:${scenario.period}`) : undefined;
+    if (!plan) continue;
+    const endsAt = new Date(now);
+    endsAt.setDate(endsAt.getDate() + scenario.days);
+    const startsAt = new Date(endsAt);
+    startsAt.setMonth(startsAt.getMonth() - (scenario.period === SubscriptionPeriod.MONTHLY ? 1 : scenario.period === SubscriptionPeriod.QUARTERLY ? 3 : 12));
+    await database.subscription.upsert({
+      where: {
+        organizationId_studentId_tutorId_courseId: {
+          organizationId: organization.id, studentId, tutorId: plan.tutorId, courseId: course.id,
+        },
+      },
+      update: {
+        planId: plan.id, status: scenario.status, startsAt, endsAt, periodsPaid: scenario.periodsPaid,
+        deactivatedBy: null, deactivationReason: scenario.status === SubscriptionStatus.INACTIVE ? 'Development seed inactive subscription' : null,
+      },
+      create: {
+        organizationId: organization.id, studentId, tutorId: plan.tutorId, courseId: course.id,
+        planId: plan.id, status: scenario.status, startsAt, endsAt, periodsPaid: scenario.periodsPaid,
+        deactivationReason: scenario.status === SubscriptionStatus.INACTIVE ? 'Development seed inactive subscription' : null,
+      },
+    });
+  }
+
+  const statuses = [PaymentStatus.PAID, PaymentStatus.PAID, PaymentStatus.FAILED, PaymentStatus.REFUNDED] as const;
+  const paymentTutors = [...plansByTutor.entries()].sort(([left], [right]) => left.localeCompare(right));
+  const paymentCount = Math.max(24, paymentTutors.length * statuses.length);
+  for (let index = 0; index < paymentCount; index += 1) {
+    const [, tutorPlans] = paymentTutors[Math.floor(index / statuses.length) % paymentTutors.length]!;
+    const plan = tutorPlans[(index % statuses.length) % tutorPlans.length]!;
+    const course = courses.find((candidate) => candidate.id === plan.courseId);
+    const studentId = activeStudents[index % activeStudents.length];
+    if (!course || !studentId) continue;
+    const periodsCount = index % 3 + 1;
+    const status = statuses[index % statuses.length]!;
+    const periodStart = new Date(now);
+    periodStart.setDate(periodStart.getDate() - (index + 5));
+    const periodEnd = new Date(periodStart);
+    periodEnd.setMonth(periodEnd.getMonth() + (plan.period === SubscriptionPeriod.MONTHLY ? 1 : plan.period === SubscriptionPeriod.QUARTERLY ? 3 : 12) * periodsCount);
+    const receiptNumber = `JLL-SEED-${organization.code}-${String(index + 1).padStart(3, '0')}`;
+    const subscription = await database.subscription.findUnique({
+      where: {
+        organizationId_studentId_tutorId_courseId: {
+          organizationId: organization.id, studentId, tutorId: plan.tutorId, courseId: course.id,
+        },
+      },
+      select: { id: true },
+    });
+    const payment = await database.payment.upsert({
+      where: { organizationId_receiptNumber: { organizationId: organization.id, receiptNumber } },
+      update: {
+        studentId, tutorId: plan.tutorId, courseId: course.id, planId: plan.id,
+        subscriptionId: subscription?.id ?? null, amount: plan.price.mul(periodsCount),
+        currency: 'INR', status, periodStart, periodEnd, periodsCount,
+        provider: PaymentProviderKind.MOCK,
+        providerOrderId: `seed_order_${organization.code}_${index + 1}`,
+        providerPaymentId: status === PaymentStatus.FAILED ? null : `seed_payment_${organization.code}_${index + 1}`,
+      },
+      create: {
+        organizationId: organization.id, studentId, tutorId: plan.tutorId, courseId: course.id, planId: plan.id,
+        subscriptionId: subscription?.id ?? null,
+        amount: plan.price.mul(periodsCount), currency: 'INR', provider: PaymentProviderKind.MOCK,
+        providerOrderId: `seed_order_${organization.code}_${index + 1}`,
+        providerPaymentId: status === PaymentStatus.FAILED ? null : `seed_payment_${organization.code}_${index + 1}`,
+        status, periodStart, periodEnd, periodsCount, receiptNumber,
+      },
+    });
+    await ensureSeedAudit(database, organization.id, `PAYMENT_${status}`, 'Payment', payment.id, {
+      studentId,
+      tutorId: plan.tutorId,
+      courseId: course.id,
+      amount: plan.price.mul(periodsCount).toString(),
+      source: 'development-seed',
+    });
+  }
+  for (const [tutorId] of paymentTutors) {
+    const paidPayments = await database.payment.count({
+      where: {
+        organizationId: organization.id,
+        tutorId,
+        status: PaymentStatus.PAID,
+        receiptNumber: { startsWith: `JLL-SEED-${organization.code}-` },
+      },
+    });
+    if (paidPayments === 0) throw new Error(`No paid development payments were seeded for Tutor ${tutorId}`);
+  }
+}
+
+async function seedLibrarySamples(
+  database: PrismaClient,
+  organization: { id: string; name: string },
+  tutors: User[],
+) {
+  const creator = tutors.find((tutor) => tutor.status === AccountStatus.APPROVED);
+  if (!creator) throw new Error(`No approved Tutor is available to seed Library items for ${organization.name}`);
+  const categories = [...new Set(courseFixtures.map(({ category }) => category))].sort();
+  for (const category of categories) {
+    for (const sampleNumber of [1, 2, 3]) {
+      const title = `${category} Sample Reader ${sampleNumber}`;
+      const existing = await database.libraryItem.findFirst({
+        where: { organizationId: organization.id, category, title },
+        select: { id: true, storageKey: true },
+      });
+      if (existing?.storageKey) continue;
+
+      const pages = [
+        [`${category} foundations`, `A short introduction to ${category.toLowerCase()} and the ideas behind this sample reader.`],
+        [`Practice and reflection`, `Review the key ideas, write a short summary, and connect them to a practical example in ${category.toLowerCase()}.`],
+        [`Knowledge check`, 'Explain one new concept in your own words and list a question you would like to explore next.'],
+      ];
+      const storageKey = await localDiskStorage.save(createSamplePdf(title, pages), '.pdf');
+      try {
+        const item = existing
+          ? await database.libraryItem.update({
+            where: { id: existing.id },
+            data: { storageKey, originalName: `${title}.pdf`, mimeType: 'application/pdf', published: true },
+          })
+          : await database.libraryItem.create({
+            data: {
+              organizationId: organization.id,
+              createdById: creator.id,
+              kind: sampleNumber === 3 ? LibraryKind.DOCUMENT : LibraryKind.BOOK,
+              category,
+              title,
+              description: `A three-page sample PDF for ${category.toLowerCase()}.`,
+              storageKey,
+              originalName: `${title}.pdf`,
+              mimeType: 'application/pdf',
+              published: true,
+            },
+          });
+        await ensureSeedAudit(database, organization.id, 'LIBRARY_ITEM_CREATED', 'LibraryItem', item.id, { category, sample: true });
+      } catch (error) {
+        await localDiskStorage.remove(storageKey);
+        throw error;
+      }
+    }
+  }
+
+  const studyNotes = [
+    {
+      title: 'Sample Study Note: Learning Foundations',
+      description: 'A short, practical guide to organizing new ideas and checking your understanding.',
+      contentText: 'Start with one clear question.\n\nWrite down the key idea in your own words, then connect it to an example you already understand.\n\nBefore moving on, explain the idea without looking at your notes and list one question to revisit.',
+    },
+    {
+      title: 'Sample Study Note: Focused Practice',
+      description: 'A simple routine for practicing in short, focused sessions.',
+      contentText: 'Choose one skill to practice and set a small, specific goal.\n\nWork for a focused block of time, then take a short break. Review what felt easy and what needs another attempt.\n\nReturn to the same skill later and compare your understanding.',
+    },
+    {
+      title: 'Sample Study Note: Reviewing Progress',
+      description: 'Prompts to help reflect on learning and plan the next step.',
+      contentText: 'What new idea can you explain clearly?\n\nWhich part still needs practice, and what example would make it easier to understand?\n\nChoose one achievable next step and record when you will return to it.',
+    },
+  ];
+  for (const note of studyNotes) {
+    const existing = await database.libraryItem.findFirst({
+      where: { organizationId: organization.id, title: note.title, kind: LibraryKind.NOTE },
+      select: { id: true },
+    });
+    if (existing) continue;
+    const item = await database.libraryItem.create({
+      data: {
+        organizationId: organization.id,
+        createdById: creator.id,
+        kind: LibraryKind.NOTE,
+        category: 'Study Notes',
+        title: note.title,
+        description: note.description,
+        contentText: note.contentText,
+        published: true,
+        freePreview: true,
+      },
+    });
+    await ensureSeedAudit(database, organization.id, 'LIBRARY_ITEM_CREATED', 'LibraryItem', item.id, { kind: 'NOTE', sample: true });
+  }
 }
 
 async function main() {
@@ -743,6 +1134,7 @@ async function main() {
     role: Role.SUPER_ADMIN,
     status: AccountStatus.APPROVED,
     passwordHash: superAdminPasswordHash,
+    syncPassword: true,
   });
 
   const primaryOrganization = await seedOrganization({
@@ -762,6 +1154,14 @@ async function main() {
   if (!primaryOrganization.code || !secondOrganization.code) {
     throw new Error('Approved seed organizations must have organization codes');
   }
+  await prisma.organization.update({
+    where: { id: primaryOrganization.id },
+    data: { paymentsEnabled: true, currency: 'INR' },
+  });
+  await prisma.organization.update({
+    where: { id: secondOrganization.id },
+    data: { paymentsEnabled: true, currency: 'INR' },
+  });
   await prisma.$transaction(async (tx) => {
     const currentOwner = await tx.organization.findFirst({
       where: { isPlatformOwner: true },
@@ -778,12 +1178,10 @@ async function main() {
 
   const primarySeed = await seedTenant({ ...primaryOrganization, code: primaryOrganization.code }, passwordHash, {
     adminEmail: 'orgadmin@jll-demo.local',
-    instructors: [
-      { email: 'instructor1@jll-demo.local', name: 'Asha Instructor', status: AccountStatus.APPROVED },
-      { email: 'instructor2@jll-demo.local', name: 'Ravi Instructor', status: AccountStatus.APPROVED },
-      { email: 'pending-instructor@jll-demo.local', name: 'Pending Instructor', status: AccountStatus.PENDING },
-    ],
     tutors: [
+      { email: 'tutor-a@jll-demo.local', tutorId: 'TUT-0101', name: 'Asha Tutor', status: AccountStatus.APPROVED },
+      { email: 'tutor-b@jll-demo.local', tutorId: 'TUT-0102', name: 'Ravi Tutor', status: AccountStatus.APPROVED },
+      { email: 'pending-tutor-a@jll-demo.local', tutorId: 'TUT-0103', name: 'Pending Tutor', status: AccountStatus.PENDING },
       { email: 'tutor1@jll-demo.local', legacyEmail: 'staff1@jll-demo.local', tutorId: 'STF-1001', name: 'Development Tutor One', status: AccountStatus.APPROVED },
       { email: 'tutor2@jll-demo.local', legacyEmail: 'staff2@jll-demo.local', tutorId: 'STF-1002', name: 'Development Tutor Two', status: AccountStatus.APPROVED },
       { email: 'pending-tutor@jll-demo.local', legacyEmail: 'pending-staff@jll-demo.local', tutorId: 'STF-1003', name: 'Pending Tutor', status: AccountStatus.PENDING },
@@ -791,42 +1189,48 @@ async function main() {
     students: [
     { studentId: 'STU-1001', email: 'pending1@jll-demo.local', name: 'Pending Student One', status: AccountStatus.PENDING },
     { studentId: 'STU-1002', email: 'pending2@jll-demo.local', name: 'Pending Student Two', status: AccountStatus.PENDING },
-    { studentId: 'STU-1003', email: 'approved1@jll-demo.local', name: 'Approved Student One', status: AccountStatus.APPROVED },
-    { studentId: 'STU-1004', email: 'approved2@jll-demo.local', name: 'Approved Student Two', status: AccountStatus.APPROVED },
+    { studentId: 'STU-1003', email: 'approved1@jll-demo.local', name: 'Approved Student One', status: AccountStatus.APPROVED, demoProfile: { aadhaar: '200000000009', apaarId: '000000000001', educationYear: 'Year 2', course: 'Computer Science' } },
+    { studentId: 'STU-1004', email: 'approved2@jll-demo.local', name: 'Approved Student Two', status: AccountStatus.APPROVED, demoProfile: { aadhaar: '200000000013', apaarId: '000000000002', educationYear: 'Year 1', course: 'Mathematics' } },
     { studentId: 'STU-1005', email: 'rejected@jll-demo.local', name: 'Rejected Student', status: AccountStatus.REJECTED },
     { studentId: 'STU-1006', email: 'pending3@jll-demo.local', name: 'Additional Pending Student', status: AccountStatus.PENDING },
+    { studentId: 'STU-1007', email: 'demo-expired@jll-demo.local', name: 'Demo Expired Student', status: AccountStatus.APPROVED },
+    { studentId: 'STU-1008', email: 'demo-multi-period@jll-demo.local', name: 'Demo Multi Period Student', status: AccountStatus.APPROVED },
+    { studentId: 'STU-1009', email: 'demo-unsubscribed@jll-demo.local', name: 'Demo Unsubscribed Student', status: AccountStatus.APPROVED },
+    { studentId: 'STU-1010', email: 'demo-extra@jll-demo.local', name: 'Demo Extra Student', status: AccountStatus.APPROVED },
     ],
   });
   const secondSeed = await seedTenant({ ...secondOrganization, code: secondOrganization.code }, passwordHash, {
     adminEmail: 'orgadmin@northstar.local',
-    instructors: [
-      { email: 'instructor@northstar.local', name: 'Northstar Instructor', status: AccountStatus.APPROVED },
-      { email: 'instructor2@northstar.local', name: 'Northstar Instructor Two', status: AccountStatus.APPROVED },
-    ],
     tutors: [
+      { email: 'tutor-a@northstar.local', tutorId: 'TUT-2003', name: 'Northstar Tutor Three', status: AccountStatus.APPROVED },
+      { email: 'tutor-b@northstar.local', tutorId: 'TUT-2004', name: 'Northstar Tutor Four', status: AccountStatus.APPROVED },
       { email: 'tutor@northstar.local', legacyEmail: 'staff@northstar.local', tutorId: 'STF-2001', name: 'Northstar Tutor', status: AccountStatus.APPROVED },
       { email: 'tutor2@northstar.local', legacyEmail: 'staff2@northstar.local', tutorId: 'STF-2002', name: 'Northstar Tutor Two', status: AccountStatus.APPROVED },
     ],
     students: [
-    { studentId: 'STU-1001', email: 'student1@northstar.local', name: 'Northstar Student One', status: AccountStatus.APPROVED },
+    { studentId: 'STU-1001', email: 'student1@northstar.local', name: 'Northstar Student One', status: AccountStatus.APPROVED, demoProfile: { aadhaar: '200000000021', apaarId: '000000000003', educationYear: 'Year 1', course: 'Environmental Science' } },
     { studentId: 'NST-2002', email: 'student2@northstar.local', name: 'Northstar Student Two', status: AccountStatus.PENDING },
     ],
   });
-  await seedCourses(prisma, primaryOrganization, primarySeed.admin, primarySeed.instructors, primarySeed.students);
-  await seedCourses(prisma, secondOrganization, secondSeed.admin, secondSeed.instructors, secondSeed.students);
+  await seedCourses(prisma, primaryOrganization, primarySeed.admin, primarySeed.tutors, primarySeed.students);
+  await seedCourses(prisma, secondOrganization, secondSeed.admin, secondSeed.tutors, secondSeed.students);
+  await seedDemoPayments(prisma, { id: primaryOrganization.id, code: primaryOrganization.code }, primarySeed.students);
+  await seedDemoPayments(prisma, { id: secondOrganization.id, code: secondOrganization.code }, secondSeed.students);
+  await seedLibrarySamples(prisma, primaryOrganization, primarySeed.tutors);
+  await seedLibrarySamples(prisma, secondOrganization, secondSeed.tutors);
 
   console.log('\n=== DEVELOPMENT-ONLY SEED CREDENTIALS ===');
   console.log(`Password for all seeded accounts: ${developmentPassword}`);
   console.log(`SUPER_ADMIN: ${superAdminEmail} / ${superAdminPassword} (no organization code)`);
   console.log('Jishnu Learning Labs Demo organization code: jll-demo');
   console.log('ORG_ADMIN: orgadmin@jll-demo.local');
-  console.log('INSTRUCTOR accounts (use the Tutor portal): instructor1@jll-demo.local, instructor2@jll-demo.local');
-  console.log('PENDING INSTRUCTOR account (use the Tutor portal): pending-instructor@jll-demo.local');
+  console.log('TUTOR accounts: tutor-a@jll-demo.local (TUT-0101), tutor-b@jll-demo.local (TUT-0102)');
+  console.log('PENDING TUTOR: pending-tutor-a@jll-demo.local (TUT-0103)');
   console.log('TUTOR: STF-1001 (tutor1@jll-demo.local), STF-1002 (tutor2@jll-demo.local), pending STF-1003 (pending-tutor@jll-demo.local)');
   console.log('STUDENTS: pending STU-1001/STU-1002/STU-1006; approved STU-1003/STU-1004; rejected STU-1005');
   console.log('Northstar Academy organization code: northstar-academy');
   console.log('Northstar ORG_ADMIN: orgadmin@northstar.local');
-  console.log('Northstar INSTRUCTOR accounts (use the Tutor portal): instructor@northstar.local, instructor2@northstar.local; TUTORS: tutor@northstar.local (STF-2001) / tutor2@northstar.local (STF-2002); STUDENTS: STU-1001 / NST-2002');
+  console.log('Northstar TUTORS: tutor-a@northstar.local (TUT-2003), tutor-b@northstar.local (TUT-2004), tutor@northstar.local (STF-2001), tutor2@northstar.local (STF-2002); STUDENTS: STU-1001 / NST-2002');
   console.log('Do not use these credentials outside local development.');
 
 }

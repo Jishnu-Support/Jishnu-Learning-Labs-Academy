@@ -42,10 +42,26 @@ function safeNoteSelect() {
   } satisfies Prisma.NoteSelect;
 }
 
-async function validateCourse(organizationId: string, courseId: string | null | undefined) {
+async function validateCourse(organizationId: string, courseId: string | null | undefined, userId?: string, role?: Role) {
   if (!courseId) return;
-  const course = await prisma.course.findFirst({ where: { id: courseId, organizationId }, select: { id: true } });
+  const course = await prisma.course.findFirst({
+    where: {
+      id: courseId,
+      organizationId,
+      ...(role === Role.TUTOR && userId ? { instructors: { some: { instructorId: userId } } } : {}),
+    },
+    select: { id: true },
+  });
   if (!course) throw new HttpError(404, 'Course not found in your organization');
+}
+
+async function validateNoteCourseAccess(
+  organizationId: string,
+  note: { courseId: string | null },
+  userId: string,
+  role: Role,
+) {
+  if (role === Role.TUTOR && note.courseId) await validateCourse(organizationId, note.courseId, userId, role);
 }
 
 async function storeUpload(file: Express.Multer.File | undefined) {
@@ -107,8 +123,12 @@ export async function listNotes(organizationId: string | null, userId: string, r
   const visibilityConditions = role === Role.STUDENT
     ? [{ OR: [{ courseId: null }, { courseId: { in: activeCourseIds } }] }]
     : role === Role.TUTOR
-      ? [{ OR: [{ published: true }, { authorId: userId }] }]
+      ? [
+        { OR: [{ published: true }, { authorId: userId }] },
+        { OR: [{ courseId: null }, { course: { instructors: { some: { instructorId: userId } } } }] },
+      ]
       : [];
+  if (role === Role.TUTOR && input.courseId) await validateCourse(tenantId, input.courseId, userId, role);
   const searchConditions = input.search
     ? [{
       OR: [
@@ -133,7 +153,14 @@ export async function listNotes(organizationId: string | null, userId: string, r
     orderBy: { updatedAt: 'desc' },
     select: safeNoteSelect(),
   });
-  if (role !== Role.STUDENT) return { notes };
+  if (role !== Role.STUDENT) return {
+    notes: role === Role.TUTOR
+      ? notes.map((note) => note.author.id === userId ? note : {
+        ...note,
+        author: { id: '', name: 'Tutor', role: Role.TUTOR },
+      })
+      : notes,
+  };
   const savedNoteIds = new Set((await prisma.savedNote.findMany({
     where: { organizationId: tenantId, studentId: userId, noteId: { in: notes.map(({ id }) => id) } },
     select: { noteId: true },
@@ -184,11 +211,12 @@ export async function saveNote(organizationId: string | null, noteId: string, st
 export async function createNote(
   organizationId: string | null,
   authorId: string,
+  role: Role,
   input: NoteInput,
   file?: Express.Multer.File,
 ) {
   const tenantId = requireOrganizationId(organizationId);
-  await validateCourse(tenantId, input.courseId);
+  await validateCourse(tenantId, input.courseId, authorId, role);
   const upload = await storeUpload(file);
   try {
     const note = await prisma.$transaction(async (tx) => {
@@ -240,7 +268,8 @@ export async function updateNote(
   const tenantId = requireOrganizationId(organizationId);
   const note = await findNote(tenantId, noteId);
   requireNoteOwner(note, actorId, role);
-  if (input.courseId !== undefined) await validateCourse(tenantId, input.courseId);
+  await validateNoteCourseAccess(tenantId, note, actorId, role);
+  if (input.courseId !== undefined) await validateCourse(tenantId, input.courseId, actorId, role);
   const updated = await prisma.$transaction(async (tx) => {
     const result = await tx.note.update({
       where: { id: note.id },
@@ -272,6 +301,7 @@ export async function setNotePublished(
   const tenantId = requireOrganizationId(organizationId);
   const note = await findNote(tenantId, noteId);
   requireNoteOwner(note, actorId, role);
+  await validateNoteCourseAccess(tenantId, note, actorId, role);
   if (note.published === published) throw new HttpError(409, published ? 'Note is already published' : 'Note is already a draft');
   const updated = await prisma.$transaction(async (tx) => {
     const updated = await tx.note.update({ where: { id: note.id }, data: { published }, select: safeNoteSelect() });
@@ -311,6 +341,7 @@ export async function softDeleteNote(organizationId: string | null, noteId: stri
   const tenantId = requireOrganizationId(organizationId);
   const note = await findNote(tenantId, noteId);
   requireNoteOwner(note, actorId, role);
+  await validateNoteCourseAccess(tenantId, note, actorId, role);
   await prisma.$transaction(async (tx) => {
     await tx.note.update({ where: { id: note.id }, data: { deletedAt: new Date(), published: false } });
     await tx.auditLog.create({
@@ -330,6 +361,7 @@ export async function noteForView(organizationId: string | null, noteId: string,
   const tenantId = requireOrganizationId(organizationId);
   const note = await findNote(tenantId, noteId);
   if (!isVisible(note, userId, role)) throw new HttpError(404, 'Note not found');
+  await validateNoteCourseAccess(tenantId, note, userId, role);
   await requireContentAccess({
     organizationId: tenantId,
     userId,
@@ -372,6 +404,7 @@ export async function noteForDownload(organizationId: string | null, noteId: str
   }
   const note = await findNote(tenantId, noteId);
   if (!isVisible(note, userId, role)) throw new HttpError(404, 'Note not found');
+  await validateNoteCourseAccess(tenantId, note, userId, role);
   if (!note.storageKey) throw new HttpError(404, 'This note has no attached file');
   const file = await localDiskStorage.open(note.storageKey);
   await prisma.auditLog.create({

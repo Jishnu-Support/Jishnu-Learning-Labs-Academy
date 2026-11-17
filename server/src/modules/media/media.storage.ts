@@ -27,7 +27,7 @@ export type MediaStorageService = {
   cleanStaleIncoming(maxAgeMs?: number): Promise<number>;
   removeWorkDirectory(path: string): Promise<void>;
   removeProcessedDirectory(key: string): Promise<void>;
-  open(key: string): Promise<{ stream: ReadStream; size: number; path: string }>;
+  open(key: string, range?: { start: number; end: number }): Promise<{ stream: ReadStream; size: number; path: string }>;
   readKey(key: string): Promise<Buffer>;
   removeKey(key: string): Promise<void>;
   sizeOfDirectory(path: string): Promise<number>;
@@ -143,7 +143,7 @@ export const localMediaStorage: MediaStorageService = {
     await rm(path, { recursive: true, force: true });
   },
 
-  async open(key: string): Promise<{ stream: ReturnType<typeof createReadStream>; size: number; path: string }> {
+  async open(key: string, range?: { start: number; end: number }): Promise<{ stream: ReturnType<typeof createReadStream>; size: number; path: string }> {
     const isOriginal = key.startsWith('originals/');
     if (!isOriginal && !key.startsWith('processed/')) throw new HttpError(404, 'Media file not found');
     const normalized = key.replace(/^(originals|processed)\//, '');
@@ -151,7 +151,11 @@ export const localMediaStorage: MediaStorageService = {
     try {
       const fileStat = await stat(filePath);
       if (!fileStat.isFile()) throw new HttpError(404, 'Media file not found');
-      return { stream: createReadStream(filePath), size: fileStat.size, path: filePath };
+      return {
+        stream: range ? createReadStream(filePath, range) : createReadStream(filePath),
+        size: fileStat.size,
+        path: filePath,
+      };
     } catch (error) {
       if (error instanceof HttpError) throw error;
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {

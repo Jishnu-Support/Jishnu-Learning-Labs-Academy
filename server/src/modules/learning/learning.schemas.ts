@@ -58,12 +58,36 @@ function validateQuestion(
 }
 
 export const questionSchema = questionObject.superRefine(validateQuestion);
+export const generateAssessmentQuestionsSchema = z.object({
+  courseId: z.string().cuid(),
+  topic: z.string().trim().min(1).max(120),
+  count: z.number().int().min(1).max(25),
+  difficulty: z.enum(difficulties),
+  marksPerQuestion: z.number().int().min(1).max(100),
+});
+export const generatedAssessmentQuestionSchema = z.object({
+  prompt: z.string().trim().min(2).max(4000),
+  options: z.array(z.string().trim().min(1).max(500)).length(4),
+  correctAnswer: z.string().trim().min(1).max(500),
+  explanation: z.string().trim().max(4000),
+  topic: z.string().trim().min(1).max(120),
+  difficulty: z.enum(difficulties),
+  marks: z.number().int().min(1).max(100),
+}).superRefine((question, context) => {
+  if (new Set(question.options).size !== question.options.length) {
+    context.addIssue({ code: 'custom', message: 'Each question must have four distinct options', path: ['options'] });
+  }
+  if (!question.options.includes(question.correctAnswer)) {
+    context.addIssue({ code: 'custom', message: 'The correct answer must match one of the options', path: ['correctAnswer'] });
+  }
+});
 
 export const questionIdSchema = z.object({ questionId: z.string().cuid() });
 export const assessmentIdSchema = z.object({ assessmentId: z.string().cuid() });
 export const assessmentQuestionIdSchema = z.object({ assessmentId: z.string().cuid(), questionId: z.string().cuid() });
 export const attemptIdSchema = z.object({ attemptId: z.string().cuid() });
 export const practiceSessionIdSchema = z.object({ sessionId: z.string().cuid() });
+export const practiceSetIdSchema = z.object({ setId: z.string().cuid() });
 
 export const questionListQuerySchema = z.object({
   courseId: z.string().cuid().optional(),
@@ -72,6 +96,7 @@ export const questionListQuerySchema = z.object({
   type: z.enum(questionTypes).optional(),
   search: z.string().trim().max(120).optional(),
 });
+export const practiceSetListQuerySchema = z.object({ courseId: z.string().cuid().optional() });
 
 export const createQuestionSchema = questionSchema;
 export const updateQuestionSchema = questionObject.partial().omit({ courseId: true }).refine(
@@ -131,6 +156,26 @@ export const practiceStartSchema = z.object({
   count: z.number().int().min(1).max(50).default(10),
   timeLimitSeconds: z.number().int().min(60).max(7200).optional(),
 });
+const practiceSetFields = {
+  courseId: z.string().cuid(),
+  title: z.string().trim().min(2).max(200),
+  topic: z.string().trim().min(1).max(120),
+  difficulty: z.enum(difficulties),
+  questionIds: z.array(z.string().cuid()).min(1).max(100),
+  published: z.boolean().default(false),
+};
+export const createPracticeSetSchema = z.object(practiceSetFields).refine(
+  (value) => new Set(value.questionIds).size === value.questionIds.length,
+  'Question IDs must be unique',
+);
+export const updatePracticeSetSchema = z.object({
+  title: practiceSetFields.title.optional(),
+  topic: practiceSetFields.topic.optional(),
+  difficulty: practiceSetFields.difficulty.optional(),
+  questionIds: practiceSetFields.questionIds.optional(),
+  published: practiceSetFields.published.optional(),
+}).refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update')
+  .refine((value) => !value.questionIds || new Set(value.questionIds).size === value.questionIds.length, 'Question IDs must be unique');
 export const eventSchema = z.object({
   eventType: z.enum(['TAB_SWITCH', 'COPY', 'PASTE', 'CONTEXT_MENU']),
   details: z.record(z.string(), z.string().max(100)).optional(),

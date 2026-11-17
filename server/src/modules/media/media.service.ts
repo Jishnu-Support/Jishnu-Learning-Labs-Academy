@@ -1,4 +1,4 @@
-import { EnrollmentStatus, MediaJobStatus, MediaStatus, MediaType, MediaVisibility, NotificationType, Prisma, Role } from '@prisma/client';
+import { EnrollmentStatus, MediaJobStatus, MediaSource, MediaStatus, MediaType, MediaVisibility, NotificationType, Prisma, Role } from '@prisma/client';
 import { fileTypeFromFile } from 'file-type';
 import { basename, extname } from 'node:path';
 import { env } from '../../config/env.js';
@@ -6,10 +6,11 @@ import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { mediaStorage } from './media.storage.js';
 import { notifyAfterCommit, notifyCourseStudents } from '../notifications/notifications.service.js';
+import { canAccessContent, requireContentAccess } from '../student-portal/content-access.service.js';
 import type { CreateMediaInput, MediaListInput, UpdateMediaInput } from './media.schemas.js';
-import { expectedMediaMimeTypes } from './media.schemas.js';
+import { expectedMediaMimeTypes, youtubeVideoIdFromUrl } from './media.schemas.js';
 
-const managerRoles = [Role.TUTOR, Role.INSTRUCTOR, Role.ORG_ADMIN] as const;
+const managerRoles = [Role.TUTOR, Role.ORG_ADMIN] as const;
 const videoLimits = new Set(['.mp4', '.mov', '.webm', '.mkv']);
 const audioLimits = new Set(['.mp3', '.m4a', '.aac', '.wav', '.ogg']);
 
@@ -45,7 +46,7 @@ async function validateCourseAndTopic(
     where: {
       id: courseId,
       organizationId,
-      ...(role === Role.INSTRUCTOR ? { instructors: { some: { instructorId: userId } } } : {}),
+      ...(role === Role.TUTOR ? { instructors: { some: { instructorId: userId } } } : {}),
     },
     select: { id: true },
   });
@@ -96,20 +97,38 @@ function serializeMedia<T extends { sizeBytes: bigint; storageBytes: bigint }>(m
 }
 
 function serializeStudentMedia<T extends {
-  sizeBytes: bigint;
-  storageBytes: bigint;
+  id: string;
+  title: string;
+  description: string | null;
+  type: MediaType;
+  source: MediaSource;
+  youtubeVideoId: string | null;
   watchProgress: Array<{ lastPositionSeconds: number; watchedSeconds: number; completed: boolean }>;
   durationSeconds: number | null;
+  createdAt: Date;
+  publishedAt: Date | null;
+  thumbnailKey: string | null;
+  course: { id: string; title: string; code: string };
+  topic: { id: string; title: string } | null;
 }>(media: T) {
   const progress = media.watchProgress[0] ?? null;
   const positionSeconds = progress?.lastPositionSeconds ?? 0;
   const durationSeconds = media.durationSeconds ?? 0;
   const progressPercent = durationSeconds > 0 ? Math.min(100, (positionSeconds / durationSeconds) * 100) : 0;
   return {
-    ...media,
+    id: media.id,
+    title: media.title,
+    description: media.description,
+    type: media.type,
+    source: media.source,
+    youtubeVideoId: media.youtubeVideoId,
+    durationSeconds: media.durationSeconds,
+    createdAt: media.createdAt,
+    publishedAt: media.publishedAt,
+    thumbnailUrl: media.thumbnailKey ? `/student/media/${media.id}/stream/thumbnail.jpg` : null,
+    course: media.course,
+    topic: media.topic,
     watchProgress: progress,
-    sizeBytes: Number(media.sizeBytes),
-    storageBytes: Number(media.storageBytes),
     progressPercent,
     completed: progress?.completed ?? false,
   };
@@ -163,7 +182,17 @@ export async function listStudentMedia(actor: MediaActor, filters: { courseId?: 
   });
 
   return {
-    items: items.map((item) => serializeStudentMedia(item)),
+    items: await Promise.all(items.map(async (item) => ({
+      ...serializeStudentMedia(item),
+      locked: !await canAccessContent({
+        organizationId,
+        userId: actor.userId,
+        role: actor.role,
+        courseId: item.courseId,
+        published: true,
+        freePreview: item.freePreview,
+      }),
+    }))),
     courses,
   };
 }
@@ -189,6 +218,10 @@ export async function getStudentMedia(actor: MediaActor, mediaId: string) {
     },
   });
   if (!media) throw new HttpError(404, 'Media not found in your enrolled courses');
+  await requireContentAccess({
+    organizationId, userId: actor.userId, role: actor.role, courseId: media.courseId,
+    published: true, freePreview: media.freePreview,
+  });
   return serializeStudentMedia(media);
 }
 
@@ -205,9 +238,13 @@ export async function recordWatchProgress(actor: MediaActor, mediaId: string, in
       status: MediaStatus.READY,
       courseId: { in: courseIds },
     },
-    select: { id: true, durationSeconds: true },
+    select: { id: true, durationSeconds: true, courseId: true, freePreview: true },
   });
   if (!media) throw new HttpError(404, 'Media not found in your enrolled courses');
+  await requireContentAccess({
+    organizationId, userId: actor.userId, role: actor.role, courseId: media.courseId,
+    published: true, freePreview: media.freePreview,
+  });
 
   const durationSeconds = media.durationSeconds ?? input.positionSeconds;
   const completed = Boolean(input.completed || (durationSeconds > 0 && input.positionSeconds >= durationSeconds * 0.9));
@@ -243,9 +280,13 @@ export async function previewStudentAsset(actor: MediaActor, mediaId: string, as
       status: MediaStatus.READY,
       courseId: { in: courseIds },
     },
-    select: { id: true, organizationId: true, streamKey: true, type: true, title: true },
+    select: { id: true, organizationId: true, streamKey: true, type: true, title: true, courseId: true, freePreview: true },
   });
   if (!media || !media.streamKey) throw new HttpError(404, 'Media preview not found');
+  await requireContentAccess({
+    organizationId, userId: actor.userId, role: actor.role, courseId: media.courseId,
+    published: true, freePreview: media.freePreview,
+  });
 
   const safeAsset = assetPath.split('/').filter(Boolean);
   if (safeAsset.some((part) => part === '.' || part === '..' || !/^[a-zA-Z0-9._-]+$/.test(part)) || safeAsset.includes('enc.key')) {
@@ -265,6 +306,66 @@ export async function previewStudentAsset(actor: MediaActor, mediaId: string, as
 
   const key = `${media.streamKey}/${safeAsset.join('/')}`;
   return { media, file: await mediaStorage.open(key.startsWith('processed/') ? key : `processed/${key}`) };
+}
+
+function parseByteRange(value: string, size: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value);
+  if (!match || size === 0 || (!match[1] && !match[2])) return null;
+  const startValue = match[1] ? Number(match[1]) : null;
+  const endValue = match[2] ? Number(match[2]) : null;
+  if (startValue === null) {
+    if (endValue === null || !Number.isSafeInteger(endValue) || endValue <= 0) return null;
+    return { start: Math.max(0, size - endValue), end: size - 1 };
+  }
+  if (!Number.isSafeInteger(startValue) || startValue < 0 || startValue >= size) return null;
+  const end = endValue ?? size - 1;
+  if (!Number.isSafeInteger(end) || end < startValue) return null;
+  return { start: startValue, end: Math.min(end, size - 1) };
+}
+
+export async function streamStudentProgressiveMp4(actor: MediaActor, mediaId: string, rangeHeader?: string) {
+  if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Only students can preview media');
+  const organizationId = tenantId(actor);
+  const courseIds = await activeStudentCourseIds(organizationId, actor.userId);
+  const media = await prisma.mediaItem.findFirst({
+    where: {
+      id: mediaId,
+      organizationId,
+      deletedAt: null,
+      visibility: MediaVisibility.PUBLISHED,
+      status: MediaStatus.READY,
+      type: MediaType.VIDEO,
+      courseId: { in: courseIds },
+    },
+    select: { id: true, originalKey: true, title: true, type: true, courseId: true, freePreview: true },
+  });
+  if (!media?.originalKey || extname(media.originalKey).toLowerCase() !== '.mp4') {
+    throw new HttpError(404, 'Progressive MP4 playback is not available');
+  }
+  await requireContentAccess({
+    organizationId, userId: actor.userId, role: actor.role, courseId: media.courseId,
+    published: true, freePreview: media.freePreview,
+  });
+
+  const file = await mediaStorage.open(media.originalKey);
+  if (!rangeHeader) {
+    await prisma.auditLog.create({
+      data: { organizationId, actorId: actor.userId, action: 'MEDIA_VIEWED', targetType: 'MediaItem', targetId: media.id, metadata: { source: 'progressive-mp4', title: media.title } },
+    });
+    return { file, range: null, unsatisfiable: false as const };
+  }
+
+  const range = parseByteRange(rangeHeader, file.size);
+  if (!range) {
+    file.stream.destroy();
+    return { size: file.size, unsatisfiable: true as const };
+  }
+  file.stream.destroy();
+  const rangedFile = await mediaStorage.open(media.originalKey, range);
+  await prisma.auditLog.create({
+    data: { organizationId, actorId: actor.userId, action: 'MEDIA_VIEWED', targetType: 'MediaItem', targetId: media.id, metadata: { source: 'progressive-mp4', title: media.title } },
+  });
+  return { file: rangedFile, range: { ...range, size: file.size }, unsatisfiable: false as const };
 }
 
 export async function listMedia(actor: MediaActor, filters: MediaListInput) {
@@ -310,7 +411,7 @@ export async function listMediaCourses(actor: MediaActor) {
   return prisma.course.findMany({
     where: {
       organizationId,
-      ...(actor.role === Role.INSTRUCTOR ? { instructors: { some: { instructorId: actor.userId } } } : {}),
+      ...(actor.role === Role.TUTOR ? { instructors: { some: { instructorId: actor.userId } } } : {}),
     },
     select: {
       id: true,
@@ -325,6 +426,41 @@ export async function listMediaCourses(actor: MediaActor) {
 export async function createMedia(actor: MediaActor, input: CreateMediaInput) {
   assertMediaManager(actor.role);
   const organizationId = tenantId(actor);
+  await validateCourseAndTopic(organizationId, actor.userId, actor.role, input.courseId, input.topicId);
+
+  if (input.source === MediaSource.YOUTUBE) {
+    const youtubeVideoId = youtubeVideoIdFromUrl(input.youtubeUrl ?? '');
+    if (!youtubeVideoId) throw new HttpError(400, 'Enter a valid YouTube video URL');
+    if (input.type !== MediaType.VIDEO) throw new HttpError(400, 'YouTube links can only be used for video media');
+    const media = await prisma.$transaction(async (tx) => {
+      const created = await tx.mediaItem.create({
+        data: {
+          organizationId,
+          uploadedById: actor.userId,
+          courseId: input.courseId,
+          topicId: input.topicId ?? null,
+          title: input.title,
+          description: input.description,
+          type: MediaType.VIDEO,
+          source: MediaSource.YOUTUBE,
+          youtubeVideoId,
+          status: MediaStatus.READY,
+          visibility: MediaVisibility.DRAFT,
+          freePreview: input.freePreview,
+          sizeBytes: 0n,
+          storageBytes: 0n,
+        },
+      });
+      await audit(tx, organizationId, actor.userId, 'MEDIA_YOUTUBE_LINKED', created.id, {
+        courseId: input.courseId,
+        youtubeVideoId,
+      });
+      return created;
+    });
+    if (input.publishOnReady) return setMediaVisibility(actor, media.id, true);
+    return serializeMedia(media);
+  }
+
   const hasFile = Boolean(input.fileName && input.extension && input.sizeBytes && input.mimeType);
 
   if (hasFile) {
@@ -339,8 +475,6 @@ export async function createMedia(actor: MediaActor, input: CreateMediaInput) {
       throw new HttpError(413, `Files of this type may not exceed ${input.type === MediaType.VIDEO ? env.MAX_VIDEO_MB : env.MAX_AUDIO_MB} MB`);
     }
   }
-
-  await validateCourseAndTopic(organizationId, actor.userId, actor.role, input.courseId, input.topicId);
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -362,6 +496,7 @@ export async function createMedia(actor: MediaActor, input: CreateMediaInput) {
           topicId: input.topicId ?? null,
           title: input.title,
           description: input.description,
+          freePreview: input.freePreview,
           type: input.type,
           status: mediaStatus,
           visibility: MediaVisibility.DRAFT,
@@ -402,8 +537,14 @@ export async function acceptUpload(
   if (media.sizeBytes > BigInt(fileLimitBytes(media.type))) {
     throw new HttpError(413, 'The upload exceeds the configured size limit');
   }
-  const maximumBytes = Number(media.sizeBytes);
-  if (contentLength !== undefined && contentLength !== maximumBytes) {
+  const declaredBytes = Number(media.sizeBytes);
+  const maximumBytes = declaredBytes || fileLimitBytes(media.type);
+  if (contentLength !== undefined && (
+    !Number.isSafeInteger(contentLength)
+    || contentLength <= 0
+    || contentLength > fileLimitBytes(media.type)
+    || (declaredBytes > 0 && contentLength !== declaredBytes)
+  )) {
     throw new HttpError(400, 'Upload content length does not match the declared file size');
   }
   const normalizedExtension = extension.toLowerCase();
@@ -413,8 +554,10 @@ export async function acceptUpload(
   }
   const tempFile = await mediaStorage.createIncomingFile();
   try {
-    const size = await mediaStorage.writeIncoming(request, tempFile.path, Math.min(fileLimitBytes(media.type), maximumBytes));
-    if (size !== maximumBytes) throw new HttpError(400, 'Uploaded file size does not match the declared file size');
+    const size = await mediaStorage.writeIncoming(request, tempFile.path, maximumBytes);
+    if (size <= 0 || size > fileLimitBytes(media.type) || (declaredBytes > 0 && size !== declaredBytes)) {
+      throw new HttpError(400, 'Uploaded file size does not match the declared file size');
+    }
     const detected = await fileTypeFromFile(tempFile.path);
     if (!detected || !expectedMediaMimeTypes(media.type, normalizedExtension).includes(detected.mime)) {
       throw new HttpError(400, 'File contents do not match the selected extension and media type');
@@ -422,9 +565,21 @@ export async function acceptUpload(
     const originalKey = await mediaStorage.adoptIncoming(tempFile.path, media.organizationId, media.id, normalizedExtension);
     try {
       const result = await prisma.$transaction(async (tx) => {
+        const currentUsage = await tx.mediaItem.aggregate({
+          where: { organizationId: media.organizationId, id: { not: media.id } },
+          _sum: { storageBytes: true },
+        });
+        if ((currentUsage._sum.storageBytes ?? 0n) + BigInt(size) > storageQuotaBytes()) {
+          throw new HttpError(413, 'Organization media storage quota would be exceeded');
+        }
         const updated = await tx.mediaItem.updateMany({
-          where: { id: media.id, organizationId: media.organizationId, status: MediaStatus.UPLOADING, deletedAt: null },
-          data: { status: MediaStatus.PROCESSING, originalKey },
+          where: {
+            id: media.id,
+            organizationId: media.organizationId,
+            status: { in: [MediaStatus.UPLOADING, MediaStatus.AWAITING_FILE] },
+            deletedAt: null,
+          },
+          data: { status: MediaStatus.PROCESSING, originalKey, sizeBytes: BigInt(size), storageBytes: BigInt(size) },
         });
         if (updated.count !== 1) throw new HttpError(409, 'Media upload was cancelled or changed');
         await tx.mediaJob.create({
@@ -454,7 +609,7 @@ export async function updateMedia(actor: MediaActor, mediaId: string, input: Upd
   return prisma.$transaction(async (tx) => {
     const updated = await tx.mediaItem.update({
       where: { id: media.id },
-      data: { title: input.title, description: input.description, courseId: input.courseId, topicId: input.topicId },
+      data: { title: input.title, description: input.description, courseId: input.courseId, topicId: input.topicId, freePreview: input.freePreview },
       include: { course: { select: { id: true, title: true, code: true } }, topic: { select: { id: true, title: true } } },
     });
     await audit(tx, media.organizationId, actor.userId, 'MEDIA_UPDATED', media.id, {
@@ -485,7 +640,7 @@ export async function setMediaVisibility(actor: MediaActor, mediaId: string, pub
       type: NotificationType.CONTENT_PUBLISHED,
       title: 'New learning content',
       body: `${media.title} is now available.`,
-      link: `/student/courses/${courseId}`,
+      link: `/student/courses/${courseId}/media`,
       groupKey: `course:${courseId}:content`,
       dedupeKey: `media:${media.id}:published`,
     }), 'media publication');
@@ -503,9 +658,20 @@ export async function softDeleteMedia(actor: MediaActor, mediaId: string) {
 
 export async function cancelUpload(actor: MediaActor, mediaId: string) {
   const media = await findManagedMedia(actor, mediaId);
-  if (media.status !== MediaStatus.UPLOADING) throw new HttpError(409, 'Only an upload in progress can be cancelled');
+  if (media.status !== MediaStatus.UPLOADING && media.status !== MediaStatus.AWAITING_FILE) {
+    throw new HttpError(409, 'Only an upload in progress or an empty draft can be cancelled');
+  }
   await prisma.$transaction(async (tx) => {
-    await tx.mediaItem.update({ where: { id: media.id }, data: { deletedAt: new Date(), storageBytes: 0n } });
+    const updated = await tx.mediaItem.updateMany({
+      where: {
+        id: media.id,
+        organizationId: media.organizationId,
+        status: { in: [MediaStatus.UPLOADING, MediaStatus.AWAITING_FILE] },
+        deletedAt: null,
+      },
+      data: { deletedAt: new Date(), storageBytes: 0n, visibility: MediaVisibility.DRAFT, publishOnReady: false },
+    });
+    if (updated.count !== 1) throw new HttpError(409, 'The upload changed before cancellation completed');
     await audit(tx, media.organizationId, actor.userId, 'MEDIA_UPLOAD_CANCELLED', media.id);
   });
 }
@@ -552,6 +718,29 @@ export async function previewKey(actor: MediaActor, mediaId: string) {
   const media = await authorizePreview(actor, mediaId);
   const key = `${media.streamKey}/enc.key`;
   return mediaStorage.readKey(key);
+}
+
+export async function previewStudentKey(actor: MediaActor, mediaId: string) {
+  if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Only students can open published media');
+  const organizationId = tenantId(actor);
+  const courseIds = await activeStudentCourseIds(organizationId, actor.userId);
+  const media = await prisma.mediaItem.findFirst({
+    where: {
+      organizationId,
+      id: mediaId,
+      deletedAt: null,
+      visibility: MediaVisibility.PUBLISHED,
+      status: MediaStatus.READY,
+      courseId: { in: courseIds },
+    },
+    select: { streamKey: true, courseId: true, freePreview: true },
+  });
+  if (!media?.streamKey) throw new HttpError(404, 'Media key not found');
+  await requireContentAccess({
+    organizationId, userId: actor.userId, role: actor.role, courseId: media.courseId,
+    published: true, freePreview: media.freePreview,
+  });
+  return mediaStorage.readKey(`${media.streamKey}/enc.key`);
 }
 
 export async function mediaUsage(actor: MediaActor) {

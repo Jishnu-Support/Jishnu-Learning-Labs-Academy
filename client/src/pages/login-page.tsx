@@ -68,7 +68,7 @@ const demoAccounts: Record<Portal, { identifier: string; organizationCode?: stri
 function routeForRole(role: Role): string {
   if (role === 'SUPER_ADMIN') return '/super-admin/dashboard';
   if (role === 'ORG_ADMIN') return '/org-admin';
-  if (role === 'INSTRUCTOR' || role === 'TUTOR') return '/tutor';
+  if (role === 'TUTOR') return '/tutor';
   return `/${role.toLowerCase()}`;
 }
 

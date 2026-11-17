@@ -1,4 +1,4 @@
-import { MediaStatus, MediaType, MediaVisibility } from '@prisma/client';
+import { MediaSource, MediaStatus, MediaType, MediaVisibility } from '@prisma/client';
 import { z } from 'zod';
 
 const mediaId = z.string().min(1).max(64);
@@ -21,6 +21,24 @@ const extensionMimeTypes: Record<MediaType, Record<string, string[]>> = {
 
 const extension = z.string().regex(/^\.[a-z0-9]{2,5}$/);
 
+export function youtubeVideoIdFromUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return null;
+    const host = url.hostname.toLowerCase();
+    let id: string | null = null;
+    if (host === 'youtu.be') {
+      id = url.pathname.split('/').filter(Boolean)[0] ?? null;
+    } else if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com'].includes(host)) {
+      if (url.pathname === '/watch') id = url.searchParams.get('v');
+      else id = url.pathname.match(/^\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})\/?$/)?.[1] ?? null;
+    }
+    return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 export const mediaIdSchema = z.object({ mediaId });
 
 export const createMediaSchema = z.object({
@@ -29,12 +47,28 @@ export const createMediaSchema = z.object({
   courseId: mediaId,
   topicId: mediaId.nullable().optional(),
   type: z.nativeEnum(MediaType),
+  source: z.nativeEnum(MediaSource).default(MediaSource.UPLOAD),
+  youtubeUrl: z.string().url().optional(),
   sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   extension: extension.optional(),
   mimeType: z.string().trim().min(3).max(100).optional(),
   fileName: z.string().min(1).max(255).refine((value) => !/[\\/]/.test(value), 'File name must not contain a path').optional(),
   publishOnReady: z.boolean().optional().default(false),
+  freePreview: z.boolean().optional().default(false),
 }).superRefine((value, context) => {
+  if (value.source === MediaSource.YOUTUBE) {
+    if (value.type !== MediaType.VIDEO) {
+      context.addIssue({ code: 'custom', path: ['type'], message: 'YouTube links can only be used for video media' });
+    }
+    if (!value.youtubeUrl || !youtubeVideoIdFromUrl(value.youtubeUrl)) {
+      context.addIssue({ code: 'custom', path: ['youtubeUrl'], message: 'Enter a valid YouTube video URL' });
+    }
+    if (value.sizeBytes !== undefined || value.extension !== undefined || value.mimeType !== undefined || value.fileName !== undefined) {
+      context.addIssue({ code: 'custom', path: ['source'], message: 'YouTube media cannot include uploaded-file metadata' });
+    }
+  } else if (value.youtubeUrl !== undefined) {
+    context.addIssue({ code: 'custom', path: ['youtubeUrl'], message: 'A YouTube URL requires the YouTube link source' });
+  }
   if (!value.sizeBytes || !value.extension || !value.mimeType || !value.fileName) {
     return;
   }
@@ -49,6 +83,7 @@ export const updateMediaSchema = z.object({
   description: z.string().trim().max(4000),
   courseId: mediaId,
   topicId: mediaId.nullable(),
+  freePreview: z.boolean().optional(),
 });
 
 export const mediaListQuerySchema = z.object({

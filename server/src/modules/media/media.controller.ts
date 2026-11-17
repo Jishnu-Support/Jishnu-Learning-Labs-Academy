@@ -1,4 +1,5 @@
 import type { Request, RequestHandler } from 'express';
+import { Role } from '@prisma/client';
 import { getOrganizationId } from '../../middleware/authenticate.js';
 import { HttpError } from '../../utils/http-error.js';
 import * as mediaService from './media.service.js';
@@ -131,7 +132,10 @@ export const streamRenditionAsset: RequestHandler = (req, res, next) => {
 };
 
 export const key: RequestHandler = async (req, res) => {
-  const buffer = await mediaService.previewKey(actor(req), mediaId(req));
+  const currentActor = actor(req);
+  const buffer = currentActor.role === Role.STUDENT
+    ? await mediaService.previewStudentKey(currentActor, mediaId(req))
+    : await mediaService.previewKey(currentActor, mediaId(req));
   if (buffer.byteLength !== 16) throw new HttpError(404, 'Media key not found');
   res.setHeader('Content-Type', 'application/octet-stream');
   res.setHeader('Cache-Control', 'private, no-store');
@@ -142,9 +146,44 @@ export const key: RequestHandler = async (req, res) => {
 export const streamStudentAsset: RequestHandler = (req, res, next) => {
   const asset = req.params.asset;
   if (typeof asset !== 'string') throw new HttpError(400, 'Invalid media asset');
+  streamStudentMediaAsset(req, res, next, asset);
+};
+
+export const streamStudentRenditionAsset: RequestHandler = (req, res, next) => {
+  const rendition = req.params.rendition;
+  const asset = req.params.asset;
+  if (typeof rendition !== 'string' || typeof asset !== 'string') throw new HttpError(400, 'Invalid media asset');
+  streamStudentMediaAsset(req, res, next, `${rendition}/${asset}`);
+};
+
+export const streamStudentProgressiveMp4: RequestHandler = async (req, res, next) => {
+  try {
+    const result = await mediaService.streamStudentProgressiveMp4(actor(req), mediaId(req), req.get('range'));
+    res.setHeader('Accept-Ranges', 'bytes');
+    if (result.unsatisfiable) {
+      res.setHeader('Content-Range', `bytes */${result.size}`);
+      res.status(416).end();
+      return;
+    }
+    streamHeaders(res, 'video/mp4');
+    if (result.range) {
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${result.range.start}-${result.range.end}/${result.range.size}`);
+      res.setHeader('Content-Length', result.range.end - result.range.start + 1);
+    } else {
+      res.setHeader('Content-Length', result.file.size);
+    }
+    result.file.stream.on('error', next);
+    result.file.stream.pipe(res);
+  } catch (error) {
+    next(error);
+  }
+};
+
+function streamStudentMediaAsset(req: Request, res: Parameters<RequestHandler>[1], next: Parameters<RequestHandler>[2], assetPath: string) {
   void (async () => {
-    const result = await mediaService.previewStudentAsset(actor(req), mediaId(req), asset);
-    streamHeaders(res, assetMimeType(asset));
+    const result = await mediaService.previewStudentAsset(actor(req), mediaId(req), assetPath);
+    streamHeaders(res, assetMimeType(assetPath));
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -152,7 +191,7 @@ export const streamStudentAsset: RequestHandler = (req, res, next) => {
     result.file.stream.on('error', next);
     result.file.stream.pipe(res);
   })().catch(next);
-};
+}
 
 export const storage: RequestHandler = async (req, res) => {
   res.json({ data: { storage: await mediaService.mediaUsage(actor(req)) } });

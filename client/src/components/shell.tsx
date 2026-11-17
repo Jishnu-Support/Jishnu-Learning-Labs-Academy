@@ -14,14 +14,16 @@ export function Shell() {
   const location = useLocation();
   const navigationType = useNavigationType();
   const navigate = useNavigate();
-  const isAuthSurface = /^\/(student|instructor|tutor|tutor|org-admin|super-admin)\/(login|register)$/.test(location.pathname)
+  const isAuthSurface = /^\/(student|tutor|org-admin|super-admin)\/(login|register)$/.test(location.pathname)
     || location.pathname === '/organizations/register';
+  const isPortalSurface = /^\/(student|tutor|org-admin|super-admin)(\/|$)/.test(location.pathname)
+    || ['/my-profile', '/notifications', '/change-password'].includes(location.pathname);
   useEffect(() => {
     recordAppLocation(`${location.pathname}${location.search}`, navigationType);
   }, [location.pathname, location.search, navigationType]);
 
   useEffect(() => {
-    const loginMatch = location.pathname.match(/^\/(student|instructor|tutor|tutor|org-admin|super-admin)\/login$/);
+    const loginMatch = location.pathname.match(/^\/(student|tutor|org-admin|super-admin)\/login$/);
     const roleLabel = loginMatch?.[1]?.replace('-', ' ');
     const pageTitle = roleLabel
       ? `${roleLabel.replace(/\b\w/g, (letter) => letter.toUpperCase())} Login`
@@ -31,15 +33,13 @@ export function Shell() {
           ? 'Change Password'
           : location.pathname.startsWith('/student')
             ? 'Student Portal'
-            : location.pathname.startsWith('/instructor') || location.pathname.startsWith('/tutor')
+            : location.pathname.startsWith('/tutor')
               ? 'Tutor Portal'
               : location.pathname.startsWith('/org-admin')
                 ? 'Organization Admin Portal'
-                : location.pathname.startsWith('/tutor')
-                  ? 'Tutor Portal'
-                  : location.pathname.startsWith('/super-admin')
-                    ? 'Platform Admin'
-                    : 'Learning Platform';
+                : location.pathname.startsWith('/super-admin')
+                  ? 'Platform Admin'
+                  : 'Learning Platform';
     document.title = `Jishnu Learning Labs | ${pageTitle}`;
   }, [location.pathname]);
 
@@ -47,7 +47,7 @@ export function Shell() {
     await logout();
     const loginRoute = user?.role === 'SUPER_ADMIN' ? '/super-admin/login'
       : user?.role === 'ORG_ADMIN' ? '/org-admin/login'
-        : user?.role === 'INSTRUCTOR' || user?.role === 'TUTOR' ? '/tutor/login' : '/student/login';
+        : user?.role === 'TUTOR' ? '/tutor/login' : '/student/login';
     navigate(loginRoute, { replace: true });
   };
   return (
@@ -64,7 +64,7 @@ export function Shell() {
             {user && <Button variant="ghost" onClick={() => void signOut()}>Sign out</Button>}
           </div>
         </header>
-        <main className="page-wrap"><Outlet /></main>
+        <main className={`page-wrap${isPortalSurface ? ' page-wrap-portal' : ''}`}><Outlet /></main>
         <footer className="footer">
           <span>Learn with clarity. Grow with confidence.</span>
           <Link to="/super-admin/login">Platform Admin</Link>
