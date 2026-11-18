@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RegistrationPaymentMethod } from '@prisma/client';
 import { emailSchema, organizationCodeSchema } from '../../utils/validation-schemas.js';
 import { env } from '../../config/env.js';
 import { aadhaarNumberSchema, apaarIdSchema } from '../students/students.schemas.js';
@@ -7,6 +8,11 @@ const password = z.string().min(8, 'Password must be at least 8 characters').max
 const registrationPhone = z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit mobile number');
 const optionalAadhaar = z.union([z.literal(''), aadhaarNumberSchema]).optional().transform((value) => value || undefined);
 const optionalApaarId = z.union([z.literal(''), apaarIdSchema]).optional().transform((value) => value || undefined);
+const formBoolean = z.preprocess((value) => {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value;
+}, z.boolean());
 const registrationFields = {
   organizationCode: organizationCodeSchema,
   name: z.string().trim().min(2, 'Enter your full name').max(120),
@@ -18,8 +24,11 @@ const registrationFields = {
   aadhaarNumber: optionalAadhaar,
   apaarId: optionalApaarId,
   interestedCourseId: z.string().cuid('Choose an available course'),
-  piiConsent: z.boolean().optional().default(false),
-  termsAccepted: z.boolean().refine((value) => value, 'Accept the Terms & Conditions to continue'),
+  piiConsent: formBoolean.optional().default(false),
+  termsAccepted: formBoolean.refine((value) => value, 'Accept the Terms & Conditions to continue'),
+  paymentMethod: z.nativeEnum(RegistrationPaymentMethod),
+  transactionReference: z.string().trim().min(1, 'Enter the transaction or reference number').max(120),
+  reportedPaid: formBoolean.refine((value) => value, 'Confirm that you have paid to continue'),
 };
 
 function validateRegistrationPrivacy(

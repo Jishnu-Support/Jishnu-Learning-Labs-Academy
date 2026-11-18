@@ -27,6 +27,7 @@ export const paymentFiltersSchema = z.object({
 
 export const registrationPaymentFiltersSchema = z.object({
   status: z.nativeEnum(RegistrationPaymentStatus).optional(),
+  organizationId: z.string().trim().min(1).max(64).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
 }).refine((value) => !value.from || !value.to || value.from <= value.to, {

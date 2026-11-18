@@ -30,17 +30,21 @@ paymentsRouter.get(
 );
 paymentsRouter.get(
   '/registration',
-  requireOrganization,
-  requireRoles(Role.ORG_ADMIN),
+  requireRoles(Role.ORG_ADMIN, Role.SUPER_ADMIN),
   validateQuery(registrationPaymentFiltersSchema),
   controller.registrationPayments,
 );
 paymentsRouter.put(
   '/registration/:paymentId/confirm',
-  requireOrganization,
-  requireRoles(Role.ORG_ADMIN),
+  requireRoles(Role.ORG_ADMIN, Role.SUPER_ADMIN),
   validateParams(paymentIdSchema),
   controller.confirmRegistrationPayment,
+);
+paymentsRouter.get(
+  '/registration/:paymentId/receipt',
+  requireRoles(Role.ORG_ADMIN, Role.SUPER_ADMIN),
+  validateParams(paymentIdSchema),
+  controller.registrationPaymentReceipt,
 );
 paymentsRouter.put(
   '/registration/:paymentId/refund',

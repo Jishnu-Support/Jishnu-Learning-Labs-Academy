@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220" role="img" aria-labelledby="title description">
+  <title id="title">Sample UPI QR code</title>
+  <desc id="description">Decorative demo-only QR-style pattern. It cannot accept payments.</desc>
+  <rect width="220" height="220" rx="12" fill="#fff"/>
+  <g fill="#172421">
+    <path d="M16 16h60v60H16zm8 8v44h44V24zm8 8h28v28H32zM144 16h60v60h-60zm8 8v44h44V24zm8 8h28v28h-28zM16 144h60v60H16zm8 8v44h44v-44zm8 8h28v28H32z"/>
+    <path d="M88 16h12v12H88zm20 0h12v20h-12zm20 0h8v12h-8zM84 40h16v12H84zm24 8h12v16h-12zm20-8h16v12h-16zm-40 24h12v12H88zm20 0h16v12h-16zm24 0h16v12h-16zm-48 24h12v20H84zm20 4h16v12h-16zm24-4h12v20h-12zm20 0h16v12h-16zm-64 28h20v12H84zm28-8h12v20h-12zm20 8h20v12h-20zm28-8h12v20h-12zm20 8h16v12h-16zM84 128h12v12H84zm20 0h12v20h-12zm20 0h20v12h-20zm28 0h12v20h-12zm20 0h12v12h-12zm-88 20h12v16H84zm20 4h16v12h-16zm24-4h12v20h-12zm20 8h16v12h-16zm24-8h12v20h-12zm-88 24h20v12H84zm28 0h12v16h-12zm20 0h20v12h-20zm28 0h12v16h-12zm20 0h16v12h-16z"/>
+  </g>
+  <rect x="83" y="83" width="54" height="54" rx="8" fill="#fff" stroke="#d9ded5" stroke-width="2"/>
+  <text x="110" y="106" text-anchor="middle" fill="#a84231" font-family="Arial,sans-serif" font-size="12" font-weight="700">DEMO</text>
+  <text x="110" y="123" text-anchor="middle" fill="#172421" font-family="Arial,sans-serif" font-size="8">NO PAYMENT</text>
+</svg>

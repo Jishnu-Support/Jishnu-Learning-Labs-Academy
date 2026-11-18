@@ -61,6 +61,9 @@ const schema = z.object({
   aadhaarNumber: z.union([z.literal(''), aadhaarSchema]).optional(),
   apaarId: z.union([z.literal(''), z.string().regex(/^\d{12}$/, 'Enter a valid 12-digit APAAR ID')]).optional(),
   interestedCourseId: z.string().min(1, 'Choose an interested course'),
+  paymentMethod: z.enum(['UPI', 'CREDIT_CARD', 'DEBIT_CARD', 'NET_BANKING'], { message: 'Choose a payment method' }),
+  transactionReference: z.string().trim().min(1, 'Enter the transaction or reference number').max(120, 'Use 120 characters or fewer'),
+  reportedPaid: z.boolean().refine((value) => value, 'Confirm that you have paid to continue'),
   piiConsent: z.boolean(),
   termsAccepted: z.boolean().refine((value) => value, 'Accept the Terms & Conditions to continue'),
   password: z.string().min(8, 'Use at least 8 characters').max(128),
@@ -76,8 +79,8 @@ type RegistrationOptions = {
 };
 
 const roleDetails = {
-  STUDENT: { title: 'Student', endpoint: '/auth/students/register', login: '/student/login', approvalActor: 'A Tutor', approval: 'Tutor' },
-  TUTOR: { title: 'Tutor', endpoint: '/auth/tutors/register', login: '/tutor/login', approvalActor: 'An Org Admin', approval: 'Org Admin' },
+  STUDENT: { title: 'Student', endpoint: '/auth/students/register', login: '/student/login' },
+  TUTOR: { title: 'Tutor', endpoint: '/auth/tutors/register', login: '/tutor/login' },
 } as const;
 
 export function RegisterPage({ role }: Props) {
@@ -108,11 +111,16 @@ export function RegisterPage({ role }: Props) {
       aadhaarNumber: '',
       apaarId: '',
       interestedCourseId: '',
+      paymentMethod: 'UPI',
+      transactionReference: '',
+      reportedPaid: false,
       piiConsent: false,
       termsAccepted: false,
       password: '',
     },
   });
+  const [receipt, setReceipt] = useState<File | null>(null);
+  const [receiptError, setReceiptError] = useState('');
   const organizationCode = form.watch('organizationCode').trim();
   const options = useQuery({
     queryKey: ['registration-options', organizationCode, role],
@@ -126,7 +134,8 @@ export function RegisterPage({ role }: Props) {
 
   const mutation = useMutation({
     mutationFn: async (values: FormValues) => {
-      const body = {
+      const body = new FormData();
+      const fields = {
         organizationCode: values.organizationCode,
         name: values.name,
         email: values.email,
@@ -139,10 +148,17 @@ export function RegisterPage({ role }: Props) {
         interestedCourseId: values.interestedCourseId,
         piiConsent: values.piiConsent,
         termsAccepted: values.termsAccepted,
+        paymentMethod: values.paymentMethod,
+        transactionReference: values.transactionReference,
+        reportedPaid: values.reportedPaid,
         ...(role === 'STUDENT' ? { studentId: values.studentId } : {}),
         ...(role === 'TUTOR' ? { tutorId: values.tutorId } : {}),
       };
-      const result = await api<{ registrationAccessToken?: string }>(details.endpoint, { method: 'POST', body: JSON.stringify(body) });
+      for (const [key, value] of Object.entries(fields)) {
+        if (value !== undefined) body.append(key, String(value));
+      }
+      if (receipt) body.append('receipt', receipt);
+      const result = await api<{ registrationAccessToken?: string }>(details.endpoint, { method: 'POST', body });
       if (role === 'STUDENT' && !result.registrationAccessToken) {
         throw new Error('Registration status access could not be created. Please contact your organization.');
       }
@@ -162,7 +178,9 @@ export function RegisterPage({ role }: Props) {
       <section className="narrow-card card">
         <p className="eyebrow">REGISTRATION RECEIVED</p>
         <PageHeader title="Registration received" backTo="/organizations/register" breadcrumbs={['Register', 'Confirmation']} />
-        <p className="muted">Your account is pending {details.approval} approval. You’ll be able to sign in after it is approved.</p>
+        <p className="muted">{role === 'STUDENT'
+          ? 'Your account is pending payment verification. It will be approved automatically when an administrator confirms payment.'
+          : 'Your payment is pending verification. After confirmation, an Org Admin will review your Tutor registration.'}</p>
         <Link className="text-link" to={details.login}>Return to {details.title.toLowerCase()} sign in</Link>
       </section>
     );
@@ -172,9 +190,12 @@ export function RegisterPage({ role }: Props) {
       <p className="eyebrow">{details.title.toUpperCase()} PORTAL</p>
       <PageHeader title="Create your account" backTo="/organizations/register" breadcrumbs={[details.title, 'Register']} hasUnsavedChanges={form.formState.isDirty} />
       <p className="muted">{role === 'STUDENT'
-        ? 'Your account is approved automatically when your first-month registration fee is recorded. You can sign in immediately afterward.'
-        : `${details.approvalActor} must approve your registration before you can sign in.`}</p>
-      <form className="form-stack registration-form" onSubmit={form.handleSubmit((values) => mutation.mutate(values))} noValidate>
+        ? 'Your account is approved automatically when an administrator confirms your registration payment.'
+        : 'Payment verification comes first; an Org Admin must still approve your Tutor registration before you can sign in.'}</p>
+      <form className="form-stack registration-form" onSubmit={form.handleSubmit((values) => {
+        if (receiptError) return;
+        mutation.mutate(values);
+      })} noValidate>
         <Field label="Organization Code" autoComplete="organization" {...form.register('organizationCode')} error={form.formState.errors.organizationCode?.message} />
         {role === 'STUDENT'
           ? <Field label="Student ID" autoComplete="username" {...form.register('studentId')} error={form.formState.errors.studentId?.message} />
@@ -221,7 +242,7 @@ export function RegisterPage({ role }: Props) {
             <option value="">Select a published course</option>
             {options.data?.courses.map((course) => (
               <option key={course.id} value={course.id}>
-                {course.category} — {course.title}{role === 'STUDENT' && course.registrationMonthlyFee !== null
+                {course.category} — {course.title}{course.registrationMonthlyFee !== null
                   ? ` · ${new Intl.NumberFormat(undefined, { style: 'currency', currency: options.data.currency }).format(course.registrationMonthlyFee)}`
                   : ''}
               </option>
@@ -231,9 +252,65 @@ export function RegisterPage({ role }: Props) {
           {options.isLoading && <small className="muted">Loading courses…</small>}
           {options.data && options.data.courses.length === 0 && <small className="muted">{role === 'STUDENT'
             ? 'No published courses with a configured registration fee are currently available. Contact your organization.'
-            : 'No published courses are currently available for this organization.'}</small>}
+            : 'No courses with a configured registration fee are currently available for this organization.'}</small>}
           {options.error && <small className="field-error">{options.error instanceof ApiError ? options.error.message : 'Could not load courses for this organization.'}</small>}
         </label>
+        <section className="registration-payment-section" aria-labelledby="registration-payment-title">
+          <h2 id="registration-payment-title">Payment</h2>
+          <label className="field">Course fee
+            <input
+              className="input"
+              readOnly
+              value={(() => {
+                const course = options.data?.courses.find(({ id }) => id === form.watch('interestedCourseId'));
+                return course?.registrationMonthlyFee === null || course?.registrationMonthlyFee === undefined
+                  ? ''
+                  : new Intl.NumberFormat(undefined, { style: 'currency', currency: options.data?.currency ?? 'INR' }).format(course.registrationMonthlyFee);
+              })()}
+              placeholder="Choose a course to view its fee"
+            />
+          </label>
+          <label className="field">Payment method
+            <select className="input" {...form.register('paymentMethod')}>
+              <option value="UPI">UPI</option>
+              <option value="CREDIT_CARD">Credit Card</option>
+              <option value="DEBIT_CARD">Debit Card</option>
+              <option value="NET_BANKING">Net Banking</option>
+            </select>
+            {form.formState.errors.paymentMethod?.message && <small className="field-error">{form.formState.errors.paymentMethod.message}</small>}
+          </label>
+          {form.watch('paymentMethod') === 'UPI'
+            ? <figure className="registration-sample-qr">
+              <img src="/registration/sample-upi-qr.svg" alt="Sample UPI QR code demo only" />
+              <figcaption>Sample QR - demo only. This code does not accept payments.</figcaption>
+            </figure>
+            : <p className="notice notice-info">Demo only - no real payment processed. Do not enter or store card numbers.</p>}
+          <Field label="Transaction / Reference number" autoComplete="off" maxLength={120} {...form.register('transactionReference')} error={form.formState.errors.transactionReference?.message} />
+          <label className="field">Receipt upload (optional)
+            <input
+              className="input"
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                const allowed = file && ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(file.type)
+                  && /\.(pdf|png|jpe?g|webp)$/i.test(file.name)
+                  && file.size <= 5 * 1024 * 1024;
+                setReceiptError(file && !allowed ? 'Choose a PDF, PNG, JPG, or WEBP receipt up to 5 MB.' : '');
+                setReceipt(file && allowed ? file : null);
+                if (file && !allowed) event.target.value = '';
+              }}
+            />
+            {receiptError && <small className="field-error">{receiptError}</small>}
+          </label>
+          <label className="field registration-consent">
+            <span className="registration-checkbox">
+              <input type="checkbox" {...form.register('reportedPaid')} />
+              I have paid the displayed course fee.
+            </span>
+            {form.formState.errors.reportedPaid?.message && <small className="field-error">{form.formState.errors.reportedPaid.message}</small>}
+          </label>
+        </section>
         <details id="registration-terms" className="registration-terms">
           <summary>Terms &amp; Conditions</summary>
           <p>Submitting creates a pending registration request. Your application is shared with the authorized reviewer for your role and organization. Keep your sign-in credentials private and provide only accurate information.</p>
@@ -246,7 +323,7 @@ export function RegisterPage({ role }: Props) {
           {form.formState.errors.termsAccepted?.message && <small className="field-error">{form.formState.errors.termsAccepted.message}</small>}
         </label>
         {mutation.error && <p className="notice notice-error" role="alert">{mutation.error instanceof ApiError ? mutation.error.message : 'Registration failed. Please try again.'}</p>}
-        <Button type="submit" disabled={mutation.isPending || !form.watch('termsAccepted')}>{mutation.isPending ? 'Submitting…' : 'Submit registration'}</Button>
+        <Button type="submit" disabled={mutation.isPending || !form.watch('termsAccepted') || !form.watch('reportedPaid') || !form.watch('transactionReference').trim() || Boolean(receiptError)}>{mutation.isPending ? 'Submitting…' : 'Submit registration'}</Button>
       </form>
       <p className="form-foot">Already registered? <Link to={details.login}>Sign in</Link></p>
     </section>

@@ -28,15 +28,22 @@ type PaymentRecord = {
 
 type RegistrationPaymentRecord = {
   id: string;
+  organizationId: string;
+  applicantRole: 'STUDENT' | 'TUTOR';
+  organization: { id: string; name: string; code: string | null };
   amount: number;
   currency: string;
   status: 'PENDING' | 'PAID' | 'REFUNDED';
+  paymentMethod: 'UPI' | 'CREDIT_CARD' | 'DEBIT_CARD' | 'NET_BANKING' | null;
+  transactionReference: string | null;
+  receiptOriginalName: string | null;
+  reportedPaid: boolean;
   createdAt: string;
   paidAt: string | null;
   refundedAt: string | null;
   refundReason: string | null;
   course: { id: string; code: string; title: string };
-  student: { id: string; name: string; status: string; studentId: string };
+  applicant: { id: string; name: string; status: string; role: 'STUDENT' | 'TUTOR'; applicantId: string };
 };
 
 type Plan = {
@@ -183,6 +190,7 @@ export function PaymentsManagementPage() {
   const [pendingAction, setPendingAction] = useState<{ kind: 'subscription' | 'refund'; payment: PaymentRecord; nextStatus?: 'ACTIVE' | 'INACTIVE' } | null>(null);
   const [reason, setReason] = useState('');
   const [registrationStatus, setRegistrationStatus] = useState('');
+  const [registrationOrganization, setRegistrationOrganization] = useState('');
   const [registrationFrom, setRegistrationFrom] = useState('');
   const [registrationTo, setRegistrationTo] = useState('');
   const [pendingRegistrationRefund, setPendingRegistrationRefund] = useState<RegistrationPaymentRecord | null>(null);
@@ -197,14 +205,15 @@ export function PaymentsManagementPage() {
   const registrationQueryString = useMemo(() => {
     const params = new URLSearchParams();
     if (registrationStatus) params.set('status', registrationStatus);
+    if (registrationOrganization) params.set('organizationId', registrationOrganization);
     if (registrationFrom) params.set('from', registrationFrom);
     if (registrationTo) params.set('to', registrationTo);
     return params.toString();
-  }, [registrationFrom, registrationStatus, registrationTo]);
+  }, [registrationFrom, registrationOrganization, registrationStatus, registrationTo]);
   const registrationPaymentsQuery = useQuery({
     queryKey: ['registration-payments', registrationQueryString],
     queryFn: () => api<{ payments: RegistrationPaymentRecord[] }>(`/payments/registration${registrationQueryString ? `?${registrationQueryString}` : ''}`),
-    enabled: isOrgAdmin,
+    enabled: isOrgAdmin || isSuperAdmin,
   });
   const data = query.data;
   const currency = data?.organization?.currency ?? data?.organizations[0]?.currency ?? 'INR';
@@ -272,6 +281,14 @@ export function PaymentsManagementPage() {
       await downloadBlob(await apiBlob(`/payments/management/export.csv${queryString ? `?${queryString}` : ''}`), 'course-payments.csv');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Unable to export payments.');
+    }
+  };
+
+  const downloadRegistrationReceipt = async (paymentId: string, filename: string) => {
+    try {
+      await downloadBlob(await apiBlob(`/payments/registration/${paymentId}/receipt`), filename);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Unable to open the registration receipt.');
     }
   };
 
@@ -423,46 +440,56 @@ export function PaymentsManagementPage() {
             </tbody></table></div>
           </section>
 
-          {isOrgAdmin && <section id="student-registration-payments" className="card payment-module-section">
+          {(isOrgAdmin || isSuperAdmin) && <section id="registration-payments" className="card payment-module-section">
             <div className="payment-section-heading">
-              <div><h2>Student registration payments</h2><p className="muted">Confirming an offline first-month fee approves the Student account immediately. Refunds can be recorded only for paid registrations that are rejected.</p></div>
+              <div><h2>Registration payments</h2><p className="muted">Confirming a Student payment activates the account immediately. A Tutor payment confirmation sends the application to Org Admin for manual approval. Refunds remain available for rejected paid registrations.</p></div>
             </div>
             <div className="payment-filters">
+              {isSuperAdmin && <label className="field">Organization<select className="input" value={registrationOrganization} onChange={(event) => setRegistrationOrganization(event.target.value)}>
+                <option value="">All organizations</option>{data?.organizations.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.code})</option>)}
+              </select></label>}
               <label className="field">Payment status<select className="input" value={registrationStatus} onChange={(event) => setRegistrationStatus(event.target.value)}>
                 <option value="">All statuses</option><option value="PENDING">Pending</option><option value="PAID">Paid</option><option value="REFUNDED">Refunded</option>
               </select></label>
               <label className="field">Submitted from<input className="input" type="date" value={registrationFrom} onChange={(event) => setRegistrationFrom(event.target.value)} /></label>
               <label className="field">Submitted to<input className="input" type="date" value={registrationTo} onChange={(event) => setRegistrationTo(event.target.value)} /></label>
-              <Button type="button" variant="secondary" onClick={() => { setRegistrationStatus(''); setRegistrationFrom(''); setRegistrationTo(''); }}>Clear filters</Button>
+              <Button type="button" variant="secondary" onClick={() => { setRegistrationStatus(''); setRegistrationOrganization(''); setRegistrationFrom(''); setRegistrationTo(''); }}>Clear filters</Button>
             </div>
-            {registrationPaymentsQuery.isLoading && <p className="loading">Loading student registration payments…</p>}
-            {registrationPaymentsQuery.error && <p className="notice notice-error" role="alert">{registrationPaymentsQuery.error instanceof Error ? registrationPaymentsQuery.error.message : 'Student registration payments could not be loaded.'}</p>}
+            {registrationPaymentsQuery.isLoading && <p className="loading">Loading registration payments…</p>}
+            {registrationPaymentsQuery.error && <p className="notice notice-error" role="alert">{registrationPaymentsQuery.error instanceof Error ? registrationPaymentsQuery.error.message : 'Registration payments could not be loaded.'}</p>}
             {registrationPaymentsQuery.data && <div className="table-scroll"><table className="data-table">
-              <thead><tr><th>Student</th><th>Student ID</th><th>Course</th><th>First-month fee</th><th>Payment status</th><th>Account status</th><th>Submitted</th><th>Payment recorded</th><th>Refund reason</th><th>Actions</th></tr></thead>
+              <thead><tr>{isSuperAdmin && <th>Organization</th>}<th>Applicant</th><th>Role</th><th>Applicant ID</th><th>Course</th><th>Amount</th><th>Method</th><th>Transaction reference</th><th>Receipt</th><th>Applicant payment claim</th><th>Payment status</th><th>Account status</th><th>Submitted</th><th>Payment recorded</th><th>Refund reason</th><th>Actions</th></tr></thead>
               <tbody>
                 {registrationPaymentsQuery.data.payments.map((payment) => (
                   <tr key={payment.id}>
-                    <td>{payment.student.name}</td><td>{payment.student.studentId}</td>
+                    {isSuperAdmin && <td>{payment.organization.name} ({payment.organization.code})</td>}
+                    <td>{payment.applicant.name}</td><td>{payment.applicantRole}</td><td>{payment.applicant.applicantId}</td>
                     <td>{payment.course.code} — {payment.course.title}</td>
                     <td>{formatMoney(payment.amount, payment.currency)}</td>
-                    <td><span className={`payment-status payment-status-${payment.status.toLowerCase()}`}>{payment.status}</span></td>
-                    <td>{payment.student.status === 'PENDING_PAYMENT' ? 'Pending Payment' : payment.student.status === 'PENDING' ? 'Pending Review' : payment.student.status}</td>
+                    <td>{payment.paymentMethod?.replaceAll('_', ' ') ?? 'Legacy record'}</td>
+                    <td>{payment.transactionReference ?? '—'}</td>
+                    <td>{payment.receiptOriginalName
+                      ? <Button type="button" variant="secondary" onClick={() => void downloadRegistrationReceipt(payment.id, payment.receiptOriginalName ?? 'registration-receipt')}>View receipt</Button>
+                      : '—'}</td>
+                    <td>{payment.reportedPaid ? 'Paid (applicant reported)' : 'Not Paid (applicant reported)'}</td>
+                    <td><span className={`payment-status payment-status-${payment.status.toLowerCase()}`}>{payment.status === 'PENDING' ? 'Pending Verification' : payment.status}</span></td>
+                    <td>{payment.applicant.status === 'PENDING_PAYMENT' ? 'Pending Payment' : payment.applicant.status === 'PENDING' ? 'Pending Review' : payment.applicant.status}</td>
                     <td>{formatDate(payment.createdAt)}</td><td>{payment.paidAt ? formatDate(payment.paidAt) : payment.refundedAt ? formatDate(payment.refundedAt) : '—'}</td>
                     <td>{payment.refundReason ?? '—'}</td>
                     <td><div className="payment-row-actions">
-                      {payment.status === 'PENDING' && payment.student.status === 'PENDING_PAYMENT' && <Button type="button" disabled={registrationPaymentMutation.isPending} onClick={() => {
-                        if (window.confirm(`Confirm receipt of ${formatMoney(payment.amount, payment.currency)} for ${payment.student.name}?`)) {
+                      {payment.status === 'PENDING' && payment.applicant.status === 'PENDING_PAYMENT' && (payment.reportedPaid || payment.paymentMethod === null) && <Button type="button" disabled={registrationPaymentMutation.isPending} onClick={() => {
+                        if (window.confirm(`Confirm receipt of ${formatMoney(payment.amount, payment.currency)} for ${payment.applicant.name}?`)) {
                           registrationPaymentMutation.mutate({ paymentId: payment.id, action: 'confirm' });
                         }
-                      }}>Mark received</Button>}
-                      {payment.status === 'PAID' && payment.student.status === 'REJECTED' && <Button type="button" variant="secondary" onClick={() => {
+                      }}>Confirm Payment</Button>}
+                      {isOrgAdmin && payment.status === 'PAID' && payment.applicant.status === 'REJECTED' && <Button type="button" variant="secondary" onClick={() => {
                         setRegistrationRefundReason('');
                         setPendingRegistrationRefund(payment);
                       }}>Record offline refund</Button>}
                     </div></td>
                   </tr>
                 ))}
-                {registrationPaymentsQuery.data.payments.length === 0 && <tr><td colSpan={10} className="report-empty">No student registrations match these filters.</td></tr>}
+                {registrationPaymentsQuery.data.payments.length === 0 && <tr><td colSpan={isSuperAdmin ? 16 : 15} className="report-empty">No registrations match these filters.</td></tr>}
               </tbody>
             </table></div>}
           </section>}
@@ -483,7 +510,7 @@ export function PaymentsManagementPage() {
             });
           }}>
             <h2 id="registration-refund-title">Record offline refund</h2>
-            <p>{pendingRegistrationRefund.student.name} · {pendingRegistrationRefund.course.title} · {formatMoney(pendingRegistrationRefund.amount, pendingRegistrationRefund.currency)}</p>
+            <p>{pendingRegistrationRefund.applicant.name} · {pendingRegistrationRefund.course.title} · {formatMoney(pendingRegistrationRefund.amount, pendingRegistrationRefund.currency)}</p>
             <label className="field">Reason<textarea className="input" value={registrationRefundReason} onChange={(event) => setRegistrationRefundReason(event.target.value)} minLength={3} maxLength={500} required /></label>
             <div className="button-row"><Button type="submit" disabled={registrationPaymentMutation.isPending || registrationRefundReason.trim().length < 3}>Record refund</Button><Button type="button" variant="secondary" onClick={() => setPendingRegistrationRefund(null)}>Cancel</Button></div>
           </form></div>}

@@ -47,6 +47,13 @@ enum RegistrationPaymentStatus {
   REFUNDED
 }
 
+enum RegistrationPaymentMethod {
+  UPI
+  CREDIT_CARD
+  DEBIT_CARD
+  NET_BANKING
+}
+
 enum OrganizationStatus {
   ACTIVE
   PENDING
@@ -329,7 +336,7 @@ model User {
   tutorSubscriptions       Subscription[]           @relation("SubscriptionTutor")
   studentPayments          Payment[]                @relation("PaymentStudent")
   tutorPayments            Payment[]                @relation("PaymentTutor")
-  registrationPayment      RegistrationPayment?    @relation("RegistrationPaymentStudent")
+  registrationPayment      RegistrationPayment?    @relation("RegistrationPaymentApplicant")
   preferredByStudents      StudentProfile[]         @relation("StudentPreferredTutor")
   tutorReviewsWritten      TutorReview[]            @relation("TutorReviewStudent")
   tutorReviewsReceived     TutorReview[]            @relation("TutorReviewTutor")
@@ -379,25 +386,32 @@ model StudentProfile {
 }
 
 model RegistrationPayment {
-  id              String                    @id @default(cuid())
-  organizationId  String
-  studentId       String
-  courseId        String
-  amount          Decimal                   @db.Decimal(12, 2)
-  currency        String                    @default("INR")
-  status          RegistrationPaymentStatus @default(PENDING)
-  statusTokenHash String                    @unique
-  paidAt          DateTime?
-  refundedAt      DateTime?
-  refundReason    String?
-  createdAt       DateTime                  @default(now())
-  updatedAt       DateTime                  @updatedAt
-  organization    Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  student         User                      @relation("RegistrationPaymentStudent", fields: [organizationId, studentId], references: [organizationId, id], onDelete: Restrict)
-  course          Course                    @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Restrict)
+  id                    String                     @id @default(cuid())
+  organizationId        String
+  applicantId           String                     @map("studentId")
+  applicantRole         Role                       @default(STUDENT)
+  courseId              String
+  amount                Decimal                    @db.Decimal(12, 2)
+  currency              String                     @default("INR")
+  status                RegistrationPaymentStatus  @default(PENDING)
+  paymentMethod         RegistrationPaymentMethod?
+  transactionReference  String?                    @db.VarChar(120)
+  receiptStorageKey     String?
+  receiptOriginalName   String?
+  reportedPaid          Boolean                    @default(false)
+  statusTokenHash       String                     @unique(map: "RegistrationPayment_statusTokenHash_key")
+  paidAt                DateTime?
+  refundedAt            DateTime?
+  refundReason          String?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+  organization          Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  applicant             User                       @relation("RegistrationPaymentApplicant", fields: [organizationId, applicantId], references: [organizationId, id], onDelete: Restrict, map: "RegistrationPayment_organizationId_studentId_fkey")
+  course                Course                     @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Restrict)
 
-  @@unique([organizationId, studentId])
+  @@unique([organizationId, applicantId], map: "RegistrationPayment_organizationId_studentId_key")
   @@index([organizationId, status, createdAt])
+  @@index([organizationId, applicantRole, status, createdAt])
 }
 
 model TutorReview {

@@ -129,8 +129,15 @@ describe('PaymentsManagementPage', () => {
             paidAt: null,
             refundedAt: null,
             refundReason: null,
+            organizationId: 'org-1',
+            applicantRole: 'STUDENT',
+            organization: { id: 'org-1', name: 'Academy', code: 'academy' },
+            paymentMethod: 'UPI',
+            transactionReference: 'TX-STUDENT-1',
+            receiptOriginalName: null,
+            reportedPaid: true,
             course: { id: 'course-1', code: 'PY101', title: 'Python' },
-            student: { id: 'student-1', name: 'Student One', status: 'PENDING_PAYMENT', studentId: 'STU-1' },
+            applicant: { id: 'student-1', name: 'Student One', status: 'PENDING_PAYMENT', role: 'STUDENT', applicantId: 'STU-1' },
           }],
         };
       }
@@ -139,8 +146,49 @@ describe('PaymentsManagementPage', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderPage('ORG_ADMIN');
-    expect(await screen.findByText('Student registration payments')).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole('button', { name: 'Mark received' }));
+    expect(await screen.findByText('Registration payments')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm Payment' }));
     await waitFor(() => expect(vi.mocked(api)).toHaveBeenCalledWith('/payments/registration/registration-payment-1/confirm', { method: 'PUT' }));
+  }, 15000);
+
+  it('lets a Super Admin review and confirm a Tutor registration payment', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === '/payments/management') return { ...data, scope: 'SUPER_ADMIN', organization: null, organizations: [] };
+      if (path.startsWith('/payments/registration')) {
+        return {
+          payments: [{
+            id: 'tutor-registration-payment-1',
+            organizationId: 'org-1',
+            applicantRole: 'TUTOR',
+            organization: { id: 'org-1', name: 'Academy', code: 'academy' },
+            amount: 300,
+            currency: 'INR',
+            status: 'PENDING',
+            paymentMethod: 'NET_BANKING',
+            transactionReference: 'TX-TUTOR-1',
+            receiptOriginalName: 'receipt.pdf',
+            reportedPaid: true,
+            createdAt: '2026-10-01T00:00:00.000Z',
+            paidAt: null,
+            refundedAt: null,
+            refundReason: null,
+            course: { id: 'course-1', code: 'PY101', title: 'Python' },
+            applicant: { id: 'tutor-1', name: 'Tutor Applicant', status: 'PENDING_PAYMENT', role: 'TUTOR', applicantId: 'TUT-0101' },
+          }],
+        };
+      }
+      return {};
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderPage('SUPER_ADMIN');
+    expect(await screen.findByText('Tutor Applicant')).toBeInTheDocument();
+    expect(screen.getByText('TX-TUTOR-1')).toBeInTheDocument();
+    expect(screen.getByText('Paid (applicant reported)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Payment' }));
+    await waitFor(() => expect(vi.mocked(api)).toHaveBeenCalledWith(
+      '/payments/registration/tutor-registration-payment-1/confirm',
+      { method: 'PUT' },
+    ));
   }, 15000);
 });

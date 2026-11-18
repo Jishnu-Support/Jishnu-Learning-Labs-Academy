@@ -36,19 +36,19 @@ function loginResponse(res: Response, credentials: Awaited<ReturnType<typeof aut
 }
 
 export const registerStudent: RequestHandler = async (req, res) => {
-  const result = await authService.registerStudent(req.body);
+  const result = await authService.registerStudent({ ...req.body, receipt: req.file });
   res.status(201).json({
     data: {
       user: result.user,
       registrationAccessToken: result.registrationAccessToken,
-      message: 'Registration submitted. Pay the first-month fee and wait for Tutor approval before signing in.',
+      message: 'Registration submitted. An administrator will verify the payment details before activating your account.',
     },
   });
 };
 
 export const registrationOptions: RequestHandler = async (req, res) => {
-  const { organizationCode, role } = registrationOptionsQuerySchema.parse(req.query);
-  const options = await authService.getRegistrationOptions(organizationCode, role);
+  const { organizationCode } = registrationOptionsQuerySchema.parse(req.query);
+  const options = await authService.getRegistrationOptions(organizationCode);
   res.json({ data: options });
 };
 
@@ -62,8 +62,8 @@ export const deprecatedInstructorRegistration: RequestHandler = () => {
 };
 
 export const registerTutor: RequestHandler = async (req, res) => {
-  const user = await authService.registerTutor(req.body);
-  res.status(201).json({ data: { user, message: 'Tutor registration submitted. An organization admin must approve your account before you can sign in.' } });
+  const user = await authService.registerTutor({ ...req.body, receipt: req.file });
+  res.status(201).json({ data: { user, message: 'Tutor registration submitted. Payment must be verified before an Org Admin reviews the registration.' } });
 };
 
 export const studentLogin: RequestHandler = async (req, res) => {

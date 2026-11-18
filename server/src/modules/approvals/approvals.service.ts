@@ -47,7 +47,7 @@ async function decideStudent(
   if (profile.userId === actorId) throw new HttpError(403, 'You cannot approve your own account');
   if (profile.status !== StudentStatus.PENDING) throw new HttpError(409, 'This registration is no longer pending');
   const registrationPayment = await prisma.registrationPayment.findFirst({
-    where: { organizationId: tenantId, studentId: profile.userId },
+    where: { organizationId: tenantId, applicantId: profile.userId, applicantRole: Role.STUDENT },
     select: { status: true },
   });
   if (registrationPayment && registrationPayment.status !== RegistrationPaymentStatus.PAID) {

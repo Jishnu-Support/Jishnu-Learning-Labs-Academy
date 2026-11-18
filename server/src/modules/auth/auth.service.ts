@@ -1,12 +1,17 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import bcrypt from 'bcrypt';
-import { AccountStatus, CourseStatus, NotificationType, OrganizationStatus, Prisma, Role, StudentStatus, type User } from '@prisma/client';
+import {
+  AccountStatus, CourseStatus, NotificationType, OrganizationStatus, Prisma, RegistrationPaymentMethod,
+  RegistrationPaymentStatus, Role, StudentStatus, type User,
+} from '@prisma/client';
+import type { Express } from 'express';
 import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { hashToken, makeAccessToken, makeRefreshToken, verifyRefreshToken } from '../../utils/tokens.js';
 import { encryptIdentifier } from '../students/student-identifiers.crypto.js';
 import { notifyAfterCommit, notifyUsers } from '../notifications/notifications.service.js';
+import { removeRegistrationReceipt, saveRegistrationReceipt } from '../payments/registration-receipt.service.js';
 
 type RequestMeta = { ip: string | undefined; userAgent: string | undefined };
 type Credentials = { user: User; accessToken: string; refreshToken: string };
@@ -68,7 +73,7 @@ async function issueCredentials(user: User, meta: RequestMeta): Promise<Credenti
 
 function statusMessage(user: User): string {
   if (user.status === AccountStatus.PENDING_PAYMENT) {
-    return 'Your registration is awaiting offline payment confirmation. Use the registration status page or contact your organization.';
+    return 'Your registration is awaiting payment verification. Use the registration status page or contact your organization.';
   }
   if (user.status === AccountStatus.PENDING) {
     const roleLabel = user.role === Role.TUTOR ? 'Tutor' : user.role.toLowerCase().replace('_', ' ');
@@ -135,7 +140,7 @@ async function loginTenant(role: Role, input: TenantLogin, meta: RequestMeta): P
   return issueCredentials(user, meta);
 }
 
-export async function getRegistrationOptions(organizationCode: string, role: 'STUDENT' | 'TUTOR') {
+export async function getRegistrationOptions(organizationCode: string) {
   const organization = await prisma.organization.findFirst({
     where: {
       code: organizationCode,
@@ -148,7 +153,7 @@ export async function getRegistrationOptions(organizationCode: string, role: 'ST
     where: {
       organizationId: organization.id,
       status: CourseStatus.PUBLISHED,
-      ...(role === 'STUDENT' ? { registrationMonthlyFee: { gt: 0 } } : {}),
+      registrationMonthlyFee: { gt: 0 },
     },
     orderBy: { title: 'asc' },
     select: { id: true, title: true, category: true, registrationMonthlyFee: true },
@@ -177,22 +182,23 @@ type RegistrationDetails = {
   interestedCourseId: string;
   piiConsent: boolean;
   termsAccepted: boolean;
+  paymentMethod: RegistrationPaymentMethod;
+  transactionReference: string;
+  reportedPaid: boolean;
 };
 
-async function getSelectedCourse(organizationId: string, courseId: string, requireRegistrationFee = false) {
+async function getSelectedCourse(organizationId: string, courseId: string) {
   const course = await prisma.course.findFirst({
     where: {
       id: courseId,
       organizationId,
       status: CourseStatus.PUBLISHED,
-      ...(requireRegistrationFee ? { registrationMonthlyFee: { gt: 0 } } : {}),
+      registrationMonthlyFee: { gt: 0 },
     },
     select: { id: true, title: true, category: true, registrationMonthlyFee: true },
   });
   if (!course) {
-    throw new HttpError(400, requireRegistrationFee
-      ? 'Choose a published course with a configured registration fee in your organization'
-      : 'Choose a published course in your organization');
+    throw new HttpError(400, 'Choose a published course with a configured registration fee in your organization');
   }
   return course;
 }
@@ -213,18 +219,20 @@ function registrationProfileFields(input: RegistrationDetails, courseTitle: stri
 
 export async function registerStudent(input: RegistrationDetails & {
   studentId: string;
+  receipt?: Express.Multer.File;
 }) {
   const organization = await prisma.organization.findFirst({
     where: { code: input.organizationCode, status: { in: [OrganizationStatus.ACTIVE, OrganizationStatus.APPROVED] } },
   });
   if (!organization) throw new HttpError(404, 'Active organization not found');
-  const course = await getSelectedCourse(organization.id, input.interestedCourseId, true);
+  const course = await getSelectedCourse(organization.id, input.interestedCourseId);
   const registrationFee = course.registrationMonthlyFee;
   if (!registrationFee) throw new HttpError(409, 'This course does not have a registration fee configured');
   const courseLabel = `${course.category} — ${course.title}`;
   const registrationAccessToken = randomBytes(32).toString('hex');
   const statusTokenHash = createHash('sha256').update(registrationAccessToken).digest('hex');
   const passwordHash = await bcrypt.hash(input.password, 12);
+  const receipt = await saveRegistrationReceipt(input.receipt);
   try {
     const user = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -250,10 +258,17 @@ export async function registerStudent(input: RegistrationDetails & {
       const registrationPayment = await tx.registrationPayment.create({
         data: {
           organizationId: organization.id,
-          studentId: user.id,
+          applicantId: user.id,
+          applicantRole: Role.STUDENT,
           courseId: course.id,
           amount: registrationFee,
           currency: organization.currency,
+          paymentMethod: input.paymentMethod,
+          transactionReference: input.transactionReference,
+          receiptStorageKey: receipt?.storageKey,
+          receiptOriginalName: receipt?.originalName,
+          reportedPaid: input.reportedPaid,
+          status: RegistrationPaymentStatus.PENDING,
           statusTokenHash,
         },
       });
@@ -285,13 +300,14 @@ export async function registerStudent(input: RegistrationDetails & {
       await notifyUsers(organization.id, admins.map(({ id }) => id), {
         type: NotificationType.ACCOUNT_PENDING,
         title: 'Student registration payment pending',
-        body: `A student submitted a registration for ${course.title}. Confirm the offline payment before Tutor review.`,
+        body: `A Student submitted payment details for ${course.title}. Verify payment to activate the account.`,
         link: '/org-admin/payments',
         dedupeKey: `student-registration-payment:${user.id}`,
       });
     }, 'student registration');
     return { user, registrationAccessToken };
   } catch (error) {
+    await removeRegistrationReceipt(receipt?.storageKey);
     if (error instanceof Error && 'code' in error && error.code === 'P2002') {
       throw new HttpError(409, 'Email or Student ID is already registered in this organization');
     }
@@ -302,20 +318,23 @@ export async function registerStudent(input: RegistrationDetails & {
 export async function registerTutor(input: {
   organizationCode: string;
   tutorId: string;
-} & RegistrationDetails) {
+} & RegistrationDetails & { receipt?: Express.Multer.File }) {
   return registerPendingAccount(input);
 }
 
 async function registerPendingAccount(
-  input: RegistrationDetails & { tutorId: string },
+  input: RegistrationDetails & { tutorId: string; receipt?: Express.Multer.File },
 ) {
   const organization = await prisma.organization.findFirst({
     where: { code: input.organizationCode, status: { in: [OrganizationStatus.ACTIVE, OrganizationStatus.APPROVED] } },
   });
   if (!organization) throw new HttpError(404, 'Active organization not found');
   const selectedCourse = await getSelectedCourse(organization.id, input.interestedCourseId);
+  const registrationFee = selectedCourse.registrationMonthlyFee;
+  if (!registrationFee) throw new HttpError(409, 'This course does not have a registration fee configured');
   const courseLabel = `${selectedCourse.category} — ${selectedCourse.title}`;
   const passwordHash = await bcrypt.hash(input.password, 12);
+  const receipt = await saveRegistrationReceipt(input.receipt);
   try {
     const user = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -326,7 +345,7 @@ async function registerPendingAccount(
           phone: `+91${input.phone}`,
           passwordHash,
           role: Role.TUTOR,
-          status: AccountStatus.PENDING,
+          status: AccountStatus.PENDING_PAYMENT,
           tutorProfile: {
             create: {
               organizationId: organization.id,
@@ -339,6 +358,22 @@ async function registerPendingAccount(
           },
         },
         select: { id: true, email: true, name: true, role: true, status: true, tutorProfile: { select: { tutorId: true } } },
+      });
+      await tx.registrationPayment.create({
+        data: {
+          organizationId: organization.id,
+          applicantId: user.id,
+          applicantRole: Role.TUTOR,
+          courseId: selectedCourse.id,
+          statusTokenHash: createHash('sha256').update(randomBytes(32)).digest('hex'),
+          amount: registrationFee,
+          currency: organization.currency,
+          paymentMethod: input.paymentMethod,
+          transactionReference: input.transactionReference,
+          receiptStorageKey: receipt?.storageKey,
+          receiptOriginalName: receipt?.originalName,
+          reportedPaid: input.reportedPaid,
+        },
       });
       await tx.auditLog.create({
         data: {
@@ -358,14 +393,15 @@ async function registerPendingAccount(
       });
       await notifyUsers(organization.id, approvers.map(({ id }) => id), {
         type: NotificationType.ACCOUNT_PENDING,
-        title: 'Tutor registration pending',
-        body: `${user.name} submitted a registration for approval.`,
-        link: '/org-admin/tutors/pending',
-        dedupeKey: `account-registration:${user.id}`,
+        title: 'Tutor registration payment pending verification',
+        body: `${user.name} submitted payment details for ${selectedCourse.title}. Verify payment before manually approving the Tutor registration.`,
+        link: '/org-admin/payments',
+        dedupeKey: `tutor-registration-payment:${user.id}`,
       });
     }, 'Tutor registration');
     return user;
   } catch (error) {
+    await removeRegistrationReceipt(receipt?.storageKey);
     if (error instanceof Error && 'code' in error && error.code === 'P2002') {
       throw new HttpError(409, 'Email or Tutor ID is already registered in this organization');
     }
@@ -377,17 +413,19 @@ async function registerPendingAccount(
 export async function getStudentRegistrationStatus(token: string) {
   const statusTokenHash = createHash('sha256').update(token).digest('hex');
   const payment = await prisma.registrationPayment.findUnique({
-    where: { statusTokenHash },
+    where: { statusTokenHash, applicantRole: Role.STUDENT },
     select: {
       id: true,
       amount: true,
       currency: true,
       status: true,
+      paymentMethod: true,
+      transactionReference: true,
       createdAt: true,
       paidAt: true,
       refundedAt: true,
       course: { select: { title: true, code: true } },
-      student: {
+      applicant: {
         select: {
           status: true,
           rejectionReason: true,
@@ -396,16 +434,18 @@ export async function getStudentRegistrationStatus(token: string) {
       },
     },
   });
-  if (!payment || !payment.student.organization) throw new HttpError(404, 'Registration status not found');
+  if (!payment || !payment.applicant.organization) throw new HttpError(404, 'Registration status not found');
   return {
     registrationReference: payment.id,
     course: payment.course,
     amount: payment.amount.toNumber(),
     currency: payment.currency,
     paymentStatus: payment.status,
-    accountStatus: payment.student.status,
-    rejectionReason: payment.student.status === AccountStatus.REJECTED ? payment.student.rejectionReason : null,
-    organization: payment.student.organization,
+    paymentMethod: payment.paymentMethod,
+    transactionReference: payment.transactionReference,
+    accountStatus: payment.applicant.status,
+    rejectionReason: payment.applicant.status === AccountStatus.REJECTED ? payment.applicant.rejectionReason : null,
+    organization: payment.applicant.organization,
     createdAt: payment.createdAt,
     paidAt: payment.paidAt,
     refundedAt: payment.refundedAt,

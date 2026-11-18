@@ -11,6 +11,8 @@ type RegistrationStatus = {
   amount: number;
   currency: string;
   paymentStatus: 'PENDING' | 'PAID' | 'REFUNDED';
+  paymentMethod: 'UPI' | 'CREDIT_CARD' | 'DEBIT_CARD' | 'NET_BANKING' | null;
+  transactionReference: string | null;
   accountStatus: 'PENDING_PAYMENT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
   rejectionReason: string | null;
   organization: { name: string; contactNumber: string };
@@ -20,7 +22,7 @@ type RegistrationStatus = {
 };
 
 function statusLabel(status: RegistrationStatus['accountStatus']) {
-  if (status === 'PENDING_PAYMENT') return 'Pending Payment';
+  if (status === 'PENDING_PAYMENT') return 'Pending Verification';
   if (status === 'PENDING') return 'Pending Review';
   return status[0] + status.slice(1).toLowerCase();
 }
@@ -49,7 +51,7 @@ export function StudentRegistrationStatusPage() {
   const accountStatus = data?.accountStatus;
   const statusText = data
     ? accountStatus === 'PENDING_PAYMENT'
-      ? 'Please pay the first-month registration fee. Your account will be approved automatically when an Org Admin records the payment.'
+      ? 'Your submitted payment details are awaiting administrator verification. Your account will be approved automatically when payment is confirmed.'
       : accountStatus === 'PENDING'
         ? 'Your account is pending review. Contact your organization for next steps.'
         : accountStatus === 'APPROVED'
@@ -73,7 +75,9 @@ export function StudentRegistrationStatusPage() {
           <dl className="registration-status-details">
             <div><dt>Course</dt><dd>{data.course.code} — {data.course.title}</dd></div>
             <div><dt>First-month registration fee</dt><dd>{money(data.amount, data.currency)}</dd></div>
-            <div><dt>Payment status</dt><dd>{data.paymentStatus}</dd></div>
+            <div><dt>Payment status</dt><dd>{data.paymentStatus === 'PENDING' ? 'Pending Verification' : data.paymentStatus}</dd></div>
+            {data.paymentMethod && <div><dt>Payment method</dt><dd>{data.paymentMethod.replaceAll('_', ' ')}</dd></div>}
+            {data.transactionReference && <div><dt>Transaction / reference</dt><dd>{data.transactionReference}</dd></div>}
             <div><dt>Registration reference</dt><dd>{data.registrationReference}</dd></div>
             <div><dt>Submitted</dt><dd>{new Date(data.createdAt).toLocaleString()}</dd></div>
             {data.paidAt && <div><dt>Payment recorded</dt><dd>{new Date(data.paidAt).toLocaleString()}</dd></div>}
@@ -83,13 +87,13 @@ export function StudentRegistrationStatusPage() {
           {accountStatus === 'PENDING_PAYMENT' && (
             <div className="registration-payment-actions">
               <Button type="button" onClick={() => setShowPaymentInstructions((shown) => !shown)}>
-                {showPaymentInstructions ? 'Hide payment instructions' : 'Pay Now'}
+                {showPaymentInstructions ? 'Hide verification instructions' : 'Payment verification instructions'}
               </Button>
               {showPaymentInstructions && (
                 <div className="card registration-payment-instructions">
-                  <h2>Offline payment</h2>
-                  <p>Contact {data.organization.name} at <a href={`tel:${data.organization.contactNumber}`}>{data.organization.contactNumber}</a> to pay this amount. Give them the registration reference above.</p>
-                  <p className="muted">Your status remains Pending Payment until an Org Admin records receipt. Do not share your password or identity numbers as payment proof.</p>
+                  <h2>Payment submitted</h2>
+                  <p>Contact {data.organization.name} at <a href={`tel:${data.organization.contactNumber}`}>{data.organization.contactNumber}</a> if you need help with payment verification. Share your transaction reference above.</p>
+                  <p className="muted">Do not pay again while verification is pending. Your account will be activated when an administrator confirms the payment.</p>
                 </div>
               )}
             </div>

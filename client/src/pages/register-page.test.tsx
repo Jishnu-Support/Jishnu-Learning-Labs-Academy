@@ -36,6 +36,21 @@ describe('registration forms', () => {
     const submit = screen.getByRole('button', { name: 'Submit registration' });
     expect(submit).toBeDisabled();
     fireEvent.click(screen.getByRole('checkbox', { name: /agree to the terms/i }));
+    expect(submit).toBeDisabled();
+    expect(screen.getByLabelText('Payment method')).toHaveValue('UPI');
+    expect(screen.getByLabelText('Transaction / Reference number')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /i have paid the displayed course fee/i })).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText('Transaction / Reference number'), { target: { value: 'TX-DEMO-1' } });
+    expect(submit).toBeDisabled();
+    fireEvent.click(screen.getByRole('checkbox', { name: /i have paid the displayed course fee/i }));
     expect(submit).toBeEnabled();
+  });
+
+  it('shows a clearly marked nonfunctional UPI sample QR and avoids collecting card details', () => {
+    renderRegistration('TUTOR');
+    expect(screen.getByRole('img', { name: 'Sample UPI QR code demo only' })).toHaveAttribute('src', '/registration/sample-upi-qr.svg');
+    fireEvent.change(screen.getByLabelText('Payment method'), { target: { value: 'CREDIT_CARD' } });
+    expect(screen.getByText('Demo only - no real payment processed. Do not enter or store card numbers.')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/card number/i)).not.toBeInTheDocument();
   });
 });

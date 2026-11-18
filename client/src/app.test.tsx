@@ -30,7 +30,7 @@ describe('Phase 1 portal shell', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider></QueryClientProvider>);
     expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
-    expect(screen.getByText(/an org admin must approve/i)).toBeInTheDocument();
+    expect(screen.getByText(/an org admin must still approve/i)).toBeInTheDocument();
     expect(screen.getByLabelText('Organization Code')).toBeInTheDocument();
     expect(screen.getByLabelText('Full name')).toBeInTheDocument();
     expect(screen.getByLabelText('Tutor ID')).toBeInTheDocument();

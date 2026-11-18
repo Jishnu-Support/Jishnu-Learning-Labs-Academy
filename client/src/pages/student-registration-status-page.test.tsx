@@ -10,6 +10,8 @@ const registrationStatus = {
   amount: 250,
   currency: 'INR',
   paymentStatus: 'PENDING',
+  paymentMethod: 'UPI',
+  transactionReference: 'TX-DEMO-1',
   accountStatus: 'PENDING_PAYMENT',
   rejectionReason: null,
   organization: { name: 'Sample Academy', contactNumber: '+911234567890' },
@@ -24,7 +26,7 @@ afterEach(() => {
 });
 
 describe('student registration status page', () => {
-  it('shows the monthly fee and opens offline Pay Now instructions', async () => {
+  it('shows the fee and submitted transaction while payment verification is pending', async () => {
     sessionStorage.setItem('student-registration-access-token', 'a'.repeat(64));
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       status: 200,
@@ -38,10 +40,11 @@ describe('student registration status page', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('Pending Payment')).toBeInTheDocument();
+    expect((await screen.findAllByText('Pending Verification')).length).toBe(2);
     expect(screen.getByText('₹250.00')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Pay Now' }));
+    expect(screen.getByText('TX-DEMO-1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Payment verification instructions' }));
     expect(await screen.findByText(/Contact Sample Academy/)).toBeInTheDocument();
-    expect(screen.getByText(/approved automatically when an Org Admin records the payment/)).toBeInTheDocument();
+    expect(screen.getByText(/Do not pay again while verification is pending/)).toBeInTheDocument();
   });
 });

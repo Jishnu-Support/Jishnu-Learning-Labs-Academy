@@ -1,4 +1,5 @@
 import type { Request, RequestHandler } from 'express';
+import { pipeline } from 'node:stream/promises';
 import { HttpError } from '../../utils/http-error.js';
 import * as service from './payments.service.js';
 import * as management from './payments-management.service.js';
@@ -107,4 +108,16 @@ export const refundRegistrationPayment: RequestHandler = async (req, res) => {
   res.json({
     data: await management.refundRegistrationPayment(actor(req), paymentId, refundSchema.parse(req.body).reason),
   });
+};
+
+export const registrationPaymentReceipt: RequestHandler = async (req, res) => {
+  const paymentId = req.params.paymentId;
+  if (typeof paymentId !== 'string') throw new HttpError(400, 'Invalid registration payment ID');
+  const user = actor(req);
+  const result = await management.registrationPaymentReceipt(user, paymentId);
+  res.setHeader('Content-Type', result.mimeType);
+  res.setHeader('Content-Disposition', `attachment; filename="${result.filename.replace(/["\r\n]/g, '')}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  await pipeline(result.stream, res);
 };

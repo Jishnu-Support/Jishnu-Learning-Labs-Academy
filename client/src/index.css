@@ -1246,6 +1246,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .registration-form .field,
 .registration-form details { min-width: 0; }
 .registration-form .input:disabled { color: var(--text-secondary); background: var(--brand-navy-50); cursor: not-allowed; }
+.registration-payment-section { display: grid; gap: 14px; min-width: 0; padding: 18px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface); }
+.registration-payment-section h2 { margin: 0; font: 700 20px/1.2 var(--font-heading); }
+.registration-sample-qr { display: grid; justify-items: start; gap: 8px; margin: 0; }
+.registration-sample-qr img { width: min(220px, 100%); aspect-ratio: 1; border: 1px solid var(--border-subtle); border-radius: 10px; }
+.registration-sample-qr figcaption { color: var(--text-secondary); font-size: 12px; }
 .registration-consent { gap: 8px; }
 .registration-checkbox { display: flex; align-items: flex-start; gap: 10px; line-height: 1.55; }
 .registration-checkbox input { width: 18px; height: 18px; flex: 0 0 auto; margin: 1px 0 0; accent-color: var(--brand-magenta); }
