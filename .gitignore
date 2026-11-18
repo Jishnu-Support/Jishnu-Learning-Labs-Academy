@@ -3,6 +3,7 @@ dist/
 coverage/
 server/storage/
 docs/dev-credentials.local.md
+.tsupgrader/runtime-validation/standalone-result.json
 .env
 .env.*
 !.env.example

@@ -26,6 +26,19 @@ type PaymentRecord = {
   createdAt: string;
 };
 
+type RegistrationPaymentRecord = {
+  id: string;
+  amount: number;
+  currency: string;
+  status: 'PENDING' | 'PAID' | 'REFUNDED';
+  createdAt: string;
+  paidAt: string | null;
+  refundedAt: string | null;
+  refundReason: string | null;
+  course: { id: string; code: string; title: string };
+  student: { id: string; name: string; status: string; studentId: string };
+};
+
 type Plan = {
   id: string;
   organizationId: string;
@@ -169,12 +182,29 @@ export function PaymentsManagementPage() {
   const [price, setPrice] = useState('');
   const [pendingAction, setPendingAction] = useState<{ kind: 'subscription' | 'refund'; payment: PaymentRecord; nextStatus?: 'ACTIVE' | 'INACTIVE' } | null>(null);
   const [reason, setReason] = useState('');
+  const [registrationStatus, setRegistrationStatus] = useState('');
+  const [registrationFrom, setRegistrationFrom] = useState('');
+  const [registrationTo, setRegistrationTo] = useState('');
+  const [pendingRegistrationRefund, setPendingRegistrationRefund] = useState<RegistrationPaymentRecord | null>(null);
+  const [registrationRefundReason, setRegistrationRefundReason] = useState('');
   const [notice, setNotice] = useState('');
   const queryString = useMemo(() => filterQuery(filters), [filters]);
   const query = useQuery({
     queryKey: ['payment-management', role, queryString],
     queryFn: () => api<ManagementData>(`/payments/management${queryString ? `?${queryString}` : ''}`),
     enabled: isTutor || isOrgAdmin || isSuperAdmin,
+  });
+  const registrationQueryString = useMemo(() => {
+    const params = new URLSearchParams();
+    if (registrationStatus) params.set('status', registrationStatus);
+    if (registrationFrom) params.set('from', registrationFrom);
+    if (registrationTo) params.set('to', registrationTo);
+    return params.toString();
+  }, [registrationFrom, registrationStatus, registrationTo]);
+  const registrationPaymentsQuery = useQuery({
+    queryKey: ['registration-payments', registrationQueryString],
+    queryFn: () => api<{ payments: RegistrationPaymentRecord[] }>(`/payments/registration${registrationQueryString ? `?${registrationQueryString}` : ''}`),
+    enabled: isOrgAdmin,
   });
   const data = query.data;
   const currency = data?.organization?.currency ?? data?.organizations[0]?.currency ?? 'INR';
@@ -183,12 +213,31 @@ export function PaymentsManagementPage() {
     if (data?.organization) setSettings(settingsFromData(data.organization));
   }, [data?.organization]);
 
-  const refresh = async () => queryClient.invalidateQueries({ queryKey: ['payment-management'] });
+  const refresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['payment-management'] }),
+      queryClient.invalidateQueries({ queryKey: ['registration-payments'] }),
+    ]);
+  };
   const mutation = useMutation({
     mutationFn: async ({ path, method, body }: { path: string; method: 'PUT'; body: unknown }) =>
       api(path, { method, body: JSON.stringify(body) }),
     onSuccess: async () => { setNotice('Payment settings updated.'); await refresh(); },
     onError: (error) => setNotice(error instanceof Error ? error.message : 'Unable to update payment information.'),
+  });
+  const registrationPaymentMutation = useMutation({
+    mutationFn: ({ paymentId, action, refundReason }: { paymentId: string; action: 'confirm' | 'refund'; refundReason?: string }) =>
+      api(`/payments/registration/${paymentId}/${action}`, {
+        method: 'PUT',
+        ...(action === 'refund' ? { body: JSON.stringify({ reason: refundReason }) } : {}),
+      }),
+    onSuccess: async (_result, variables) => {
+      setNotice(variables.action === 'confirm' ? 'Offline registration payment recorded.' : 'Offline registration refund recorded.');
+      setPendingRegistrationRefund(null);
+      setRegistrationRefundReason('');
+      await refresh();
+    },
+    onError: (error) => setNotice(error instanceof Error ? error.message : 'Unable to update the registration payment.'),
   });
 
   const submitPrice = (event: FormEvent) => {
@@ -374,11 +423,69 @@ export function PaymentsManagementPage() {
             </tbody></table></div>
           </section>
 
+          {isOrgAdmin && <section id="student-registration-payments" className="card payment-module-section">
+            <div className="payment-section-heading">
+              <div><h2>Student registration payments</h2><p className="muted">Confirming an offline first-month fee approves the Student account immediately. Refunds can be recorded only for paid registrations that are rejected.</p></div>
+            </div>
+            <div className="payment-filters">
+              <label className="field">Payment status<select className="input" value={registrationStatus} onChange={(event) => setRegistrationStatus(event.target.value)}>
+                <option value="">All statuses</option><option value="PENDING">Pending</option><option value="PAID">Paid</option><option value="REFUNDED">Refunded</option>
+              </select></label>
+              <label className="field">Submitted from<input className="input" type="date" value={registrationFrom} onChange={(event) => setRegistrationFrom(event.target.value)} /></label>
+              <label className="field">Submitted to<input className="input" type="date" value={registrationTo} onChange={(event) => setRegistrationTo(event.target.value)} /></label>
+              <Button type="button" variant="secondary" onClick={() => { setRegistrationStatus(''); setRegistrationFrom(''); setRegistrationTo(''); }}>Clear filters</Button>
+            </div>
+            {registrationPaymentsQuery.isLoading && <p className="loading">Loading student registration payments…</p>}
+            {registrationPaymentsQuery.error && <p className="notice notice-error" role="alert">{registrationPaymentsQuery.error instanceof Error ? registrationPaymentsQuery.error.message : 'Student registration payments could not be loaded.'}</p>}
+            {registrationPaymentsQuery.data && <div className="table-scroll"><table className="data-table">
+              <thead><tr><th>Student</th><th>Student ID</th><th>Course</th><th>First-month fee</th><th>Payment status</th><th>Account status</th><th>Submitted</th><th>Payment recorded</th><th>Refund reason</th><th>Actions</th></tr></thead>
+              <tbody>
+                {registrationPaymentsQuery.data.payments.map((payment) => (
+                  <tr key={payment.id}>
+                    <td>{payment.student.name}</td><td>{payment.student.studentId}</td>
+                    <td>{payment.course.code} — {payment.course.title}</td>
+                    <td>{formatMoney(payment.amount, payment.currency)}</td>
+                    <td><span className={`payment-status payment-status-${payment.status.toLowerCase()}`}>{payment.status}</span></td>
+                    <td>{payment.student.status === 'PENDING_PAYMENT' ? 'Pending Payment' : payment.student.status === 'PENDING' ? 'Pending Review' : payment.student.status}</td>
+                    <td>{formatDate(payment.createdAt)}</td><td>{payment.paidAt ? formatDate(payment.paidAt) : payment.refundedAt ? formatDate(payment.refundedAt) : '—'}</td>
+                    <td>{payment.refundReason ?? '—'}</td>
+                    <td><div className="payment-row-actions">
+                      {payment.status === 'PENDING' && payment.student.status === 'PENDING_PAYMENT' && <Button type="button" disabled={registrationPaymentMutation.isPending} onClick={() => {
+                        if (window.confirm(`Confirm receipt of ${formatMoney(payment.amount, payment.currency)} for ${payment.student.name}?`)) {
+                          registrationPaymentMutation.mutate({ paymentId: payment.id, action: 'confirm' });
+                        }
+                      }}>Mark received</Button>}
+                      {payment.status === 'PAID' && payment.student.status === 'REJECTED' && <Button type="button" variant="secondary" onClick={() => {
+                        setRegistrationRefundReason('');
+                        setPendingRegistrationRefund(payment);
+                      }}>Record offline refund</Button>}
+                    </div></td>
+                  </tr>
+                ))}
+                {registrationPaymentsQuery.data.payments.length === 0 && <tr><td colSpan={10} className="report-empty">No student registrations match these filters.</td></tr>}
+              </tbody>
+            </table></div>}
+          </section>}
+
           {pendingAction && <div className="dialog-backdrop" role="presentation"><form className="dialog payment-reason-dialog" role="dialog" aria-modal="true" aria-labelledby="payment-action-title" onSubmit={submitAction}>
             <h2 id="payment-action-title">{pendingAction.kind === 'refund' ? 'Refund payment' : pendingAction.nextStatus === 'INACTIVE' ? 'Deactivate subscription' : 'Reactivate subscription'}</h2>
             <p>{pendingAction.payment.student.name} · {pendingAction.payment.course.title}</p>
             <label className="field">Reason<textarea className="input" value={reason} onChange={(event) => setReason(event.target.value)} minLength={3} maxLength={500} required /></label>
             <div className="button-row"><Button type="submit" disabled={mutation.isPending || reason.trim().length < 3}>Confirm</Button><Button type="button" variant="secondary" onClick={() => setPendingAction(null)}>Cancel</Button></div>
+          </form></div>}
+          {pendingRegistrationRefund && <div className="dialog-backdrop" role="presentation"><form className="dialog payment-reason-dialog" role="dialog" aria-modal="true" aria-labelledby="registration-refund-title" onSubmit={(event) => {
+            event.preventDefault();
+            if (registrationRefundReason.trim().length < 3) return;
+            registrationPaymentMutation.mutate({
+              paymentId: pendingRegistrationRefund.id,
+              action: 'refund',
+              refundReason: registrationRefundReason.trim(),
+            });
+          }}>
+            <h2 id="registration-refund-title">Record offline refund</h2>
+            <p>{pendingRegistrationRefund.student.name} · {pendingRegistrationRefund.course.title} · {formatMoney(pendingRegistrationRefund.amount, pendingRegistrationRefund.currency)}</p>
+            <label className="field">Reason<textarea className="input" value={registrationRefundReason} onChange={(event) => setRegistrationRefundReason(event.target.value)} minLength={3} maxLength={500} required /></label>
+            <div className="button-row"><Button type="submit" disabled={registrationPaymentMutation.isPending || registrationRefundReason.trim().length < 3}>Record refund</Button><Button type="button" variant="secondary" onClick={() => setPendingRegistrationRefund(null)}>Cancel</Button></div>
           </form></div>}
         </>}
       </section>

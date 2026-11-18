@@ -1,10 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import bcrypt from 'bcrypt';
-import { AccountStatus, NotificationType, OrganizationStatus, Prisma, Role, StudentStatus, type User } from '@prisma/client';
+import { AccountStatus, CourseStatus, NotificationType, OrganizationStatus, Prisma, Role, StudentStatus, type User } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { hashToken, makeAccessToken, makeRefreshToken, verifyRefreshToken } from '../../utils/tokens.js';
+import { encryptIdentifier } from '../students/student-identifiers.crypto.js';
 import { notifyAfterCommit, notifyUsers } from '../notifications/notifications.service.js';
 
 type RequestMeta = { ip: string | undefined; userAgent: string | undefined };
@@ -66,6 +67,9 @@ async function issueCredentials(user: User, meta: RequestMeta): Promise<Credenti
 }
 
 function statusMessage(user: User): string {
+  if (user.status === AccountStatus.PENDING_PAYMENT) {
+    return 'Your registration is awaiting offline payment confirmation. Use the registration status page or contact your organization.';
+  }
   if (user.status === AccountStatus.PENDING) {
     const roleLabel = user.role === Role.TUTOR ? 'Tutor' : user.role.toLowerCase().replace('_', ' ');
     const approver = user.role === Role.STUDENT ? 'Tutor' : 'organization admin';
@@ -131,18 +135,95 @@ async function loginTenant(role: Role, input: TenantLogin, meta: RequestMeta): P
   return issueCredentials(user, meta);
 }
 
-export async function registerStudent(input: {
+export async function getRegistrationOptions(organizationCode: string, role: 'STUDENT' | 'TUTOR') {
+  const organization = await prisma.organization.findFirst({
+    where: {
+      code: organizationCode,
+      status: { in: [OrganizationStatus.ACTIVE, OrganizationStatus.APPROVED] },
+    },
+    select: { id: true, currency: true },
+  });
+  if (!organization) throw new HttpError(404, 'Active organization not found');
+  const courses = await prisma.course.findMany({
+    where: {
+      organizationId: organization.id,
+      status: CourseStatus.PUBLISHED,
+      ...(role === 'STUDENT' ? { registrationMonthlyFee: { gt: 0 } } : {}),
+    },
+    orderBy: { title: 'asc' },
+    select: { id: true, title: true, category: true, registrationMonthlyFee: true },
+  });
+  return {
+    courses: courses.map((course) => ({
+      ...course,
+      registrationMonthlyFee: course.registrationMonthlyFee?.toNumber() ?? null,
+    })),
+    currency: organization.currency,
+    identityCollectionEnabled: Boolean(env.PII_ENCRYPTION_KEY),
+    aadhaarEnabled: env.ENABLE_AADHAAR_FIELD && Boolean(env.PII_ENCRYPTION_KEY),
+  };
+}
+
+type RegistrationDetails = {
   organizationCode: string;
-  studentId: string;
   name: string;
   email: string;
   phone: string;
   password: string;
+  fatherName: string;
+  motherName: string;
+  aadhaarNumber?: string;
+  apaarId?: string;
+  interestedCourseId: string;
+  piiConsent: boolean;
+  termsAccepted: boolean;
+};
+
+async function getSelectedCourse(organizationId: string, courseId: string, requireRegistrationFee = false) {
+  const course = await prisma.course.findFirst({
+    where: {
+      id: courseId,
+      organizationId,
+      status: CourseStatus.PUBLISHED,
+      ...(requireRegistrationFee ? { registrationMonthlyFee: { gt: 0 } } : {}),
+    },
+    select: { id: true, title: true, category: true, registrationMonthlyFee: true },
+  });
+  if (!course) {
+    throw new HttpError(400, requireRegistrationFee
+      ? 'Choose a published course with a configured registration fee in your organization'
+      : 'Choose a published course in your organization');
+  }
+  return course;
+}
+
+function registrationProfileFields(input: RegistrationDetails, courseTitle: string) {
+  return {
+    fatherName: input.fatherName,
+    motherName: input.motherName,
+    interestedCourse: courseTitle,
+    aadhaarEncrypted: input.aadhaarNumber ? encryptIdentifier(input.aadhaarNumber) : null,
+    aadhaarLast4: input.aadhaarNumber?.slice(-4) ?? null,
+    apaarIdEncrypted: input.apaarId ? encryptIdentifier(input.apaarId) : null,
+    apaarIdLast4: input.apaarId?.slice(-4) ?? null,
+    piiConsentAt: input.piiConsent ? new Date() : null,
+    termsAcceptedAt: new Date(),
+  };
+}
+
+export async function registerStudent(input: RegistrationDetails & {
+  studentId: string;
 }) {
   const organization = await prisma.organization.findFirst({
     where: { code: input.organizationCode, status: { in: [OrganizationStatus.ACTIVE, OrganizationStatus.APPROVED] } },
   });
   if (!organization) throw new HttpError(404, 'Active organization not found');
+  const course = await getSelectedCourse(organization.id, input.interestedCourseId, true);
+  const registrationFee = course.registrationMonthlyFee;
+  if (!registrationFee) throw new HttpError(409, 'This course does not have a registration fee configured');
+  const courseLabel = `${course.category} — ${course.title}`;
+  const registrationAccessToken = randomBytes(32).toString('hex');
+  const statusTokenHash = createHash('sha256').update(registrationAccessToken).digest('hex');
   const passwordHash = await bcrypt.hash(input.password, 12);
   try {
     const user = await prisma.$transaction(async (tx) => {
@@ -151,15 +232,39 @@ export async function registerStudent(input: {
           organizationId: organization.id,
           email: input.email,
           name: input.name,
-          phone: input.phone,
+          phone: `+91${input.phone}`,
           passwordHash,
           role: Role.STUDENT,
-          status: AccountStatus.PENDING,
+          status: AccountStatus.PENDING_PAYMENT,
           studentProfile: {
-            create: { organizationId: organization.id, studentId: input.studentId, status: StudentStatus.PENDING },
+            create: {
+              organizationId: organization.id,
+              studentId: input.studentId,
+              status: StudentStatus.PENDING,
+              ...registrationProfileFields(input, courseLabel),
+            },
           },
         },
         select: { id: true, email: true, name: true, role: true, status: true, studentProfile: { select: { studentId: true } } },
+      });
+      const registrationPayment = await tx.registrationPayment.create({
+        data: {
+          organizationId: organization.id,
+          studentId: user.id,
+          courseId: course.id,
+          amount: registrationFee,
+          currency: organization.currency,
+          statusTokenHash,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          organizationId: organization.id,
+          action: 'STUDENT_REGISTRATION_PAYMENT_CREATED',
+          targetType: 'RegistrationPayment',
+          targetId: registrationPayment.id,
+          metadata: { courseId: course.id, amount: registrationFee.toNumber(), currency: organization.currency },
+        },
       });
       await tx.auditLog.create({
         data: {
@@ -167,25 +272,25 @@ export async function registerStudent(input: {
           action: 'ACCOUNT_CREATED',
           targetType: 'User',
           targetId: user.id,
-          metadata: { role: Role.STUDENT },
+          metadata: { role: Role.STUDENT, courseId: course.id, registrationPaymentRequired: true },
         },
       });
       return user;
     });
     await notifyAfterCommit(async () => {
-      const approvers = await prisma.user.findMany({
-        where: { organizationId: organization.id, role: Role.TUTOR, status: AccountStatus.APPROVED, isActive: true },
+      const admins = await prisma.user.findMany({
+        where: { organizationId: organization.id, role: Role.ORG_ADMIN, status: AccountStatus.APPROVED, isActive: true },
         select: { id: true },
       });
-      await notifyUsers(organization.id, approvers.map(({ id }) => id), {
+      await notifyUsers(organization.id, admins.map(({ id }) => id), {
         type: NotificationType.ACCOUNT_PENDING,
-        title: 'Student registration pending',
-        body: `${user.name} submitted a registration for approval.`,
-        link: '/tutor/approvals',
-        dedupeKey: `student-registration:${user.id}`,
+        title: 'Student registration payment pending',
+        body: `A student submitted a registration for ${course.title}. Confirm the offline payment before Tutor review.`,
+        link: '/org-admin/payments',
+        dedupeKey: `student-registration-payment:${user.id}`,
       });
     }, 'student registration');
-    return user;
+    return { user, registrationAccessToken };
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'P2002') {
       throw new HttpError(409, 'Email or Student ID is already registered in this organization');
@@ -197,21 +302,19 @@ export async function registerStudent(input: {
 export async function registerTutor(input: {
   organizationCode: string;
   tutorId: string;
-  name: string;
-  email: string;
-  phone: string;
-  password: string;
-}) {
+} & RegistrationDetails) {
   return registerPendingAccount(input);
 }
 
 async function registerPendingAccount(
-  input: { organizationCode: string; name: string; email: string; phone: string; password: string; tutorId: string },
+  input: RegistrationDetails & { tutorId: string },
 ) {
   const organization = await prisma.organization.findFirst({
     where: { code: input.organizationCode, status: { in: [OrganizationStatus.ACTIVE, OrganizationStatus.APPROVED] } },
   });
   if (!organization) throw new HttpError(404, 'Active organization not found');
+  const selectedCourse = await getSelectedCourse(organization.id, input.interestedCourseId);
+  const courseLabel = `${selectedCourse.category} — ${selectedCourse.title}`;
   const passwordHash = await bcrypt.hash(input.password, 12);
   try {
     const user = await prisma.$transaction(async (tx) => {
@@ -220,7 +323,7 @@ async function registerPendingAccount(
           organizationId: organization.id,
           email: input.email,
           name: input.name,
-          phone: input.phone,
+          phone: `+91${input.phone}`,
           passwordHash,
           role: Role.TUTOR,
           status: AccountStatus.PENDING,
@@ -228,6 +331,7 @@ async function registerPendingAccount(
             create: {
               organizationId: organization.id,
               tutorId: requireTutorId(input.tutorId),
+              ...registrationProfileFields(input, courseLabel),
             },
           },
           accountRegistration: {
@@ -265,8 +369,47 @@ async function registerPendingAccount(
     if (error instanceof Error && 'code' in error && error.code === 'P2002') {
       throw new HttpError(409, 'Email or Tutor ID is already registered in this organization');
     }
+
     throw error;
   }
+}
+
+export async function getStudentRegistrationStatus(token: string) {
+  const statusTokenHash = createHash('sha256').update(token).digest('hex');
+  const payment = await prisma.registrationPayment.findUnique({
+    where: { statusTokenHash },
+    select: {
+      id: true,
+      amount: true,
+      currency: true,
+      status: true,
+      createdAt: true,
+      paidAt: true,
+      refundedAt: true,
+      course: { select: { title: true, code: true } },
+      student: {
+        select: {
+          status: true,
+          rejectionReason: true,
+          organization: { select: { name: true, contactNumber: true } },
+        },
+      },
+    },
+  });
+  if (!payment || !payment.student.organization) throw new HttpError(404, 'Registration status not found');
+  return {
+    registrationReference: payment.id,
+    course: payment.course,
+    amount: payment.amount.toNumber(),
+    currency: payment.currency,
+    paymentStatus: payment.status,
+    accountStatus: payment.student.status,
+    rejectionReason: payment.student.status === AccountStatus.REJECTED ? payment.student.rejectionReason : null,
+    organization: payment.student.organization,
+    createdAt: payment.createdAt,
+    paidAt: payment.paidAt,
+    refundedAt: payment.refundedAt,
+  };
 }
 
 function requireTutorId(tutorId: string | undefined): string {

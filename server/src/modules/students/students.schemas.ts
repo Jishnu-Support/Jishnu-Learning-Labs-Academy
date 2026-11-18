@@ -9,10 +9,11 @@ export const studentListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
+export const apaarIdSchema = z.string().regex(/^\d{12}$/, 'Enter a valid 12-digit APAAR ID');
 
 export const studentParamSchema = z.object({ studentId: z.string().trim().min(1).max(40) });
 const educationLevels = ['SCHOOL', 'DIPLOMA', 'UG', 'PG', 'OTHER'] as const;
-const aadhaarSchema = z.string()
+export const aadhaarNumberSchema = z.string()
   .regex(/^[2-9]\d{11}$/, 'Enter a valid 12-digit Aadhaar number')
   .refine((value) => {
     const multiplication = [
@@ -60,8 +61,8 @@ export const studentProfileUpdateSchema = z.object({
   currentCourse: z.string().trim().max(160).nullable().optional(),
   institutionName: z.string().trim().max(200).nullable().optional(),
   piiConsent: z.boolean().optional(),
-  aadhaarNumber: aadhaarSchema.nullable().optional(),
-  apaarId: z.string().regex(/^\d{12}$/, 'Enter a valid 12-digit APAAR ID').nullable().optional(),
+  aadhaarNumber: aadhaarNumberSchema.nullable().optional(),
+  apaarId: apaarIdSchema.nullable().optional(),
 }).refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update')
   .refine((value) => {
     if (value.aadhaarNumber && !env.ENABLE_AADHAAR_FIELD) return false;

@@ -26,6 +26,7 @@ import { NotesPage } from './pages/notes-page';
 import { OrganizationApprovalsPage } from './pages/organization-approvals-page';
 import { OrganizationRegistrationPage } from './pages/organization-registration-page';
 import { RegisterPage } from './pages/register-page';
+import { StudentRegistrationStatusPage } from './pages/student-registration-status-page';
 import { TutorDetailsPage, TutorManagementPage } from './pages/tutor-page';
 import { StudentCourseDetailPage } from './pages/student-course-detail-page';
 import { StudentCourseCatalogPage, StudentCoursesPage } from './pages/student-courses-page';
@@ -76,6 +77,7 @@ export function App() {
         <Route path="/organizations/register" element={<OrganizationRegistrationPage />} />
         <Route path="/student/login" element={<LoginPage portal="student" />} />
         <Route path="/student/register" element={<RegisterPage role="STUDENT" />} />
+        <Route path="/student/registration-status" element={<StudentRegistrationStatusPage />} />
         <Route path="/certificate-verify/:verificationCode" element={<CertificateVerificationPage />} />
         <Route path="/tutor/login" element={<LoginPage portal="tutor" />} />
         <Route path="/tutor/register" element={<RegisterPage role="TUTOR" />} />
@@ -119,6 +121,8 @@ export function App() {
         </Route>
         <Route element={<RouteGuard roles={['TUTOR']} />}>
           <Route path="/tutor" element={<TutorDashboard />} />
+          <Route path="/tutor/registrations" element={<ApprovalsPage />} />
+          <Route path="/tutor/approvals" element={<Navigate to="/tutor/registrations" replace />} />
           <Route path="/tutor/ratings" element={<Navigate to="/my-profile#ratings" replace />} />
           <Route path="/tutor/payments" element={<PaymentsManagementPage />} />
           <Route path="/tutor/students" element={<StudentsPage />} />
@@ -132,7 +136,6 @@ export function App() {
           <Route path="/tutor/sessions/:sessionId/attendees" element={<SessionAttendeesPage />} />
           <Route path="/tutor/sessions/:sessionId/host" element={<SessionHostPage />} />
           <Route element={<RouteGuard roles={['TUTOR']} />}>
-            <Route path="/tutor/approvals" element={<Navigate to="/tutor" replace />} />
             <Route path="/tutor/learning/questions" element={<Navigate to="/tutor/courses" replace />} />
             <Route path="/tutor/learning/assessments" element={<Navigate to="/tutor/courses" replace />} />
             <Route path="/tutor/learning/reports" element={<Navigate to="/tutor/courses" replace />} />
@@ -147,7 +150,7 @@ export function App() {
           <Route path="/org-admin" element={<Dashboard role="ORG_ADMIN" />} />
           <Route path="/org-admin/payments" element={<PaymentsManagementPage />} />
           <Route path="/org-admin/tutors/pending" element={<TutorApprovalsPage />} />
-          <Route path="/org-admin/students/pending" element={<ApprovalsPage role="ORG_ADMIN" />} />
+          <Route path="/org-admin/students/pending" element={<Navigate to="/org-admin" replace />} />
           <Route path="/org-admin/create-tutor" element={<TutorManagementPage />} />
           <Route path="/org-admin/students" element={<StudentsPage />} />
           <Route path="/org-admin/tutors" element={<TutorDetailsPage />} />

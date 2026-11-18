@@ -38,6 +38,13 @@ enum AccountStatus {
   APPROVED
   REJECTED
   SUSPENDED
+  PENDING_PAYMENT
+}
+
+enum RegistrationPaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
 }
 
 enum OrganizationStatus {
@@ -257,6 +264,7 @@ model Organization {
   tutorCoursePlans         TutorCoursePlan[]
   subscriptions            Subscription[]
   payments                 Payment[]
+  registrationPayments    RegistrationPayment[]
   paymentPlanPriceHistory  TutorCoursePlanHistory[]
 
   @@index([status, createdAt])
@@ -321,6 +329,7 @@ model User {
   tutorSubscriptions       Subscription[]           @relation("SubscriptionTutor")
   studentPayments          Payment[]                @relation("PaymentStudent")
   tutorPayments            Payment[]                @relation("PaymentTutor")
+  registrationPayment      RegistrationPayment?    @relation("RegistrationPaymentStudent")
   preferredByStudents      StudentProfile[]         @relation("StudentPreferredTutor")
   tutorReviewsWritten      TutorReview[]            @relation("TutorReviewStudent")
   tutorReviewsReceived     TutorReview[]            @relation("TutorReviewTutor")
@@ -350,6 +359,8 @@ model StudentProfile {
   apaarIdEncrypted       String?
   apaarIdLast4           String?
   piiConsentAt           DateTime?
+  interestedCourse       String?
+  termsAcceptedAt        DateTime?
   isDemoIdentityData     Boolean       @default(false)
   selectedTutorId        String?
   status                 StudentStatus @default(PENDING)
@@ -365,6 +376,28 @@ model StudentProfile {
   @@unique([organizationId, studentId])
   @@index([organizationId, status, createdAt])
   @@index([organizationId, selectedTutorId])
+}
+
+model RegistrationPayment {
+  id              String                    @id @default(cuid())
+  organizationId  String
+  studentId       String
+  courseId        String
+  amount          Decimal                   @db.Decimal(12, 2)
+  currency        String                    @default("INR")
+  status          RegistrationPaymentStatus @default(PENDING)
+  statusTokenHash String                    @unique
+  paidAt          DateTime?
+  refundedAt      DateTime?
+  refundReason    String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  organization    Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  student         User                      @relation("RegistrationPaymentStudent", fields: [organizationId, studentId], references: [organizationId, id], onDelete: Restrict)
+  course          Course                    @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, studentId])
+  @@index([organizationId, status, createdAt])
 }
 
 model TutorReview {
@@ -399,6 +432,15 @@ model TutorProfile {
   bio             String?
   expertise       String[]     @default([])
   photoStorageKey String?
+  fatherName      String?
+  motherName      String?
+  interestedCourse String?
+  aadhaarEncrypted String?
+  aadhaarLast4    String?
+  apaarIdEncrypted String?
+  apaarIdLast4    String?
+  piiConsentAt    DateTime?
+  termsAcceptedAt DateTime?
   createdAt       DateTime     @default(now())
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -560,6 +602,7 @@ model Course {
   thumbnailUrl             String?
   category                 String
   plannedHours             Int
+  registrationMonthlyFee   Decimal?           @db.Decimal(12, 2)
   startDate                DateTime           @db.Date
   endDate                  DateTime           @db.Date
   status                   CourseStatus       @default(DRAFT)
@@ -586,6 +629,7 @@ model Course {
   tutorCoursePlans         TutorCoursePlan[]
   subscriptions            Subscription[]
   payments                 Payment[]
+  registrationPayments     RegistrationPayment[]
   tutorReviews             TutorReview[]
 
   @@unique([organizationId, code])

@@ -13,12 +13,14 @@ type Status = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 type Instructor = { id: string; name: string };
 type Course = {
   id: string;
+  organization: { currency: string };
   code: string;
   title: string;
   description: string | null;
   thumbnailUrl: string | null;
   category: string;
   plannedHours: number;
+  registrationMonthlyFee: number | string | null;
   startDate: string;
   endDate: string;
   status: Status;
@@ -36,6 +38,7 @@ type CourseForm = {
   thumbnailUrl: string;
   category: string;
   plannedHours: string;
+  registrationMonthlyFee: string;
   startDate: string;
   endDate: string;
   minimumAttendancePercent: string;
@@ -65,6 +68,7 @@ function emptyForm(instructors: Instructor[], role: Role, userId?: string): Cour
     thumbnailUrl: '',
     category: '',
     plannedHours: '',
+    registrationMonthlyFee: '',
     startDate: '',
     endDate: '',
     minimumAttendancePercent: '75',
@@ -119,6 +123,7 @@ export function CoursesPage() {
               <div className="course-meta"><span className={`status-pill status-${course.status.toLowerCase()}`}>{course.status}</span><span>{course.code}</span></div>
               <h3>{course.title}</h3>
               <p className="muted course-description">{course.category} · {course.plannedHours} planned hours</p>
+              {role === 'ORG_ADMIN' && <p className="muted course-description">First-month registration fee: {course.registrationMonthlyFee === null ? 'Not set' : new Intl.NumberFormat(undefined, { style: 'currency', currency: course.organization.currency }).format(Number(course.registrationMonthlyFee))}</p>}
               <p className="course-description">{course.description || 'No description yet.'}</p>
               <p className="muted course-description">Faculty: {course.instructors.map(({ instructor }) => instructor.name).join(', ') || 'None'} · {course._count.enrollments} enrollments · {course._count.notes} notes</p>
               <div className="course-actions">
@@ -168,6 +173,7 @@ export function CourseFormPage() {
         thumbnailUrl: course.thumbnailUrl ?? '',
         category: course.category,
         plannedHours: String(course.plannedHours),
+        registrationMonthlyFee: course.registrationMonthlyFee === null ? '' : String(course.registrationMonthlyFee),
         startDate: course.startDate.slice(0, 10),
         endDate: course.endDate.slice(0, 10),
         minimumAttendancePercent: String(course.minimumAttendancePercent),
@@ -195,6 +201,9 @@ export function CourseFormPage() {
         minimumAttendancePercent: Number(form.minimumAttendancePercent),
         description: form.description || null,
         thumbnailUrl: form.thumbnailUrl || null,
+        ...(role === 'ORG_ADMIN'
+          ? { registrationMonthlyFee: form.registrationMonthlyFee.trim() ? Number(form.registrationMonthlyFee) : null }
+          : {}),
       };
       return api<{ course: Course }>(courseId ? `/courses/${courseId}` : '/courses', {
         method: courseId ? 'PATCH' : 'POST',
@@ -238,7 +247,9 @@ export function CourseFormPage() {
             <Field label="Start date" type="date" value={form.startDate} onChange={(event) => update('startDate', event.target.value)} required />
             <Field label="End date" type="date" value={form.endDate} onChange={(event) => update('endDate', event.target.value)} required />
             <Field label="Minimum attendance (%)" type="number" min={0} max={100} value={form.minimumAttendancePercent} onChange={(event) => update('minimumAttendancePercent', event.target.value)} required />
+            {role === 'ORG_ADMIN' && <Field label="First-month registration fee (organization currency)" type="number" min={0.01} step="0.01" value={form.registrationMonthlyFee} onChange={(event) => update('registrationMonthlyFee', event.target.value)} />}
           </div>
+          {role === 'ORG_ADMIN' && <p className="muted">This fee is collected for the registration period only. Future renewals continue through Pay My Fee using the selected Tutor’s plan.</p>}
           <label className="field"><span>Description</span><textarea className="input textarea" value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={5000} /></label>
           <Field label="Course thumbnail URL (HTTPS)" type="url" value={form.thumbnailUrl} onChange={(event) => update('thumbnailUrl', event.target.value)} maxLength={2000} />
           <label className="course-instructor-option"><input type="checkbox" checked={form.requiresAssessmentPass} onChange={(event) => update('requiresAssessmentPass', event.target.checked)} /><span>Require passing the course assessment for completion</span></label>

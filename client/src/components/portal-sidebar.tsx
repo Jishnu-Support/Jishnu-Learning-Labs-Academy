@@ -12,7 +12,6 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/org-admin/payments', label: 'Payments' },
     { href: '/org-admin/courses', label: 'Courses' },
     { href: '/org-admin/tutors/pending', label: 'Pending Tutors' },
-    { href: '/org-admin/students/pending', label: 'Pending Students' },
     { href: '/org-admin/create-tutor', label: 'Create Tutor' },
     { href: '/org-admin/students', label: 'Student Details' },
     { href: '/org-admin/tutors', label: 'Tutor Details' },

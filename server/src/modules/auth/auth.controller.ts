@@ -3,6 +3,7 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import * as authService from './auth.service.js';
+import { registrationOptionsQuerySchema, registrationStatusSchema } from './auth.schemas.js';
 
 const accessCookie = 'accessToken';
 const refreshCookie = 'refreshToken';
@@ -35,8 +36,25 @@ function loginResponse(res: Response, credentials: Awaited<ReturnType<typeof aut
 }
 
 export const registerStudent: RequestHandler = async (req, res) => {
-  const user = await authService.registerStudent(req.body);
-  res.status(201).json({ data: { user, message: 'Registration submitted. A Tutor must approve your account before you can sign in.' } });
+  const result = await authService.registerStudent(req.body);
+  res.status(201).json({
+    data: {
+      user: result.user,
+      registrationAccessToken: result.registrationAccessToken,
+      message: 'Registration submitted. Pay the first-month fee and wait for Tutor approval before signing in.',
+    },
+  });
+};
+
+export const registrationOptions: RequestHandler = async (req, res) => {
+  const { organizationCode, role } = registrationOptionsQuerySchema.parse(req.query);
+  const options = await authService.getRegistrationOptions(organizationCode, role);
+  res.json({ data: options });
+};
+
+export const studentRegistrationStatus: RequestHandler = async (req, res) => {
+  const { token } = registrationStatusSchema.parse(req.body);
+  res.json({ data: await authService.getStudentRegistrationStatus(token) });
 };
 
 export const deprecatedInstructorRegistration: RequestHandler = () => {

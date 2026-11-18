@@ -1241,3 +1241,34 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @media (max-width: 520px) {
   .page-wrap.page-wrap-portal { padding-inline: 12px; }
 }
+.registration-form { min-width: 0; }
+.registration-form .input,
+.registration-form .field,
+.registration-form details { min-width: 0; }
+.registration-form .input:disabled { color: var(--text-secondary); background: var(--brand-navy-50); cursor: not-allowed; }
+.registration-consent { gap: 8px; }
+.registration-checkbox { display: flex; align-items: flex-start; gap: 10px; line-height: 1.55; }
+.registration-checkbox input { width: 18px; height: 18px; flex: 0 0 auto; margin: 1px 0 0; accent-color: var(--brand-magenta); }
+.registration-checkbox a { color: var(--brand-magenta); font-weight: 700; }
+.registration-terms { padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: 10px; color: var(--text-primary); background: var(--brand-navy-50); font-size: 13px; }
+.registration-terms summary { cursor: pointer; color: var(--brand-navy); font-weight: 700; }
+.registration-status-content { display:grid; gap:16px; }
+.registration-status-content > p { margin:0; line-height:1.6; }
+.registration-status-details { display:grid; gap:10px; margin:0; padding:14px; border:1px solid var(--border-subtle); border-radius:10px; }
+.registration-status-details > div { display:grid; grid-template-columns:minmax(130px, .7fr) minmax(0, 1fr); gap:12px; }
+.registration-status-details dt { color:var(--text-secondary); font-weight:600; }
+.registration-status-details dd { margin:0; overflow-wrap:anywhere; color:var(--text-primary); }
+.registration-payment-actions { display:grid; gap:12px; }
+.registration-payment-instructions { display:grid; gap:8px; background:var(--brand-navy-50); }
+.registration-payment-instructions h2,
+.registration-payment-instructions p { margin:0; }
+.registration-payment-instructions a { color:var(--brand-magenta); font-weight:700; overflow-wrap:anywhere; }
+@media (max-width: 480px) {
+  .registration-status-details > div { grid-template-columns:1fr; gap:3px; }
+}
+.registration-terms p { margin: 10px 0 0; color: var(--text-secondary); line-height: 1.6; }
+.registration-status-filter { width: min(280px, 100%); margin: 20px 0; }
+.registration-status { display: inline-block; margin-top: 10px; padding: 5px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.registration-status.status-pending { color: var(--brand-navy); background: var(--brand-navy-50); }
+.registration-status.status-approved { color: var(--brand-navy); background: var(--brand-lime-50); }
+.registration-status.status-rejected { color: var(--status-red); background: var(--status-red-bg); }

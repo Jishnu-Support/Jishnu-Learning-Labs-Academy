@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import bcrypt from 'bcrypt';
-import { AccountStatus, OrganizationStatus, PrismaClient, Role, StudentStatus } from '@prisma/client';
+import { AccountStatus, OrganizationStatus, PrismaClient, RegistrationPaymentStatus, Role, StudentStatus } from '@prisma/client';
 import { app } from '../src/app.js';
 import { env } from '../src/config/env.js';
 import * as organizationService from '../src/modules/organizations/organizations.service.js';
@@ -82,6 +82,51 @@ async function makeUser(
   return user;
 }
 
+async function registrationDetails(organizationCode: string, suffix: string) {
+  const organization = await prisma.organization.findFirstOrThrow({ where: { code: organizationCode }, select: { id: true } });
+  let course = await prisma.course.findFirst({
+    where: { organizationId: organization.id, status: 'PUBLISHED' },
+    select: { id: true },
+  });
+  if (!course) {
+    let creator = await prisma.user.findFirst({
+      where: { organizationId: organization.id, role: Role.ORG_ADMIN },
+      select: { id: true },
+    });
+    if (!creator) {
+      const newCreator = await makeUser(organization.id, Role.ORG_ADMIN, `${suffix}-course-admin`);
+      creator = { id: newCreator.id };
+    }
+    course = await prisma.course.create({
+      data: {
+        organizationId: organization.id,
+        code: `REG-${Date.now()}`,
+        title: `${suffix} Registration Course`,
+        category: 'Registration',
+        plannedHours: 10,
+        registrationMonthlyFee: 250,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2027-01-01T00:00:00.000Z'),
+        status: 'PUBLISHED',
+        createdById: creator.id,
+      },
+      select: { id: true },
+    });
+  } else {
+    await prisma.course.update({ where: { id: course.id }, data: { registrationMonthlyFee: 250 } });
+  }
+  return {
+    name: `${suffix} Applicant`,
+    email: `${prefix}-${suffix}@example.test`,
+    phone: '9876543210',
+    password,
+    fatherName: 'Sample Father',
+    motherName: 'Sample Mother',
+    interestedCourseId: course.id,
+    termsAccepted: true,
+  };
+}
+
 function cookieHeader(response: { headers: { 'set-cookie'?: string | string[] } }): string {
   const value = response.headers['set-cookie'];
   const cookies = Array.isArray(value) ? value : value ? [value] : [];
@@ -104,10 +149,27 @@ async function registerStudent(organizationCode: string, studentId: string, suff
   const response = await request(app).post('/api/auth/students/register').send({
     organizationCode,
     studentId,
-    name: `${suffix} Student`,
-    email: `${prefix}-${suffix}@example.test`,
-    phone: '+15555550124',
-    password,
+    ...await registrationDetails(organizationCode, suffix),
+  });
+  if (response.body.data?.user?.id) createdUserIds.push(response.body.data.user.id as string);
+  return response;
+}
+
+async function confirmOfflineRegistrationPayment(organizationId: string, studentUserId: string, cookie: string) {
+  const payment = await prisma.registrationPayment.findFirstOrThrow({
+    where: { organizationId, studentId: studentUserId },
+    select: { id: true },
+  });
+  return request(app)
+    .put(`/api/payments/registration/${payment.id}/confirm`)
+    .set('Cookie', cookie);
+}
+
+async function registerTutor(organizationCode: string, tutorId: string, suffix: string) {
+  const response = await request(app).post('/api/auth/tutors/register').send({
+    organizationCode,
+    tutorId,
+    ...await registrationDetails(organizationCode, suffix),
   });
   if (response.body.data?.user?.id) createdUserIds.push(response.body.data.user.id as string);
   return response;
@@ -126,6 +188,7 @@ afterAll(async () => {
   const organizationIds = [...new Set(createdOrganizationIds)];
   const userIds = [...new Set(createdUserIds)];
   if (organizationIds.length) {
+    await prisma.registrationPayment.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.course.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.note.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.expertSession.deleteMany({ where: { organizationId: { in: organizationIds } } });
@@ -419,23 +482,188 @@ describe('multi-organization authentication and approvals', () => {
     expect(secondStudent.status).toBe(201);
     expect(duplicateStudent.status).toBe(409);
 
-    const tutorA = await request(app).post('/api/auth/tutors/register').send({
-      organizationCode: first.code, tutorId: 'TUT-SHARED-1', name: 'Tutor A',
-      email: `${prefix}-tutor-a@example.test`, phone: '+15555550127', password,
-    });
-    const tutorB = await request(app).post('/api/auth/tutors/register').send({
-      organizationCode: second.code, tutorId: 'TUT-SHARED-1', name: 'Tutor B',
-      email: `${prefix}-tutor-b@example.test`, phone: '+15555550128', password,
-    });
-    const duplicateTutor = await request(app).post('/api/auth/tutors/register').send({
-      organizationCode: first.code, tutorId: 'TUT-SHARED-1', name: 'Tutor Duplicate',
-      email: `${prefix}-tutor-duplicate@example.test`, phone: '+15555550129', password,
-    });
+    const tutorA = await registerTutor(first.code!, 'TUT-SHARED-1', 'tutor-a');
+    const tutorB = await registerTutor(second.code!, 'TUT-SHARED-1', 'tutor-b');
+    const duplicateTutor = await registerTutor(first.code!, 'TUT-SHARED-1', 'tutor-duplicate');
     for (const response of [tutorA, tutorB]) {
       expect(response.status).toBe(201);
       createdUserIds.push(response.body.data.user.id as string);
     }
     expect(duplicateTutor.status).toBe(409);
+  });
+
+  it('scopes registration courses and encrypts identifiers without exposing them in responses', async () => {
+    const first = await makeOrganization(`${prefix} Registration A`, `${prefix}-registration-a`);
+    const second = await makeOrganization(`${prefix} Registration B`, `${prefix}-registration-b`);
+    const firstFields = await registrationDetails(first.code!, 'registration-student');
+    const secondFields = await registrationDetails(second.code!, 'registration-other');
+    const options = await request(app).get(`/api/auth/registration-options?organizationCode=${first.code}`);
+    expect(options.status).toBe(200);
+    expect(options.body.data.courses.map((course: { id: string }) => course.id)).toContain(firstFields.interestedCourseId);
+    expect(options.body.data.courses.map((course: { id: string }) => course.id)).not.toContain(secondFields.interestedCourseId);
+    const termsNotAccepted = await request(app).post('/api/auth/students/register').send({
+      organizationCode: first.code,
+      studentId: `${prefix}-terms-not-accepted`,
+      ...firstFields,
+      termsAccepted: false,
+    });
+    expect(termsNotAccepted.status).toBe(400);
+
+    const wrongTenantCourse = await request(app).post('/api/auth/students/register').send({
+      organizationCode: first.code,
+      studentId: `${prefix}-wrong-course`,
+      ...firstFields,
+      interestedCourseId: secondFields.interestedCourseId,
+    });
+    expect(wrongTenantCourse.status).toBe(400);
+
+    const identityValues = { aadhaarNumber: '200000000009', apaarId: '987654321098', piiConsent: true };
+    const studentRegistration = await request(app).post('/api/auth/students/register').send({
+      organizationCode: first.code,
+      studentId: `${prefix}-private-student`,
+      ...firstFields,
+      ...identityValues,
+    });
+    expect(studentRegistration.status).toBe(201);
+    expect(JSON.stringify(studentRegistration.body)).not.toContain(identityValues.aadhaarNumber);
+    expect(JSON.stringify(studentRegistration.body)).not.toContain(identityValues.apaarId);
+    const studentId = studentRegistration.body.data.user.id as string;
+    createdUserIds.push(studentId);
+    const studentProfile = await prisma.studentProfile.findUniqueOrThrow({
+      where: { userId: studentId },
+      select: {
+        aadhaarEncrypted: true, aadhaarLast4: true, apaarIdEncrypted: true, apaarIdLast4: true,
+        piiConsentAt: true, termsAcceptedAt: true, interestedCourse: true,
+      },
+    });
+    expect(studentProfile).toMatchObject({ aadhaarLast4: '0009', apaarIdLast4: '1098' });
+    expect(studentProfile.interestedCourse).toContain('Registration Course');
+    expect(studentProfile.aadhaarEncrypted).not.toContain(identityValues.aadhaarNumber);
+    expect(studentProfile.apaarIdEncrypted).not.toContain(identityValues.apaarId);
+    expect(studentProfile.piiConsentAt).not.toBeNull();
+    expect(studentProfile.termsAcceptedAt).not.toBeNull();
+    const accountAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { organizationId: first.id, targetId: studentId, action: 'ACCOUNT_CREATED' },
+      select: { metadata: true },
+    });
+    expect(JSON.stringify(accountAudit.metadata)).not.toContain(identityValues.aadhaarNumber);
+    expect(JSON.stringify(accountAudit.metadata)).not.toContain(identityValues.apaarId);
+    const duplicateEmail = await request(app).post('/api/auth/students/register').send({
+      organizationCode: first.code,
+      studentId: `${prefix}-duplicate-email`,
+      ...firstFields,
+    });
+    expect(duplicateEmail.status).toBe(409);
+
+    const tutorRegistration = await request(app).post('/api/auth/tutors/register').send({
+      organizationCode: first.code,
+      tutorId: `TUT-${Date.now()}`,
+      ...await registrationDetails(first.code!, 'registration-tutor'),
+      ...identityValues,
+    });
+    expect(tutorRegistration.status).toBe(201);
+    expect(JSON.stringify(tutorRegistration.body)).not.toContain(identityValues.aadhaarNumber);
+    const tutorId = tutorRegistration.body.data.user.id as string;
+    createdUserIds.push(tutorId);
+    const admin = await makeUser(first.id, Role.ORG_ADMIN, 'registration-review-admin');
+    const adminCookie = cookieHeader(await orgAdminLogin(first.code!, admin.email));
+    const tutorList = await request(app).get('/api/org-admin/tutors/registrations?status=PENDING').set('Cookie', adminCookie);
+    const visibleTutor = tutorList.body.data.registrations.find((registration: { user: { id: string } }) => registration.user.id === tutorId);
+    expect(visibleTutor).toMatchObject({ aadhaarNumber: 'XXXX XXXX 0009', apaarId: 'XXXX XXXX 1098' });
+    expect(JSON.stringify(visibleTutor)).not.toContain(identityValues.aadhaarNumber);
+    const tutorIdentifier = 'TUT-REGISTRATION-REVIEW';
+    await makeUser(first.id, Role.TUTOR, 'registration-review-tutor', AccountStatus.APPROVED, tutorIdentifier);
+    const tutorCookie = cookieHeader(await tutorLogin(first.code!, tutorIdentifier));
+    const registrationPaymentConfirmation = await confirmOfflineRegistrationPayment(first.id, studentId, adminCookie);
+    expect(registrationPaymentConfirmation.status).toBe(200);
+    expect(registrationPaymentConfirmation.body.data.accountStatus).toBe(AccountStatus.APPROVED);
+    const studentList = await request(app).get('/api/tutor/registrations?status=APPROVED').set('Cookie', tutorCookie);
+    const visibleStudent = studentList.body.data.registrations.find((registration: { user: { id: string } }) => registration.user.id === studentId);
+    expect(visibleStudent).toBeDefined();
+    expect(visibleStudent).not.toHaveProperty('aadhaarNumber');
+    expect(visibleStudent).not.toHaveProperty('apaarId');
+    expect(visibleStudent).not.toHaveProperty('fatherName');
+    expect(visibleStudent).not.toHaveProperty('motherName');
+  });
+
+  it('approves students immediately after offline payment and supports tenant-scoped refunds', async () => {
+    const first = await makeOrganization(`${prefix} Payment A`, `${prefix}-payment-a`);
+    const second = await makeOrganization(`${prefix} Payment B`, `${prefix}-payment-b`);
+    const adminA = await makeUser(first.id, Role.ORG_ADMIN, 'payment-admin-a');
+    const adminB = await makeUser(second.id, Role.ORG_ADMIN, 'payment-admin-b');
+    const tutorIdentifier = `TUT-PAYMENT-${Date.now()}`;
+    await makeUser(first.id, Role.TUTOR, 'payment-tutor', AccountStatus.APPROVED, tutorIdentifier);
+    const adminCookie = cookieHeader(await orgAdminLogin(first.code!, adminA.email));
+    const otherAdminCookie = cookieHeader(await orgAdminLogin(second.code!, adminB.email));
+    const tutorCookie = cookieHeader(await tutorLogin(first.code!, tutorIdentifier));
+
+    const registration = await registerStudent(first.code!, `${prefix}-payment-student`, 'payment-student');
+    expect(registration.status).toBe(201);
+    const student = registration.body.data.user as { id: string; status: AccountStatus; studentProfile: { studentId: string } };
+    const statusToken = registration.body.data.registrationAccessToken as string;
+    expect(student.status).toBe(AccountStatus.PENDING_PAYMENT);
+    expect((await studentLogin(first.code!, student.studentProfile.studentId)).body.error.message).toContain('awaiting offline payment confirmation');
+    const pendingStatus = await request(app).post('/api/auth/students/registration-status').send({ token: statusToken });
+    expect(pendingStatus.status).toBe(200);
+    expect(pendingStatus.body.data).toMatchObject({
+      paymentStatus: 'PENDING',
+      accountStatus: 'PENDING_PAYMENT',
+      course: { title: expect.stringContaining('Registration Course') },
+      amount: 250,
+    });
+    expect(JSON.stringify(pendingStatus.body)).not.toContain('statusTokenHash');
+
+    const payment = await prisma.registrationPayment.findFirstOrThrow({
+      where: { organizationId: first.id, studentId: student.id },
+      select: { id: true },
+    });
+    const pendingPayments = await request(app).get('/api/payments/registration?status=PENDING').set('Cookie', adminCookie);
+    expect(pendingPayments.status).toBe(200);
+    expect(pendingPayments.body.data.payments.some((item: { id: string }) => item.id === payment.id)).toBe(true);
+    expect((await request(app).get('/api/payments/registration').set('Cookie', tutorCookie)).status).toBe(403);
+    expect((await request(app).put(`/api/payments/registration/${payment.id}/confirm`).set('Cookie', otherAdminCookie)).status).toBe(404);
+    expect((await request(app).post(`/api/tutor/registrations/${student.studentProfile.studentId}/approve`).set('Cookie', tutorCookie).send({})).status).toBe(409);
+
+    const confirmation = await request(app).put(`/api/payments/registration/${payment.id}/confirm`).set('Cookie', adminCookie);
+    expect(confirmation.status).toBe(200);
+    expect(confirmation.body.data.accountStatus).toBe(AccountStatus.APPROVED);
+    expect(await prisma.auditLog.count({ where: { organizationId: first.id, actorId: adminA.id, action: 'STUDENT_REGISTRATION_PAYMENT_CONFIRMED' } })).toBe(1);
+    expect(await prisma.auditLog.count({
+      where: { organizationId: first.id, actorId: adminA.id, action: 'STUDENT_APPROVED', targetId: (await prisma.studentProfile.findUniqueOrThrow({ where: { userId: student.id } })).id },
+    })).toBe(1);
+    expect((await studentLogin(first.code!, student.studentProfile.studentId)).status).toBe(200);
+    expect((await request(app)
+      .post(`/api/tutor/registrations/${encodeURIComponent(student.studentProfile.studentId)}/approve`)
+      .set('Cookie', tutorCookie)
+      .send({})).status).toBe(409);
+    const approvedStatus = await request(app).post('/api/auth/students/registration-status').send({ token: statusToken });
+    expect(approvedStatus.body.data).toMatchObject({ paymentStatus: 'PAID', accountStatus: AccountStatus.APPROVED });
+
+    const rejectedRegistration = await registerStudent(first.code!, `${prefix}-payment-rejected`, 'payment-rejected');
+    const rejectedUserId = rejectedRegistration.body.data.user.id as string;
+    const rejectedPayment = await prisma.registrationPayment.findFirstOrThrow({
+      where: { organizationId: first.id, studentId: rejectedUserId },
+      select: { id: true },
+    });
+    await prisma.registrationPayment.update({
+      where: { id: rejectedPayment.id },
+      data: { status: RegistrationPaymentStatus.PAID, paidAt: new Date() },
+    });
+    await prisma.user.update({
+      where: { id: rejectedUserId },
+      data: { status: AccountStatus.REJECTED, rejectionReason: 'Application was rejected after payment.' },
+    });
+    await prisma.studentProfile.update({
+      where: { userId: rejectedUserId },
+      data: { status: StudentStatus.REJECTED, rejectionReason: 'Application was rejected after payment.' },
+    });
+    const refund = await request(app)
+      .put(`/api/payments/registration/${rejectedPayment.id}/refund`)
+      .set('Cookie', adminCookie)
+      .send({ reason: 'Offline refund recorded to applicant.' });
+    expect(refund.status).toBe(200);
+    expect(refund.body.data.status).toBe('REFUNDED');
+    expect(await prisma.auditLog.count({ where: { organizationId: first.id, actorId: adminA.id, action: 'STUDENT_REGISTRATION_PAYMENT_REFUNDED' } })).toBe(1);
   });
 
   it('enforces pending, rejected, and suspended login states and revokes older student sessions', async () => {
@@ -543,14 +771,7 @@ describe('multi-organization authentication and approvals', () => {
     expect(legacyTutorLogin.status, JSON.stringify(legacyTutorLogin.body)).toBe(200);
 
     const pendingTutorIdentifier = `TUT-PENDING-${Date.now()}`;
-    const pendingTutorRegistration = await request(app).post('/api/auth/tutors/register').send({
-      organizationCode: first.code,
-      tutorId: pendingTutorIdentifier,
-      name: 'Pending Tutor A',
-      email: `${prefix}-pending-tutor-a@example.test`,
-      phone: '+15555550126',
-      password,
-    });
+    const pendingTutorRegistration = await registerTutor(first.code!, pendingTutorIdentifier, 'pending-tutor-a');
     expect(pendingTutorRegistration.status).toBe(201);
     const pendingTutorId = pendingTutorRegistration.body.data.user.id as string;
     createdUserIds.push(pendingTutorId);
@@ -583,10 +804,13 @@ describe('multi-organization authentication and approvals', () => {
       .post(`/api/org-admin/students/registrations/${encodeURIComponent('ADMIN-STUDENT')}/approve`)
       .set('Cookie', cookieHeader(orgAdmin))
       .send({});
-    expect(adminStudentApproval.status).toBe(200);
-    expect((await studentLogin(first.code!, 'ADMIN-STUDENT')).status).toBe(200);
+    expect(adminStudentApproval.status).toBe(403);
+    expect((await studentLogin(first.code!, 'ADMIN-STUDENT')).status).toBe(403);
 
     const tutorCookie = cookieHeader(tutorLoginResponse);
+    const registrationPaymentConfirmation = await confirmOfflineRegistrationPayment(first.id, pendingStudentRegistration.body.data.user.id as string, cookieHeader(orgAdmin));
+    expect(registrationPaymentConfirmation.status).toBe(200);
+    expect(registrationPaymentConfirmation.body.data.accountStatus).toBe(AccountStatus.APPROVED);
     const tutorTutorApprovalAttempt = await request(app)
       .post(`/api/org-admin/tutors/${pendingTutorId}/approve`)
       .set('Cookie', tutorCookie)
@@ -596,9 +820,43 @@ describe('multi-organization authentication and approvals', () => {
       .post(`/api/tutor/registrations/${encodeURIComponent(pendingStudentId)}/approve`)
       .set('Cookie', tutorCookie)
       .send({});
-    expect(approveStudent.status).toBe(200);
+    expect(approveStudent.status).toBe(409);
     expect((await studentLogin(first.code!, `${prefix}-pending-student-a`)).status).toBe(200);
     expect((await tutorLogin(first.code!, pendingTutorIdentifier)).status).toBe(200);
+    const acceptedStudents = await request(app)
+      .get('/api/tutor/registrations?status=APPROVED')
+      .set('Cookie', tutorCookie);
+    const acceptedStudent = acceptedStudents.body.data.registrations.find((registration: { studentId: string }) => registration.studentId === pendingStudentId);
+    expect(acceptedStudent).toBeDefined();
+    expect(acceptedStudent).not.toHaveProperty('aadhaarNumber');
+    expect(acceptedStudent).not.toHaveProperty('fatherName');
+    const rejectedRegistration = await registerStudent(first.code!, `${prefix}-optional-reject`, 'optional-reject');
+    expect(rejectedRegistration.status).toBe(201);
+    const rejectedStudentId = rejectedRegistration.body.data.user.studentProfile.studentId as string;
+    const rejectedUserId = rejectedRegistration.body.data.user.id as string;
+    const rejectedPaymentConfirmation = await confirmOfflineRegistrationPayment(first.id, rejectedRegistration.body.data.user.id as string, cookieHeader(orgAdmin));
+    expect(rejectedPaymentConfirmation.status).toBe(200);
+    expect(rejectedPaymentConfirmation.body.data.accountStatus).toBe(AccountStatus.APPROVED);
+    const postPaymentRejectionAttempt = await request(app)
+      .post(`/api/tutor/registrations/${encodeURIComponent(rejectedStudentId)}/reject`)
+      .set('Cookie', tutorCookie)
+      .send({});
+    expect(postPaymentRejectionAttempt.status).toBe(409);
+    await prisma.user.update({
+      where: { id: rejectedUserId },
+      data: { status: AccountStatus.REJECTED, rejectionReason: null },
+    });
+    await prisma.studentProfile.update({
+      where: { userId: rejectedUserId },
+      data: { status: StudentStatus.REJECTED, rejectionReason: null },
+    });
+    const rejection = await request(app)
+      .get('/api/payments/registration?status=PAID')
+      .set('Cookie', cookieHeader(orgAdmin));
+    expect(rejection.body.data.payments.some((item: { student: { id: string; status: string } }) =>
+      item.student.id === rejectedUserId && item.student.status === AccountStatus.REJECTED,
+    )).toBe(true);
+    expect((await studentLogin(first.code!, `${prefix}-optional-reject`)).body.error.message).toBe('Your registration was rejected');
 
     const tutorApprovalAttempt = await request(app)
       .post(`/api/tutor/registrations/${encodeURIComponent(pendingStudentId)}/approve`)
@@ -615,6 +873,16 @@ describe('multi-organization authentication and approvals', () => {
       .get('/api/org-admin/tutors/pending')
       .set('Cookie', tutorCookie);
     expect(tutorOnTutorQueue.status).toBe(403);
+    const pendingStudents = await request(app)
+      .get('/api/tutor/registrations?status=PENDING')
+      .set('Cookie', tutorCookie);
+    expect(pendingStudents.status).toBe(200);
+    expect(pendingStudents.body.data.registrations.some((registration: { studentId: string }) => registration.studentId === pendingStudentId)).toBe(false);
+    const acceptedTutors = await request(app)
+      .get('/api/org-admin/tutors/registrations?status=APPROVED')
+      .set('Cookie', cookieHeader(orgAdmin));
+    expect(acceptedTutors.status).toBe(200);
+    expect(acceptedTutors.body.data.registrations.some((registration: { user: { id: string } }) => registration.user.id === pendingTutorId)).toBe(true);
 
     const firstStudentLogin = await studentLogin(first.code!, 'DUPLICATE-ID');
     const secondStudentLogin = await studentLogin(second.code!, 'DUPLICATE-ID');

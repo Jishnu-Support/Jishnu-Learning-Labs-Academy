@@ -18,6 +18,7 @@ type CourseInput = {
   thumbnailUrl?: string | null;
   category: string;
   plannedHours: number;
+  registrationMonthlyFee?: number | null;
   startDate: string;
   endDate: string;
   minimumAttendancePercent: number;
@@ -29,6 +30,7 @@ type ListInput = { search?: string; status?: CourseStatus };
 
 function courseInclude(organizationId: string, role: Role, userId: string): Prisma.CourseInclude {
   return {
+    organization: { select: { currency: true } },
     instructors: {
       where: role === Role.TUTOR ? { instructorId: userId } : {},
       select: { instructor: { select: { id: true, name: true } } },
@@ -143,6 +145,9 @@ export async function getManagedCourse(organizationId: string, userId: string, r
 
 export async function createCourse(organizationId: string, actorId: string, role: Role, input: CourseInput) {
   if (isoDate(input.endDate) < isoDate(input.startDate)) throw new HttpError(400, 'End date must be on or after the start date');
+  if (role !== Role.ORG_ADMIN && input.registrationMonthlyFee !== undefined) {
+    throw new HttpError(403, 'Only an organization administrator can set the registration fee');
+  }
   if (role === Role.TUTOR && input.instructorIds.some((id) => id !== actorId)) {
     throw new HttpError(403, 'Only an organization administrator can assign other Tutors');
   }
@@ -159,6 +164,7 @@ export async function createCourse(organizationId: string, actorId: string, role
           thumbnailUrl: input.thumbnailUrl ?? null,
           category: input.category,
           plannedHours: input.plannedHours,
+          registrationMonthlyFee: input.registrationMonthlyFee ?? null,
           startDate: isoDate(input.startDate),
           endDate: isoDate(input.endDate),
           minimumAttendancePercent: input.minimumAttendancePercent,
@@ -192,6 +198,9 @@ export async function updateCourse(
   if (role !== Role.ORG_ADMIN && input.instructorIds !== undefined) {
     throw new HttpError(403, 'Only an organization administrator can reassign course Tutors');
   }
+  if (role !== Role.ORG_ADMIN && input.registrationMonthlyFee !== undefined) {
+    throw new HttpError(403, 'Only an organization administrator can set the registration fee');
+  }
   const nextStartDate = input.startDate ? isoDate(input.startDate) : existing.startDate;
   const nextEndDate = input.endDate ? isoDate(input.endDate) : existing.endDate;
   if (nextEndDate < nextStartDate) throw new HttpError(400, 'End date must be on or after the start date');
@@ -217,6 +226,7 @@ export async function updateCourse(
           ...(input.thumbnailUrl !== undefined ? { thumbnailUrl: input.thumbnailUrl } : {}),
           ...(input.category !== undefined ? { category: input.category } : {}),
           ...(input.plannedHours !== undefined ? { plannedHours: input.plannedHours } : {}),
+          ...(input.registrationMonthlyFee !== undefined ? { registrationMonthlyFee: input.registrationMonthlyFee } : {}),
           ...(input.startDate !== undefined ? { startDate: nextStartDate } : {}),
           ...(input.endDate !== undefined ? { endDate: nextEndDate } : {}),
           ...(input.minimumAttendancePercent !== undefined ? { minimumAttendancePercent: input.minimumAttendancePercent } : {}),

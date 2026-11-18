@@ -150,7 +150,7 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 - An organization registers at `/organizations/register`. By default, registration activates it immediately, creates its Org Admin, and displays its unique organization code. `REQUIRE_ORG_APPROVAL=true` restores a pending Super Admin approval flow.
 - Super Admin monitors organizations at `/super-admin/organizations` and can suspend or reactivate them. Organization summaries show role counts only, not internal student records.
 - Self-registering Tutor accounts are approved by the Org Admin of the same organization.
-- Students are approved by the Org Admin or an assigned Tutor in the same organization.
+- Students are approved by Tutors in the same organization; Tutors are approved by the Org Admin. The Super Admin does not approve individual tenant accounts.
 - Only approved accounts can sign in. Pending, rejected (including the reason), and suspended accounts receive distinct messages.
 - Super Admin accounts are created only by the seed script.
 - Students have one active session; signing in again revokes the earlier session.
@@ -174,6 +174,14 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 - Aadhaar collection is optional and should be enabled only where legally permitted and necessary. Set `ENABLE_AADHAAR_FIELD=false` to disable collection. Aadhaar and APAAR values are encrypted with AES-256-GCM using `PII_ENCRYPTION_KEY`; production startup refuses to run without a valid base64-encoded 32-byte key. Generate a local development key with `node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))"` and place it in the ignored `server/.env`. Never commit the key or reuse the example value.
 - Identity values are masked in normal responses. Revealing one requires the student's password (or an Org Admin's password and reason) and writes an audit entry containing the actor, student, and field but not the value. Never place identity numbers in logs, notifications, audit metadata, or CSV exports.
 - Collect Aadhaar only when legally permitted and necessary; comply with the Digital Personal Data Protection Act and applicable rules. Obtain verifiable parent/guardian consent where required for minors. Document a deletion-on-request process and remove optional identifiers when consent is withdrawn or deletion is requested, subject to applicable retention obligations.
+
+## Student and Tutor registration
+
+- Both registration forms retain the organization code, account ID, and password required by the existing tenant-aware sign-in flow, and collect the applicant's name, contact, email, parents' names, optional identity numbers, interested course, and Terms & Conditions acceptance.
+- Student registrations select a published course with an Org Admin-configured first-month registration fee. The application remains `Pending Payment` until the Org Admin records the offline payment; payment confirmation automatically approves and activates the Student account, enabling login immediately. Use the registration status page in the same browser session to view the fee and status. Rejected, paid registrations may be refunded offline by the Org Admin, with the refund reason audited. This registration payment is separate from ongoing Tutor-specific subscription renewals in Pay My Fee.
+- Tutor registrations continue to be reviewed by Org Admins. The course selector uses published courses belonging to the entered organization; course interest is saved as a registration-time subject/course label and does not enroll the applicant.
+- Aadhaar remains optional and may be disabled with `ENABLE_AADHAAR_FIELD=false`. Aadhaar and APAAR collection is available only when encryption is configured and the applicant separately consents. Values are encrypted at rest and shown only masked to authorized Org Admins; Tutors never see student identity numbers.
+- Student registrations are approved automatically when payment is recorded; Tutor registrations continue to be reviewed by Org Admins. The Super Admin does not approve individual tenant accounts. Tutor review remains available for legacy pending Student accounts. Rejection reasons are optional and appear in the applicant's sign-in status message.
 
 ## Checkpoint 2A courses and enrollment
 
@@ -203,15 +211,18 @@ The same `STU-1001` exists in both organizations to demonstrate tenant-scoped ID
 - `POST /api/super-admin/organizations/:organizationId/reject`
 - `POST /api/super-admin/organizations/:organizationId/suspend` and `/reactivate`
 - `POST /api/auth/students/register`, `/api/auth/tutors/register`
+- `GET /api/auth/registration-options?organizationCode=&role=STUDENT|TUTOR` (published courses; student options require an Org Admin-configured registration fee)
+- `POST /api/auth/students/registration-status` (status-token protected; reports only course fee, payment, and account state)
 - `POST /api/auth/students/login`, `/api/auth/tutors/login`
 - Deprecated `/api/auth/instructors/register` and `/api/auth/instructors/login` return HTTP 410.
 - `POST /api/auth/org-admin/login`, `/api/auth/super-admin/login`
 - `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`
-- `GET /api/org-admin/students/registrations/pending`
-- `POST /api/org-admin/students/registrations/:studentId/approve` and `/reject`
+- `GET /api/org-admin/tutors/registrations?status=PENDING|APPROVED|REJECTED`
 - `POST /api/org-admin/tutors/:userId/approve` and `/reject`
-- `GET /api/tutor/registrations/pending`
+- `GET /api/tutor/registrations?status=PENDING|APPROVED|REJECTED`
 - `POST /api/tutor/registrations/:studentId/approve` and `/reject`
+- `GET /api/payments/registration?status=PENDING|PAID|REFUNDED` (Org Admin only; tenant-scoped offline registration payments)
+- `PUT /api/payments/registration/:paymentId/confirm` and `/refund` (Org Admin only; audited)
 - `GET /api/students` (scoped to the authenticated organization)
 - `GET /api/students?search=&status=&page=&pageSize=`
 - `GET /api/students/:studentId` (safe profile and last 10 successful login timestamps)

@@ -7,7 +7,7 @@ import {
   checkoutSchema, feeAcceptanceSchema, organizationIdSchema, organizationPaymentSettingsSchema,
   organizationPaymentsToggleSchema, paymentFiltersSchema, paymentIdSchema, planIdSchema,
   planPriceOverrideSchema, refundSchema, subscriptionIdSchema, subscriptionStatusSchema,
-  tutorIdSchema, tutorPlanPriceSchema,
+  registrationPaymentFiltersSchema, tutorIdSchema, tutorPlanPriceSchema,
 } from './payments.schemas.js';
 
 export const paymentsRouter = Router();
@@ -27,6 +27,28 @@ paymentsRouter.get(
   requireRoles(Role.TUTOR, Role.ORG_ADMIN, Role.SUPER_ADMIN),
   validateQuery(paymentFiltersSchema),
   controller.managementData,
+);
+paymentsRouter.get(
+  '/registration',
+  requireOrganization,
+  requireRoles(Role.ORG_ADMIN),
+  validateQuery(registrationPaymentFiltersSchema),
+  controller.registrationPayments,
+);
+paymentsRouter.put(
+  '/registration/:paymentId/confirm',
+  requireOrganization,
+  requireRoles(Role.ORG_ADMIN),
+  validateParams(paymentIdSchema),
+  controller.confirmRegistrationPayment,
+);
+paymentsRouter.put(
+  '/registration/:paymentId/refund',
+  requireOrganization,
+  requireRoles(Role.ORG_ADMIN),
+  validateParams(paymentIdSchema),
+  validateBody(refundSchema),
+  controller.refundRegistrationPayment,
 );
 paymentsRouter.put('/tutor/plans', requireOrganization, requireRoles(Role.TUTOR), validateBody(tutorPlanPriceSchema), controller.setTutorPlanPrice);
 paymentsRouter.put(

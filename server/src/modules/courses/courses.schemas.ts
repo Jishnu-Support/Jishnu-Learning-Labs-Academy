@@ -7,6 +7,7 @@ const courseFields = {
   thumbnailUrl: z.string().trim().url().refine((value) => new URL(value).protocol === 'https:', 'Use a secure HTTPS thumbnail URL').nullable().optional(),
   category: z.string().trim().min(2).max(100),
   plannedHours: z.number().int().min(1).max(10000),
+  registrationMonthlyFee: z.number().positive().max(999_999_999.99).nullable().optional(),
   startDate: z.iso.date(),
   endDate: z.iso.date(),
   minimumAttendancePercent: z.number().int().min(0).max(100),

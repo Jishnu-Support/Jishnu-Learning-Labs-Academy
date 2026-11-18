@@ -1,5 +1,5 @@
 import {
-  AccountStatus, NotificationType, PaymentStatus, Role, SubscriptionPeriod, SubscriptionStatus,
+  AccountStatus, NotificationType, PaymentStatus, RegistrationPaymentStatus, Role, StudentStatus, SubscriptionPeriod, SubscriptionStatus,
 } from '@prisma/client';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
@@ -11,6 +11,11 @@ type PaymentFilters = {
   tutorId?: string;
   courseId?: string;
   status?: PaymentStatus;
+  from?: Date;
+  to?: Date;
+};
+type RegistrationPaymentFilters = {
+  status?: RegistrationPaymentStatus;
   from?: Date;
   to?: Date;
 };
@@ -67,6 +72,182 @@ function filteredPaymentWhere(actor: PaymentActor, filters: PaymentFilters) {
   return where;
 }
 
+export async function listRegistrationPayments(actor: PaymentActor, filters: RegistrationPaymentFilters = {}) {
+    if (actor.role !== Role.ORG_ADMIN) throw new HttpError(403, 'Only organization admins can manage student registration payments');
+    const orgId = tenantId(actor);
+    const to = filters.to ? new Date(filters.to) : undefined;
+    to?.setUTCHours(23, 59, 59, 999);
+    const payments = await prisma.registrationPayment.findMany({
+      where: {
+        organizationId: orgId,
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.from || to ? {
+          createdAt: {
+            ...(filters.from ? { gte: filters.from } : {}),
+            ...(to ? { lte: to } : {}),
+          },
+        } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        status: true,
+        createdAt: true,
+        paidAt: true,
+        refundedAt: true,
+        refundReason: true,
+        course: { select: { id: true, code: true, title: true } },
+        student: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            studentProfile: { select: { studentId: true } },
+          },
+        },
+      },
+    });
+    return payments.map(({ amount, student, ...payment }) => ({
+      ...payment,
+      amount: amount.toNumber(),
+      student: {
+        id: student.id,
+        name: student.name,
+        status: student.status,
+        studentId: student.studentProfile?.studentId ?? '',
+      },
+    }));
+  }
+
+export async function confirmRegistrationPayment(actor: PaymentActor, paymentId: string) {
+    if (actor.role !== Role.ORG_ADMIN) throw new HttpError(403, 'Only organization admins can confirm registration payments');
+    const orgId = tenantId(actor);
+    const payment = await prisma.registrationPayment.findFirst({
+      where: { id: paymentId, organizationId: orgId },
+      select: {
+        id: true,
+        studentId: true,
+        courseId: true,
+        amount: true,
+        currency: true,
+        status: true,
+        student: { select: { status: true, studentProfile: { select: { id: true, status: true } } } },
+      },
+    });
+    if (!payment) throw new HttpError(404, 'Registration payment not found');
+    const studentProfile = payment.student.studentProfile;
+    if (
+      payment.status !== RegistrationPaymentStatus.PENDING
+      || payment.student.status !== AccountStatus.PENDING_PAYMENT
+      || !studentProfile
+      || studentProfile.status !== StudentStatus.PENDING
+    ) {
+      throw new HttpError(409, 'This registration payment is no longer awaiting confirmation');
+    }
+    const paidAt = new Date();
+    await prisma.$transaction(async (tx) => {
+      const updatedPayment = await tx.registrationPayment.updateMany({
+        where: { id: payment.id, organizationId: orgId, status: RegistrationPaymentStatus.PENDING },
+        data: { status: RegistrationPaymentStatus.PAID, paidAt },
+      });
+      const updatedStudent = await tx.user.updateMany({
+        where: { id: payment.studentId, organizationId: orgId, role: Role.STUDENT, status: AccountStatus.PENDING_PAYMENT },
+        data: {
+          status: AccountStatus.APPROVED,
+          rejectionReason: null,
+          approvedById: actor.userId,
+          approvedAt: paidAt,
+          isActive: true,
+        },
+      });
+      const updatedProfile = await tx.studentProfile.updateMany({
+        where: {
+          id: studentProfile.id,
+          organizationId: orgId,
+          userId: payment.studentId,
+          status: StudentStatus.PENDING,
+        },
+        data: {
+          status: StudentStatus.APPROVED,
+          rejectionReason: null,
+          approvedById: actor.userId,
+          approvedAt: paidAt,
+        },
+      });
+      if (updatedPayment.count !== 1 || updatedStudent.count !== 1 || updatedProfile.count !== 1) {
+        throw new HttpError(409, 'This registration payment is no longer awaiting confirmation');
+      }
+      await tx.auditLog.create({
+        data: {
+          organizationId: orgId,
+          actorId: actor.userId,
+          action: 'STUDENT_REGISTRATION_PAYMENT_CONFIRMED',
+          targetType: 'RegistrationPayment',
+          targetId: payment.id,
+          metadata: { courseId: payment.courseId, amount: payment.amount.toNumber(), currency: payment.currency },
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          organizationId: orgId,
+          actorId: actor.userId,
+          action: 'STUDENT_APPROVED',
+          targetType: 'StudentProfile',
+          targetId: studentProfile.id,
+          metadata: { status: AccountStatus.APPROVED, source: 'REGISTRATION_PAYMENT' },
+        },
+      });
+    });
+    await notifyAfterCommit(async () => {
+      await notifyUsers(orgId, [payment.studentId], {
+        type: NotificationType.PAYMENT_STATUS,
+        title: 'Your registration is approved',
+        body: 'Your first-month registration payment is confirmed. You can now sign in to the Student Portal.',
+        link: '/student/login',
+        dedupeKey: `student-payment-confirmed:${payment.id}:student`,
+      });
+    }, 'student registration payment confirmation');
+    return { id: payment.id, status: RegistrationPaymentStatus.PAID, paidAt, accountStatus: AccountStatus.APPROVED };
+  }
+
+export async function refundRegistrationPayment(actor: PaymentActor, paymentId: string, reason: string) {
+    if (actor.role !== Role.ORG_ADMIN) throw new HttpError(403, 'Only organization admins can record registration refunds');
+    const orgId = tenantId(actor);
+    const payment = await prisma.registrationPayment.findFirst({
+      where: { id: paymentId, organizationId: orgId },
+      select: { id: true, studentId: true, courseId: true, amount: true, status: true, student: { select: { status: true } } },
+    });
+    if (!payment) throw new HttpError(404, 'Registration payment not found');
+    if (payment.status !== RegistrationPaymentStatus.PAID || payment.student.status !== AccountStatus.REJECTED) {
+      throw new HttpError(409, 'A refund can be recorded only for a paid registration rejected by a Tutor');
+    }
+    const refundedAt = new Date();
+    const normalizedReason = reason.trim();
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.registrationPayment.updateMany({
+        where: { id: payment.id, organizationId: orgId, status: RegistrationPaymentStatus.PAID },
+        data: {
+          status: RegistrationPaymentStatus.REFUNDED,
+          refundedAt,
+          refundReason: normalizedReason,
+        },
+      });
+      if (updated.count !== 1) throw new HttpError(409, 'This registration payment was already updated');
+      await tx.auditLog.create({
+        data: {
+          organizationId: orgId,
+          actorId: actor.userId,
+          action: 'STUDENT_REGISTRATION_PAYMENT_REFUNDED',
+          targetType: 'RegistrationPayment',
+          targetId: payment.id,
+          metadata: { courseId: payment.courseId, amount: payment.amount.toNumber(), reason: normalizedReason },
+        },
+      });
+    });
+    return { id: payment.id, status: RegistrationPaymentStatus.REFUNDED, refundedAt };
+  }
 export async function paymentManagementData(actor: PaymentActor, filters: PaymentFilters = {}) {
   if (actor.role !== Role.TUTOR && actor.role !== Role.ORG_ADMIN && actor.role !== Role.SUPER_ADMIN) {
     throw new HttpError(403, 'You do not have permission to view payment management');

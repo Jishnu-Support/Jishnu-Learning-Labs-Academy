@@ -12,6 +12,7 @@ import {
   studentLoginSchema,
   studentRegistrationSchema,
   superAdminLoginSchema,
+  registrationStatusSchema,
 } from './auth.schemas.js';
 
 export const authRouter = Router();
@@ -21,8 +22,22 @@ const authLimiter = rateLimit({
   standardHeaders: 'draft-8',
   legacyHeaders: false,
 });
+const registrationOptionsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: env.NODE_ENV === 'test' ? 1000 : 60,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
+const registrationStatusLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: env.NODE_ENV === 'test' ? 1000 : 120,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
 
 authRouter.post('/students/register', authLimiter, validateBody(studentRegistrationSchema), controller.registerStudent);
+authRouter.get('/registration-options', registrationOptionsLimiter, controller.registrationOptions);
+authRouter.post('/students/registration-status', registrationStatusLimiter, validateBody(registrationStatusSchema), controller.studentRegistrationStatus);
 authRouter.post('/instructors/register', authLimiter, controller.deprecatedInstructorRegistration);
 authRouter.post('/tutors/register', authLimiter, validateBody(tutorRegistrationSchema), controller.registerTutor);
 authRouter.post('/students/login', authLimiter, validateBody(studentLoginSchema), controller.studentLogin);

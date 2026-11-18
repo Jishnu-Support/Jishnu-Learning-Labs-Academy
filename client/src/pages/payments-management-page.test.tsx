@@ -73,7 +73,10 @@ function renderPage(role: CurrentUser['role']) {
   );
 }
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
 
 describe('PaymentsManagementPage', () => {
   it('lets Tutors set a price for an assigned course and shows their earnings', async () => {
@@ -97,6 +100,7 @@ describe('PaymentsManagementPage', () => {
   it('requires a reason before changing a subscription and submits the admin action', async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === '/payments/management') return { ...data, scope: 'ORG_ADMIN' };
+      if (path.startsWith('/payments/registration')) return { payments: [] };
       return {};
     });
 
@@ -109,5 +113,34 @@ describe('PaymentsManagementPage', () => {
       path === '/payments/subscriptions/subscription-1/status' && init?.method === 'PUT' &&
       String(init.body) === JSON.stringify({ status: 'INACTIVE', reason: 'Administrative review' }),
     )).toBe(true));
+  }, 15000);
+
+  it('lets an Org Admin confirm a pending offline student registration payment', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === '/payments/management') return { ...data, scope: 'ORG_ADMIN' };
+      if (path.startsWith('/payments/registration')) {
+        return {
+          payments: [{
+            id: 'registration-payment-1',
+            amount: 250,
+            currency: 'INR',
+            status: 'PENDING',
+            createdAt: '2026-10-01T00:00:00.000Z',
+            paidAt: null,
+            refundedAt: null,
+            refundReason: null,
+            course: { id: 'course-1', code: 'PY101', title: 'Python' },
+            student: { id: 'student-1', name: 'Student One', status: 'PENDING_PAYMENT', studentId: 'STU-1' },
+          }],
+        };
+      }
+      return {};
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderPage('ORG_ADMIN');
+    expect(await screen.findByText('Student registration payments')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark received' }));
+    await waitFor(() => expect(vi.mocked(api)).toHaveBeenCalledWith('/payments/registration/registration-payment-1/confirm', { method: 'PUT' }));
   }, 15000);
 });

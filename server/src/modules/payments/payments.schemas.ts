@@ -1,4 +1,4 @@
-import { PaymentStatus, SubscriptionPeriod, SubscriptionStatus } from '@prisma/client';
+import { PaymentStatus, RegistrationPaymentStatus, SubscriptionPeriod, SubscriptionStatus } from '@prisma/client';
 import { z } from 'zod';
 
 export const checkoutSchema = z.object({
@@ -18,6 +18,15 @@ export const paymentFiltersSchema = z.object({
   tutorId: z.string().trim().min(1).max(64).optional(),
   courseId: z.string().trim().min(1).max(64).optional(),
   status: z.nativeEnum(PaymentStatus).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+}).refine((value) => !value.from || !value.to || value.from <= value.to, {
+  path: ['to'],
+  message: 'End date must be on or after start date',
+});
+
+export const registrationPaymentFiltersSchema = z.object({
+  status: z.nativeEnum(RegistrationPaymentStatus).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
 }).refine((value) => !value.from || !value.to || value.from <= value.to, {

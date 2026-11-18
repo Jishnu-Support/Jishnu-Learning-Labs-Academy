@@ -4,7 +4,8 @@ import * as service from './payments.service.js';
 import * as management from './payments-management.service.js';
 import {
   checkoutSchema, feeAcceptanceSchema, organizationPaymentSettingsSchema, organizationPaymentsToggleSchema,
-  paymentFiltersSchema, planPriceOverrideSchema, refundSchema, subscriptionStatusSchema, tutorPlanPriceSchema,
+  paymentFiltersSchema, planPriceOverrideSchema, refundSchema, registrationPaymentFiltersSchema,
+  subscriptionStatusSchema, tutorPlanPriceSchema,
 } from './payments.schemas.js';
 
 function actor(req: Request) {
@@ -88,4 +89,22 @@ export const refund: RequestHandler = async (req, res) => {
   const paymentId = req.params.paymentId;
   if (typeof paymentId !== 'string') throw new HttpError(400, 'Invalid payment ID');
   res.json({ data: await management.refundPayment(actor(req), paymentId, refundSchema.parse(req.body).reason) });
+};
+
+export const registrationPayments: RequestHandler = async (req, res) => {
+  res.json({ data: { payments: await management.listRegistrationPayments(actor(req), registrationPaymentFiltersSchema.parse(req.query)) } });
+};
+
+export const confirmRegistrationPayment: RequestHandler = async (req, res) => {
+  const paymentId = req.params.paymentId;
+  if (typeof paymentId !== 'string') throw new HttpError(400, 'Invalid registration payment ID');
+  res.json({ data: await management.confirmRegistrationPayment(actor(req), paymentId) });
+};
+
+export const refundRegistrationPayment: RequestHandler = async (req, res) => {
+  const paymentId = req.params.paymentId;
+  if (typeof paymentId !== 'string') throw new HttpError(400, 'Invalid registration payment ID');
+  res.json({
+    data: await management.refundRegistrationPayment(actor(req), paymentId, refundSchema.parse(req.body).reason),
+  });
 };

@@ -1,8 +1,17 @@
 import type { RequestHandler } from 'express';
+import { AccountStatus } from '@prisma/client';
+import { HttpError } from '../../utils/http-error.js';
+import { registrationStatusQuerySchema } from './approvals.schemas.js';
 import * as service from './approvals.service.js';
 
 export const listPendingStudents: RequestHandler = async (req, res) => {
-  const registrations = await service.listPendingStudents(req.auth!.organizationId);
+  const registrations = await service.listStudentRegistrations(req.auth!.organizationId, AccountStatus.PENDING);
+  res.json({ data: { registrations } });
+};
+
+export const listStudentRegistrations: RequestHandler = async (req, res) => {
+  const { status } = registrationStatusQuerySchema.parse(req.query);
+  const registrations = await service.listStudentRegistrations(req.auth!.organizationId, status);
   res.json({ data: { registrations } });
 };
 
@@ -17,7 +26,13 @@ export const rejectStudent: RequestHandler = async (req, res) => {
 };
 
 export const listPendingTutor: RequestHandler = async (req, res) => {
-  const registrations = await service.listPendingTutor(req.auth!.organizationId);
+  const registrations = await service.listTutorRegistrations(req.auth!.organizationId, AccountStatus.PENDING);
+  res.json({ data: { registrations } });
+};
+
+export const listTutorRegistrations: RequestHandler = async (req, res) => {
+  const { status } = registrationStatusQuerySchema.parse(req.query);
+  const registrations = await service.listTutorRegistrations(req.auth!.organizationId, status);
   res.json({ data: { registrations } });
 };
 
@@ -29,4 +44,8 @@ export const approveTutor: RequestHandler = async (req, res) => {
 export const rejectTutor: RequestHandler = async (req, res) => {
   const result = await service.rejectTutor(req.auth!.organizationId, req.params.userId as string, req.auth!.userId, req.body.reason);
   res.json({ data: result });
+};
+
+export const denyStudentApproval: RequestHandler = () => {
+  throw new HttpError(403, 'Only Tutors may review student registrations');
 };

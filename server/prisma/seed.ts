@@ -13,6 +13,7 @@ const superAdminPassword = process.env.SUPER_ADMIN_PASSWORD ?? 'JishnuDevOnly!20
 
 function studentStatus(status: AccountStatus): StudentStatus {
   switch (status) {
+    case AccountStatus.PENDING_PAYMENT: return StudentStatus.PENDING;
     case AccountStatus.PENDING: return StudentStatus.PENDING;
     case AccountStatus.APPROVED: return StudentStatus.APPROVED;
     case AccountStatus.REJECTED: return StudentStatus.REJECTED;
