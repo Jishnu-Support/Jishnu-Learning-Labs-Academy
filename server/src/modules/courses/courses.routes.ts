@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Role } from '@prisma/client';
 import { authenticate, requireOrganization, requireRoles } from '../../middleware/authenticate.js';
 import { validateBody, validateParams } from '../../middleware/validate.js';
+import { selectActiveOrganizationForSuperAdmin } from '../../middleware/super-admin-organization.js';
 import * as controller from './courses.controller.js';
 import {
   courseIdSchema,
@@ -21,7 +22,7 @@ export const coursesRouter = Router();
 coursesRouter.use(authenticate, requireOrganization, requireRoles(...courseEditors));
 coursesRouter.get('/', controller.list);
 coursesRouter.get('/faculty', controller.instructors);
-coursesRouter.post('/', validateBody(createCourseSchema), controller.create);
+coursesRouter.post('/', requireRoles(Role.ORG_ADMIN), validateBody(createCourseSchema), controller.create);
 coursesRouter.get('/:courseId/enrollments', validateParams(courseIdSchema), controller.enrollments);
 coursesRouter.post('/:courseId/enrollments/:enrollmentId/approve', validateParams(enrollmentIdSchema), controller.approveEnrollment);
 coursesRouter.post('/:courseId/topics', validateParams(courseIdSchema), validateBody(createTopicSchema), controller.addTopic);
@@ -40,3 +41,22 @@ studentRouter.post('/:courseId/drop', validateParams(courseIdSchema), controller
 studentRouter.get('/:courseId', validateParams(courseIdSchema), controller.studentGet);
 
 export const studentCoursesRouter = studentRouter;
+
+export const superAdminCoursesRouter = Router({ mergeParams: true });
+superAdminCoursesRouter.use(
+  authenticate,
+  requireRoles(Role.SUPER_ADMIN),
+  selectActiveOrganizationForSuperAdmin,
+);
+superAdminCoursesRouter.get('/', controller.list);
+superAdminCoursesRouter.get('/faculty', controller.instructors);
+superAdminCoursesRouter.post('/', validateBody(createCourseSchema), controller.create);
+superAdminCoursesRouter.get('/:courseId', validateParams(courseIdSchema), controller.get);
+superAdminCoursesRouter.patch('/:courseId', validateParams(courseIdSchema), validateBody(updateCourseSchema), controller.update);
+superAdminCoursesRouter.post('/:courseId/publish', validateParams(courseIdSchema), controller.publish);
+superAdminCoursesRouter.post('/:courseId/archive', validateParams(courseIdSchema), controller.archive);
+superAdminCoursesRouter.get('/:courseId/enrollments', validateParams(courseIdSchema), controller.enrollments);
+superAdminCoursesRouter.post('/:courseId/enrollments/:enrollmentId/approve', validateParams(enrollmentIdSchema), controller.approveEnrollment);
+superAdminCoursesRouter.post('/:courseId/topics', validateParams(courseIdSchema), validateBody(createTopicSchema), controller.addTopic);
+superAdminCoursesRouter.patch('/:courseId/topics/reorder', validateParams(courseIdSchema), validateBody(reorderTopicsSchema), controller.reorderTopics);
+superAdminCoursesRouter.patch('/:courseId/topics/:topicId', validateParams(topicIdSchema), validateBody(updateTopicSchema), controller.updateTopic);

@@ -11,11 +11,11 @@ export type StorageService = {
   remove(key: string): Promise<void>;
 };
 
-const allowedExtensions = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp']);
+const allowedExtensions = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp', '.doc', '.docx']);
 const root = isAbsolute(env.NOTE_STORAGE_DIR) ? resolve(env.NOTE_STORAGE_DIR) : resolve(process.cwd(), env.NOTE_STORAGE_DIR);
 
 function resolveKey(key: string): string {
-  if (!/^[0-9a-f-]{36}\.(pdf|png|jpg|jpeg|webp)$/.test(key)) throw new HttpError(404, 'Note file not found');
+  if (!/^[0-9a-f-]{36}\.(pdf|png|jpg|jpeg|webp|doc|docx)$/.test(key)) throw new HttpError(404, 'Note file not found');
   const filePath = resolve(root, key);
   if (!filePath.startsWith(`${root}${sep}`)) throw new HttpError(404, 'Note file not found');
   return filePath;

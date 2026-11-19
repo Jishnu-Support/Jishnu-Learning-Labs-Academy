@@ -8,6 +8,7 @@ import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { notifyAfterCommit, notifyCourseStudents, notifyUsers } from '../notifications/notifications.service.js';
 import { canAccessContent, requireContentAccess } from '../student-portal/content-access.service.js';
+import { tryIssueStudentCertificate } from '../student-portal/student-portal.service.js';
 import { generatedAssessmentQuestionSchema, questionSchema } from './learning.schemas.js';
 
 type Actor = { organizationId: string; userId: string; role: Role };
@@ -36,7 +37,9 @@ type SnapshotQuestion = {
 };
 
 function assertTeacher(actor: Actor) {
-  if (actor.role !== Role.ORG_ADMIN && actor.role !== Role.TUTOR) throw new HttpError(403, 'You do not have permission to manage learning content');
+  if (actor.role !== Role.ORG_ADMIN && actor.role !== Role.TUTOR && actor.role !== Role.SUPER_ADMIN) {
+    throw new HttpError(403, 'You do not have permission to manage learning content');
+  }
 }
 
 async function managedCourse(actor: Actor, courseId: string) {
@@ -811,6 +814,13 @@ export async function getPracticeSession(actor: Actor, sessionId: string) {
     include: { answers: true, practiceSet: { select: { title: true } } },
   });
   if (!session) throw new HttpError(404, 'Practice session not found');
+  await requireContentAccess({
+    organizationId: actor.organizationId,
+    userId: actor.userId,
+    role: actor.role,
+    courseId: session.courseId,
+    published: true,
+  });
   if (session.status === PracticeSessionStatus.IN_PROGRESS && session.expiresAt && session.expiresAt <= new Date()) {
     await prisma.practiceSession.update({ where: { id: session.id }, data: { status: PracticeSessionStatus.COMPLETED, completedAt: new Date() } });
     session = { ...session, status: PracticeSessionStatus.COMPLETED, completedAt: new Date() };
@@ -849,6 +859,13 @@ export async function getPracticeSession(actor: Actor, sessionId: string) {
 export async function answerPractice(actor: Actor, sessionId: string, questionId: string, answer: unknown) {
   const session = await prisma.practiceSession.findFirst({ where: { id: sessionId, organizationId: actor.organizationId, studentId: actor.userId } });
   if (!session || session.status !== PracticeSessionStatus.IN_PROGRESS) throw new HttpError(404, 'Active practice session not found');
+  await requireContentAccess({
+    organizationId: actor.organizationId,
+    userId: actor.userId,
+    role: actor.role,
+    courseId: session.courseId,
+    published: true,
+  });
   if (session.expiresAt && session.expiresAt <= new Date()) {
     await prisma.practiceSession.update({ where: { id: session.id }, data: { status: PracticeSessionStatus.COMPLETED, completedAt: new Date() } });
     throw new HttpError(409, 'Practice time has expired');
@@ -953,7 +970,7 @@ function attemptSnapshot(assessment: { publishedSnapshot: Prisma.JsonValue | nul
 async function submitAttempt(organizationId: string, attemptId: string, status: AssessmentAttemptStatus = AssessmentAttemptStatus.SUBMITTED) {
   const attempt = await prisma.assessmentAttempt.findFirst({
     where: { id: attemptId, organizationId, status: AssessmentAttemptStatus.IN_PROGRESS },
-    include: { answers: true, assessment: { select: { totalMarks: true, passMark: true } } },
+    include: { answers: true, assessment: { select: { totalMarks: true, passMark: true, courseId: true } } },
   });
   if (!attempt) return prisma.assessmentAttempt.findFirst({ where: { id: attemptId, organizationId } });
   const questions = attempt.snapshot as unknown as SnapshotQuestion[];
@@ -966,13 +983,17 @@ async function submitAttempt(organizationId: string, attemptId: string, status: 
     if (answer) answerScores.push({ id: answer.id, score: result });
   }
   const percentage = attempt.assessment.totalMarks === 0 ? 0 : (score / attempt.assessment.totalMarks) * 100;
-  return prisma.$transaction(async (tx) => {
+  const submitted = await prisma.$transaction(async (tx) => {
     for (const item of answerScores) await tx.assessmentAttemptAnswer.update({ where: { id: item.id }, data: { score: item.score } });
     return tx.assessmentAttempt.update({
       where: { id: attempt.id },
       data: { status, activeKey: null, submittedAt: new Date(), score, percentage, passed: score >= attempt.assessment.passMark },
     });
   });
+  if (submitted.passed) {
+    await tryIssueStudentCertificate(organizationId, attempt.studentId, attempt.assessment.courseId);
+  }
+  return submitted;
 }
 
 async function expireIfNeeded(attempt: { id: string; expiresAt: Date; organizationId: string; status: AssessmentAttemptStatus }) {
@@ -984,13 +1005,20 @@ async function expireIfNeeded(attempt: { id: string; expiresAt: Date; organizati
 async function safeAttempt(attemptId: string, organizationId: string, studentId: string) {
   const attempt = await prisma.assessmentAttempt.findFirst({
     where: { id: attemptId, organizationId, studentId },
-    include: { answers: true, assessment: { select: { id: true, title: true, totalMarks: true, passMark: true, resultReleaseMode: true, answerReviewAllowed: true, resultsReleasedAt: true } } },
+    include: { answers: true, assessment: { select: { id: true, courseId: true, title: true, totalMarks: true, passMark: true, resultReleaseMode: true, answerReviewAllowed: true, resultsReleasedAt: true } } },
   });
   if (!attempt) throw new HttpError(404, 'Assessment attempt not found');
+  await requireContentAccess({
+    organizationId,
+    userId: studentId,
+    role: Role.STUDENT,
+    courseId: attempt.assessment.courseId,
+    published: true,
+  });
   await expireIfNeeded(attempt);
   const fresh = await prisma.assessmentAttempt.findFirstOrThrow({
     where: { id: attemptId, organizationId, studentId },
-    include: { answers: true, assessment: { select: { id: true, title: true, totalMarks: true, passMark: true, resultReleaseMode: true, answerReviewAllowed: true, resultsReleasedAt: true } } },
+    include: { answers: true, assessment: { select: { id: true, courseId: true, title: true, totalMarks: true, passMark: true, resultReleaseMode: true, answerReviewAllowed: true, resultsReleasedAt: true } } },
   });
   const released = fresh.assessment.resultReleaseMode === ResultReleaseMode.IMMEDIATE || Boolean(fresh.assessment.resultsReleasedAt);
   const review = fresh.status !== AssessmentAttemptStatus.IN_PROGRESS && released && fresh.assessment.answerReviewAllowed;

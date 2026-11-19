@@ -33,6 +33,12 @@ export class ApiError extends Error {
   }
 }
 
+async function errorMessage(response: Response): Promise<string> {
+  if (response.status === 429) return 'Too many requests. Please try again later.';
+  const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+  return body?.error?.message ?? 'Request failed';
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (!(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
@@ -52,13 +58,13 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
   }
   if (response.status === 204) return undefined as T;
-  const body = (await response.json().catch(() => null)) as { data?: T; error?: { message?: string } } | null;
-  if (!response.ok) throw new ApiError(body?.error?.message ?? 'Request failed', response.status);
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+  const body = (await response.json().catch(() => null)) as { data?: T } | null;
   return body?.data as T;
 }
 
-export async function apiBlob(path: string): Promise<Blob> {
-  const request = () => fetch(`${apiUrl}${path}`, { credentials: 'include' });
+export async function apiBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const request = () => fetch(`${apiUrl}${path}`, { ...init, credentials: 'include' });
   let response = await request();
   const mayRefresh = response.status === 401 && path !== '/auth/refresh' && path !== '/auth/logout' && path !== '/auth/students/login' && path !== '/auth/tutor/login' && path !== '/auth/tutors/login' && path !== '/auth/org-admin/login' && path !== '/auth/super-admin/login';
   if (mayRefresh) {
@@ -70,8 +76,7 @@ export async function apiBlob(path: string): Promise<Blob> {
     }
   }
   if (!response.ok) {
-    const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
-    throw new ApiError(body?.error?.message ?? 'Request failed', response.status);
+    throw new ApiError(await errorMessage(response), response.status);
   }
   return response.blob();
 }

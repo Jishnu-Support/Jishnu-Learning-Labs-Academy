@@ -6,11 +6,12 @@ import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { mediaStorage } from './media.storage.js';
 import { notifyAfterCommit, notifyCourseStudents } from '../notifications/notifications.service.js';
-import { canAccessContent, requireContentAccess } from '../student-portal/content-access.service.js';
+import { assertActiveCourseEnrollment, canAccessContent, requireContentAccess } from '../student-portal/content-access.service.js';
+import { tryIssueStudentCertificate } from '../student-portal/student-portal.service.js';
 import type { CreateMediaInput, MediaListInput, UpdateMediaInput } from './media.schemas.js';
 import { expectedMediaMimeTypes, youtubeVideoIdFromUrl } from './media.schemas.js';
 
-const managerRoles = [Role.TUTOR, Role.ORG_ADMIN] as const;
+const managerRoles = [Role.TUTOR, Role.ORG_ADMIN, Role.SUPER_ADMIN] as const;
 const videoLimits = new Set(['.mp4', '.mov', '.webm', '.mkv']);
 const audioLimits = new Set(['.mp3', '.m4a', '.aac', '.wav', '.ogg']);
 
@@ -65,7 +66,7 @@ function mediaWhere(actor: MediaActor, mediaId: string): Prisma.MediaItemWhereIn
     organizationId,
     id: mediaId,
     deletedAt: null,
-    ...(actor.role === Role.ORG_ADMIN ? {} : { uploadedById: actor.userId }),
+    ...(actor.role === Role.ORG_ADMIN || actor.role === Role.SUPER_ADMIN ? {} : { uploadedById: actor.userId }),
   };
 }
 
@@ -145,6 +146,7 @@ async function activeStudentCourseIds(organizationId: string, studentId: string)
 export async function listStudentMedia(actor: MediaActor, filters: { courseId?: string; type?: MediaType; search?: string }) {
   if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Only students can browse published media');
   const organizationId = tenantId(actor);
+  if (filters.courseId) await assertActiveCourseEnrollment(organizationId, actor.userId, filters.courseId);
   const courseIds = await activeStudentCourseIds(organizationId, actor.userId);
   if (courseIds.length === 0) return { items: [], courses: [] };
 
@@ -246,24 +248,40 @@ export async function recordWatchProgress(actor: MediaActor, mediaId: string, in
     published: true, freePreview: media.freePreview,
   });
 
-  const durationSeconds = media.durationSeconds ?? input.positionSeconds;
-  const completed = Boolean(input.completed || (durationSeconds > 0 && input.positionSeconds >= durationSeconds * 0.9));
+  const previous = await prisma.watchProgress.findUnique({
+    where: { organizationId_studentId_mediaId: { organizationId, studentId: actor.userId, mediaId } },
+    select: { lastPositionSeconds: true, watchedSeconds: true, completed: true, updatedAt: true },
+  });
+  const now = new Date();
+  const durationSeconds = media.durationSeconds;
+  const positionSeconds = Math.max(0, durationSeconds === null
+    ? input.positionSeconds
+    : Math.min(input.positionSeconds, durationSeconds));
+  const elapsedSeconds = previous ? Math.max(0, (now.getTime() - previous.updatedAt.getTime()) / 1000) : 0;
+  const positionDelta = previous
+    ? Math.max(0, positionSeconds - previous.lastPositionSeconds)
+    : positionSeconds;
+  const watchedSeconds = (previous?.watchedSeconds ?? 0) + Math.min(positionDelta, Math.max(5, elapsedSeconds * 1.5));
+  const completed = Boolean(previous?.completed || (
+    durationSeconds !== null && durationSeconds > 0 && watchedSeconds >= durationSeconds * 0.9
+  ));
   const progress = await prisma.watchProgress.upsert({
     where: { organizationId_studentId_mediaId: { organizationId, studentId: actor.userId, mediaId } },
     create: {
       organizationId,
       studentId: actor.userId,
       mediaId,
-      lastPositionSeconds: input.positionSeconds,
-      watchedSeconds: Math.max(input.watchedSeconds, input.positionSeconds),
+      lastPositionSeconds: positionSeconds,
+      watchedSeconds,
       completed,
     },
     update: {
-      lastPositionSeconds: input.positionSeconds,
-      watchedSeconds: Math.max(input.watchedSeconds, input.positionSeconds),
+      lastPositionSeconds: positionSeconds,
+      watchedSeconds,
       completed,
     },
   });
+  if (progress.completed) await tryIssueStudentCertificate(organizationId, actor.userId, media.courseId);
   return { id: media.id, progress };
 }
 
@@ -375,7 +393,7 @@ export async function listMedia(actor: MediaActor, filters: MediaListInput) {
     where: {
       organizationId,
       deletedAt: null,
-      ...(actor.role === Role.ORG_ADMIN ? {} : { uploadedById: actor.userId }),
+      ...(actor.role === Role.ORG_ADMIN || actor.role === Role.SUPER_ADMIN ? {} : { uploadedById: actor.userId }),
       ...(filters.courseId ? { courseId: filters.courseId } : {}),
       ...(filters.type ? { type: filters.type } : {}),
       ...(filters.status ? { status: filters.status } : {}),
@@ -386,6 +404,7 @@ export async function listMedia(actor: MediaActor, filters: MediaListInput) {
       course: { select: { id: true, title: true, code: true } },
       topic: { select: { id: true, title: true } },
       uploadedBy: { select: { id: true, name: true, role: true } },
+      uploadedBySuperAdmin: { select: { id: true, name: true, role: true } },
       job: { select: { status: true, attempts: true, progressPercent: true, error: true } },
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
@@ -394,13 +413,16 @@ export async function listMedia(actor: MediaActor, filters: MediaListInput) {
     where: { organizationId },
     _sum: { storageBytes: true },
   });
-  const storage = actor.role === Role.ORG_ADMIN ? {
+  const storage = actor.role === Role.ORG_ADMIN || actor.role === Role.SUPER_ADMIN ? {
     usedBytes: Number(aggregate._sum.storageBytes ?? 0n),
     quotaBytes: Number(storageQuotaBytes()),
     quotaGigabytes: env.MEDIA_STORAGE_QUOTA_GB,
   } : null;
   return {
-    media: media.map(serializeMedia),
+    media: media.map(({ uploadedBy, uploadedBySuperAdmin, ...item }) => serializeMedia({
+      ...item,
+      uploadedBy: uploadedBy ?? uploadedBySuperAdmin,
+    })),
     storage,
   };
 }
@@ -436,7 +458,8 @@ export async function createMedia(actor: MediaActor, input: CreateMediaInput) {
       const created = await tx.mediaItem.create({
         data: {
           organizationId,
-          uploadedById: actor.userId,
+          uploadedById: actor.role === Role.SUPER_ADMIN ? null : actor.userId,
+          uploadedBySuperAdminId: actor.role === Role.SUPER_ADMIN ? actor.userId : null,
           courseId: input.courseId,
           topicId: input.topicId ?? null,
           title: input.title,
@@ -491,7 +514,8 @@ export async function createMedia(actor: MediaActor, input: CreateMediaInput) {
       const media = await tx.mediaItem.create({
         data: {
           organizationId,
-          uploadedById: actor.userId,
+          uploadedById: actor.role === Role.SUPER_ADMIN ? null : actor.userId,
+          uploadedBySuperAdminId: actor.role === Role.SUPER_ADMIN ? actor.userId : null,
           courseId: input.courseId,
           topicId: input.topicId ?? null,
           title: input.title,

@@ -6,6 +6,7 @@ import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
 import { notifyAfterCommit, notifyUsers } from '../notifications/notifications.service.js';
 import { tutorPhotoStorage } from './tutor-photo.storage.js';
+import { openResume } from '../opportunities/resume.storage.js';
 
 type TutorListInput = { search?: string; status?: AccountStatus; page: number; pageSize: number };
 type NewTutor = { tutorId: string; name: string; phone: string; email: string; joiningDate: string; temporaryPassword: string; bio?: string; expertise: string[] };
@@ -42,13 +43,14 @@ const tutorSelection = {
   bio: true,
   expertise: true,
   photoStorageKey: true,
+  resumeOriginalName: true,
   createdAt: true,
   user: { select: { id: true, name: true, email: true, phone: true, status: true, createdAt: true } },
 } satisfies Prisma.TutorProfileSelect;
 
-function serializeTutor<T extends { tutorId: string; photoStorageKey: string | null }>(profile: T) {
-  const { tutorId, photoStorageKey, ...rest } = profile;
-  return { ...rest, tutorId: tutorId, hasPhoto: Boolean(photoStorageKey) };
+function serializeTutor<T extends { tutorId: string; photoStorageKey: string | null; resumeOriginalName: string | null }>(profile: T) {
+  const { tutorId, photoStorageKey, resumeOriginalName, ...rest } = profile;
+  return { ...rest, tutorId, hasPhoto: Boolean(photoStorageKey), hasResume: Boolean(resumeOriginalName), resumeOriginalName };
 }
 
 async function ratingSummaries(organizationId: string, tutorIds: string[], courseId?: string) {
@@ -508,6 +510,26 @@ export async function getTutor(organizationId: string | null, userId: string, ac
     ratingSummary: summaries.get(userId) ?? emptyRatingSummary(),
     ...(reviews ? { reviews: reviews.reviews } : {}),
   };
+}
+
+export async function getTutorResume(organizationId: string | null, userId: string, actorId: string) {
+  const tenantId = requireOrganizationId(organizationId);
+  const profile = await prisma.tutorProfile.findFirst({
+    where: { organizationId: tenantId, userId, user: { is: { organizationId: tenantId, role: Role.TUTOR } } },
+    select: { id: true, resumeStorageKey: true, resumeOriginalName: true },
+  });
+  if (!profile?.resumeStorageKey) throw new HttpError(404, 'Tutor resume not found');
+  await prisma.auditLog.create({
+    data: {
+      organizationId: tenantId,
+      actorId,
+      action: 'TUTOR_RESUME_ACCESSED',
+      targetType: 'TutorProfile',
+      targetId: profile.id,
+      metadata: {},
+    },
+  });
+  return { ...(await openResume(profile.resumeStorageKey)), filename: profile.resumeOriginalName ?? 'tutor-resume' };
 }
 
 export async function createTutor(organizationId: string | null, actorId: string, input: NewTutor) {

@@ -85,7 +85,7 @@ async function makeUser(
 async function registrationDetails(organizationCode: string, suffix: string) {
   const organization = await prisma.organization.findFirstOrThrow({ where: { code: organizationCode }, select: { id: true } });
   let course = await prisma.course.findFirst({
-    where: { organizationId: organization.id, status: 'PUBLISHED' },
+    where: { organizationId: organization.id, status: 'PUBLISHED', registrationMonthlyFee: { gt: 0 } },
     select: { id: true },
   });
   if (!course) {
@@ -153,6 +153,9 @@ async function registerStudent(organizationCode: string, studentId: string, suff
     organizationCode,
     studentId,
     ...await registrationDetails(organizationCode, suffix),
+    aadhaarNumber: '200000000009',
+    apaarId: '987654321098',
+    piiConsent: true,
   });
   if (response.body.data?.user?.id) createdUserIds.push(response.body.data.user.id as string);
   return response;
@@ -500,9 +503,24 @@ describe('multi-organization authentication and approvals', () => {
     const second = await makeOrganization(`${prefix} Registration B`, `${prefix}-registration-b`);
     const firstFields = await registrationDetails(first.code!, 'registration-student');
     const secondFields = await registrationDetails(second.code!, 'registration-other');
+    const courseCreator = await makeUser(first.id, Role.ORG_ADMIN, 'registration-unpriced-course-admin');
+    const unpricedCourse = await prisma.course.create({
+      data: {
+        organizationId: first.id,
+        code: `${prefix}-UNPRICED`,
+        title: 'Unpriced Published Course',
+        category: 'Languages',
+        plannedHours: 10,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2027-01-01T00:00:00.000Z'),
+        status: 'PUBLISHED',
+        createdById: courseCreator.id,
+      },
+    });
     const options = await request(app).get(`/api/auth/registration-options?organizationCode=${first.code}`);
     expect(options.status).toBe(200);
     expect(options.body.data.courses.map((course: { id: string }) => course.id)).toContain(firstFields.interestedCourseId);
+    expect(options.body.data.courses.map((course: { id: string }) => course.id)).toContain(unpricedCourse.id);
     expect(options.body.data.courses.map((course: { id: string }) => course.id)).not.toContain(secondFields.interestedCourseId);
     const termsNotAccepted = await request(app).post('/api/auth/students/register').send({
       organizationCode: first.code,
@@ -521,6 +539,23 @@ describe('multi-organization authentication and approvals', () => {
     });
     expect(paymentDetailsMissing.status).toBe(400);
 
+    const identityDetailsMissing = await request(app).post('/api/auth/students/register').send({
+      organizationCode: first.code,
+      studentId: `${prefix}-identity-details-missing`,
+      ...firstFields,
+    });
+    expect(identityDetailsMissing.status).toBe(400);
+
+    const invalidIdentityDetails = await request(app).post('/api/auth/students/register').send({
+      organizationCode: first.code,
+      studentId: `${prefix}-identity-details-invalid`,
+      ...firstFields,
+      aadhaarNumber: '200000000008',
+      apaarId: '98765432109',
+      piiConsent: true,
+    });
+    expect(invalidIdentityDetails.status).toBe(400);
+
     const tutorPaymentNotConfirmed = await request(app).post('/api/auth/tutors/register').send({
       organizationCode: first.code,
       tutorId: `TUT-${Date.now()}`,
@@ -537,7 +572,7 @@ describe('multi-organization authentication and approvals', () => {
     });
     expect(wrongTenantCourse.status).toBe(400);
 
-    const identityValues = { aadhaarNumber: '200000000009', apaarId: '987654321098', piiConsent: true };
+    const identityValues = { aadhaarNumber: '2000-0000-0009', apaarId: '9876 5432 1098', piiConsent: true };
     const studentRegistration = await request(app).post('/api/auth/students/register').send({
       organizationCode: first.code,
       studentId: `${prefix}-private-student`,
@@ -572,6 +607,7 @@ describe('multi-organization authentication and approvals', () => {
       organizationCode: first.code,
       studentId: `${prefix}-duplicate-email`,
       ...firstFields,
+      ...identityValues,
     });
     expect(duplicateEmail.status).toBe(409);
 

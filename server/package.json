@@ -32,6 +32,7 @@
     "node-cron": "^4.6.0",
     "pino": "^9.13.0",
     "pino-http": "^10.5.0",
+    "ws": "^8.23.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -44,6 +45,7 @@
     "@types/multer": "^2.3.0",
     "@types/node": "^24.8.1",
     "@types/supertest": "^6.0.3",
+    "@types/ws": "^8.18.2",
     "eslint": "^9.36.0",
     "globals": "^16.4.0",
     "prisma": "^6.16.2",

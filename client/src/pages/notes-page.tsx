@@ -29,6 +29,7 @@ type NoteViewerResponse = { data: { note: Pick<Note, 'id' | 'title' | 'subject' 
 type ViewerState = { blob?: Blob; note?: NoteViewerResponse['data']['note']; error?: string; loading: boolean };
 
 function locationPathForRole(role: string): string {
+  if (role === 'SUPER_ADMIN') return '/super-admin/organizations';
   if (role === 'ORG_ADMIN') return '/org-admin/materials';
   if (role === 'TUTOR') return '/tutor/materials';
   return '/student/courses';
@@ -51,12 +52,14 @@ function ProtectedImage({ blob }: { blob: Blob }) {
   return <div className="protected-image">{url && <img src={url} alt="Study material attachment" />}<Watermark /></div>;
 }
 
-export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = {}) {
+export function NotesPage({ embeddedCourseId, apiPrefix = '' }: { embeddedCourseId?: string; apiPrefix?: string } = {}) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const role = user?.role ?? 'STUDENT';
   const isStudent = role === 'STUDENT';
-  const canCreate = ['ORG_ADMIN', 'TUTOR'].includes(role);
+  const canCreate = ['ORG_ADMIN', 'TUTOR', 'SUPER_ADMIN'].includes(role);
+  const notesBase = `${apiPrefix}/notes`;
+  const coursesBase = `${apiPrefix}/courses`;
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState(searchParams.get('search') ?? '');
   const [subject, setSubject] = useState(searchParams.get('subject') ?? '');
@@ -68,14 +71,14 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null);
   const [toast, setToast] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
-  const [draft, setDraft] = useState({ title: '', subject: '', description: '', courseId: '', freePreview: false });
+  const [draft, setDraft] = useState(() => ({ title: '', subject: '', description: '', courseId: embeddedCourseId ?? '', freePreview: false }));
   const [attachment, setAttachment] = useState<File | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [editBaseline, setEditBaseline] = useState<{ title: string; subject: string; description: string; courseId: string; freePreview: boolean } | null>(null);
   const courseOptions = useQuery({
-    queryKey: ['courses', role],
-    queryFn: () => api<{ courses: Array<{ id: string; title: string; code: string }> }>('/courses'),
-    enabled: role === 'ORG_ADMIN' || role === 'TUTOR',
+    queryKey: ['courses', role, apiPrefix],
+    queryFn: () => api<{ courses: Array<{ id: string; title: string; code: string }> }>(coursesBase),
+    enabled: !embeddedCourseId && (role === 'ORG_ADMIN' || role === 'TUTOR' || role === 'SUPER_ADMIN'),
   });
   useEffect(() => {
     setSearchParams((current) => {
@@ -95,8 +98,8 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
   if (courseId) queryString.set('courseId', courseId);
   if (isStudent && (savedFilter === 'true' || savedFilter === 'false' || savedFilter === 'all')) queryString.set('saved', savedFilter);
   const notes = useQuery({
-    queryKey: ['notes', search.trim(), subject, courseId, role, savedFilter],
-    queryFn: () => api<{ notes: Note[] }>(`/notes?${queryString.toString()}`),
+    queryKey: ['notes', apiPrefix, search.trim(), subject, courseId, role, savedFilter],
+    queryFn: () => api<{ notes: Note[] }>(`${notesBase}?${queryString.toString()}`),
   });
   useEffect(() => {
     const noteId = searchParams.get('view');
@@ -109,13 +112,14 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
       body.append('title', draft.title);
       body.append('subject', draft.subject);
       body.append('description', draft.description);
-      if (draft.courseId) body.append('courseId', draft.courseId);
+      const courseId = embeddedCourseId ?? draft.courseId;
+      if (courseId) body.append('courseId', courseId);
       body.append('freePreview', String(draft.freePreview));
       if (attachment) body.append('file', attachment);
-      return api<{ note: Note }>('/notes', { method: 'POST', body });
+      return api<{ note: Note }>(notesBase, { method: 'POST', body });
     },
     onSuccess: async () => {
-      setDraft({ title: '', subject: '', description: '', courseId: '', freePreview: false });
+      setDraft({ title: '', subject: '', description: '', courseId: embeddedCourseId ?? '', freePreview: false });
       setAttachment(null);
       setToast('Study material saved as a draft.');
       setErrorMessage('');
@@ -124,13 +128,13 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
     onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Study material could not be saved.'),
   });
   const updateMutation = useMutation({
-    mutationFn: () => api<{ note: Note }>(`/notes/${editing!.id}`, {
+    mutationFn: () => api<{ note: Note }>(`${notesBase}/${editing!.id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ ...draft, courseId: draft.courseId || null }),
+      body: JSON.stringify({ ...draft, courseId: embeddedCourseId ?? (draft.courseId || null) }),
     }),
     onSuccess: async () => {
       setEditing(null);
-      setDraft({ title: '', subject: '', description: '', courseId: '', freePreview: false });
+      setDraft({ title: '', subject: '', description: '', courseId: embeddedCourseId ?? '', freePreview: false });
       setEditBaseline(null);
       setSearchParams((current) => {
         const next = new URLSearchParams(current);
@@ -145,7 +149,7 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
   });
   const publishMutation = useMutation({
     mutationFn: ({ note, publish }: { note: Note; publish: boolean }) =>
-      api(`/notes/${note.id}/${publish ? 'publish' : 'unpublish'}`, { method: 'POST' }),
+      api(`${notesBase}/${note.id}/${publish ? 'publish' : 'unpublish'}`, { method: 'POST' }),
     onSuccess: async (_data, variables) => {
       setToast(variables.publish ? 'Study material published.' : 'Study material unpublished.');
       setErrorMessage('');
@@ -154,7 +158,7 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
     onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Study material status could not be changed.'),
   });
   const deleteMutation = useMutation({
-    mutationFn: (note: Note) => api(`/notes/${note.id}`, { method: 'DELETE' }),
+    mutationFn: (note: Note) => api(`${notesBase}/${note.id}`, { method: 'DELETE' }),
     onSuccess: async () => {
       setPendingDelete(null);
       setToast('Study material deleted.');
@@ -164,12 +168,12 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
     onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Study material could not be deleted.'),
   });
   const downloadMutation = useMutation({
-    mutationFn: async (note: Note) => downloadBlob(await apiBlob(`/notes/${note.id}/download`), note.originalName ?? 'note'),
+    mutationFn: async (note: Note) => downloadBlob(await apiBlob(`${notesBase}/${note.id}/download`), note.originalName ?? 'note'),
     onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'File could not be downloaded.'),
   });
   const savedMutation = useMutation({
     mutationFn: ({ note, save }: { note: Note; save: boolean }) =>
-      api(`/notes/${note.id}/saved`, { method: save ? 'PUT' : 'DELETE' }),
+      api(`${notesBase}/${note.id}/saved`, { method: save ? 'PUT' : 'DELETE' }),
     onSuccess: async (_result, { save }) => {
       setToast(save ? 'Study material saved to your course list.' : 'Study material removed from your list.');
       await invalidateNotes();
@@ -184,7 +188,7 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
     }
     let active = true;
     setViewState({ loading: true });
-    void apiBlob(`/notes/${viewing.id}/view`).then(async (blob) => {
+    void apiBlob(`${notesBase}/${viewing.id}/view`).then(async (blob) => {
       if (!active) return;
       if (blob.type.includes('application/json')) {
         const response = await blob.text();
@@ -198,7 +202,7 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
       setViewState({ loading: false, error: error instanceof ApiError ? error.message : 'This study material could not be opened.' });
     });
     return () => { active = false; };
-  }, [viewing]);
+  }, [notesBase, viewing]);
 
   useEffect(() => {
     if (!viewing || !isStudent) return;
@@ -214,24 +218,31 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
 
   const notesList = notes.data?.notes ?? [];
   const subjects = [...new Set(notesList.map((note) => note.subject))].sort();
-  const canManage = (note: Note) => role === 'ORG_ADMIN' || note.author.id === user?.id;
+  const canManage = (note: Note) => role === 'ORG_ADMIN' || role === 'SUPER_ADMIN' || note.author.id === user?.id;
   const isSaving = createMutation.isPending || updateMutation.isPending;
   const currentDashboard = embeddedCourseId
-    ? `/student/courses/${embeddedCourseId}/materials`
-    : role === 'ORG_ADMIN' ? '/org-admin' : role === 'TUTOR' ? '/tutor' : '/student/courses';
+    ? role === 'TUTOR'
+      ? `/tutor/courses/${encodeURIComponent(embeddedCourseId)}?tab=materials`
+      : `/student/courses/${encodeURIComponent(embeddedCourseId)}/materials`
+    : role === 'ORG_ADMIN' ? '/org-admin' : role === 'TUTOR' ? '/tutor' : role === 'SUPER_ADMIN' ? '/super-admin/organizations' : '/student/courses';
   const listQuery = new URLSearchParams();
   for (const key of ['search', 'subject', 'courseId', 'saved']) {
     const value = searchParams.get(key);
     if (value) listQuery.set(key, value);
   }
-  const noteListRoute = `${embeddedCourseId ? `/student/courses/${embeddedCourseId}/materials` : locationPathForRole(role)}${listQuery.size ? `?${listQuery.toString()}` : ''}`;
+  const embeddedRoute = embeddedCourseId
+    ? role === 'TUTOR'
+      ? `/tutor/courses/${encodeURIComponent(embeddedCourseId)}?tab=materials`
+      : `/student/courses/${encodeURIComponent(embeddedCourseId)}/materials`
+    : locationPathForRole(role);
+  const noteListRoute = `${embeddedRoute}${listQuery.size ? `${embeddedCourseId && role === 'TUTOR' ? '&' : '?'}${listQuery.toString()}` : ''}`;
   const isEditDirty = Boolean(editing && editBaseline && (
     draft.title !== editBaseline.title || draft.subject !== editBaseline.subject || draft.description !== editBaseline.description
     || draft.courseId !== editBaseline.courseId || draft.freePreview !== editBaseline.freePreview
   ));
   const cancelEdit = () => {
     setEditing(null);
-    setDraft({ title: '', subject: '', description: '', courseId: '', freePreview: false });
+    setDraft({ title: '', subject: '', description: '', courseId: embeddedCourseId ?? '', freePreview: false });
     setEditBaseline(null);
     setConfirmDiscard(false);
     setSearchParams((current) => {
@@ -265,8 +276,8 @@ export function NotesPage({ embeddedCourseId }: { embeddedCourseId?: string } = 
             <Field label="Subject / category" value={draft.subject} onChange={(event) => setDraft((value) => ({ ...value, subject: event.target.value }))} required maxLength={100} />
           </div>
           <label className="field"><span>Description</span><textarea className="input textarea" value={draft.description} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} required maxLength={10000} /></label>
-          {(role === 'ORG_ADMIN' || role === 'TUTOR') && <label className="field"><span>Optional course</span><select className="input" value={draft.courseId} onChange={(event) => setDraft((value) => ({ ...value, courseId: event.target.value }))}><option value="">Not linked to a course</option>{(courseOptions.data?.courses ?? []).map((course) => <option key={course.id} value={course.id}>{course.code} · {course.title}</option>)}</select></label>}
-          {(role === 'ORG_ADMIN' || role === 'TUTOR') && <label className="field checkbox-field"><input type="checkbox" checked={draft.freePreview} onChange={(event) => setDraft((value) => ({ ...value, freePreview: event.target.checked }))} /><span>Free preview (accessible without a subscription)</span></label>}
+          {!embeddedCourseId && (role === 'ORG_ADMIN' || role === 'TUTOR' || role === 'SUPER_ADMIN') && <label className="field"><span>Optional course</span><select className="input" value={draft.courseId} onChange={(event) => setDraft((value) => ({ ...value, courseId: event.target.value }))}><option value="">Not linked to a course</option>{(courseOptions.data?.courses ?? []).map((course) => <option key={course.id} value={course.id}>{course.code} · {course.title}</option>)}</select></label>}
+          {(role === 'ORG_ADMIN' || role === 'TUTOR' || role === 'SUPER_ADMIN') && <label className="field checkbox-field"><input type="checkbox" checked={draft.freePreview} onChange={(event) => setDraft((value) => ({ ...value, freePreview: event.target.checked }))} /><span>Free preview (accessible without a subscription)</span></label>}
           {!editing && <label className="field"><span>Optional attachment (PDF, PNG, JPG, WEBP · maximum 20 MB)</span><input className="input file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => setAttachment(event.target.files?.[0] ?? null)} /></label>}
           {editing && <p className="muted">To replace an attachment, create a new note with the updated file.</p>}
           {errorMessage && <p className="notice notice-error" role="alert">{errorMessage}</p>}

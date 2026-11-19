@@ -273,6 +273,8 @@ model Organization {
   payments                 Payment[]
   registrationPayments    RegistrationPayment[]
   paymentPlanPriceHistory  TutorCoursePlanHistory[]
+  jobOpenings              JobOpening[]
+  jobApplications          JobApplication[]
 
   @@index([status, createdAt])
 }
@@ -308,6 +310,7 @@ model User {
   instructorBatches        BatchInstructor[]
   auditLogs                AuditLog[]               @relation("AuditActor")
   courses                  Course[]                 @relation("CourseCreator")
+  platformCreatedCourses   Course[]                 @relation("PlatformCourseCreator")
   instructedCourses        CourseInstructor[]
   enrollments              Enrollment[]             @relation("StudentCourseEnrollments")
   createdAssessments       Assessment[]             @relation("AssessmentCreator")
@@ -315,6 +318,9 @@ model User {
   createdPracticeSets      PracticeSet[]            @relation("PracticeSetCreator")
   notes                    Note[]                   @relation("NoteAuthor")
   uploadedMedia            MediaItem[]              @relation("MediaUploader")
+  platformUploadedMedia    MediaItem[]              @relation("PlatformMediaUploader")
+  createdJobOpenings       JobOpening[]             @relation("JobOpeningCreator")
+  jobApplications          JobApplication[]         @relation("JobApplicationStudent")
   watchProgress            WatchProgress[]          @relation("WatchProgressStudent")
   noteViews                NoteView[]
   hostedExpertSessions     ExpertSession[]          @relation("ExpertSessionHost")
@@ -446,6 +452,8 @@ model TutorProfile {
   bio             String?
   expertise       String[]     @default([])
   photoStorageKey String?
+  resumeStorageKey String?
+  resumeOriginalName String?
   fatherName      String?
   motherName      String?
   interestedCourse String?
@@ -622,11 +630,13 @@ model Course {
   status                   CourseStatus       @default(DRAFT)
   minimumAttendancePercent Int                @default(75)
   requiresAssessmentPass   Boolean            @default(true)
-  createdById              String
+  createdById              String?
+  createdBySuperAdminId    String?
   createdAt                DateTime           @default(now())
   updatedAt                DateTime           @updatedAt
   organization             Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdBy                User               @relation("CourseCreator", fields: [organizationId, createdById], references: [organizationId, id], onDelete: Restrict)
+  createdBy                User?              @relation("CourseCreator", fields: [organizationId, createdById], references: [organizationId, id], onDelete: Restrict)
+  createdBySuperAdmin      User?              @relation("PlatformCourseCreator", fields: [createdBySuperAdminId], references: [id], onDelete: SetNull)
   instructors              CourseInstructor[]
   topics                   CourseTopic[]
   enrollments              Enrollment[]
@@ -983,7 +993,8 @@ model MediaItem {
   streamKey       String?
   thumbnailKey    String?
   publishOnReady  Boolean         @default(false)
-  uploadedById    String
+  uploadedById    String?
+  uploadedBySuperAdminId String?
   publishedAt     DateTime?
   deletedAt       DateTime?
   createdAt       DateTime        @default(now())
@@ -991,7 +1002,8 @@ model MediaItem {
   organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   course          Course          @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Restrict)
   topic           CourseTopic?    @relation(fields: [organizationId, topicId], references: [organizationId, id], onDelete: Restrict)
-  uploadedBy      User            @relation("MediaUploader", fields: [organizationId, uploadedById], references: [organizationId, id], onDelete: Restrict)
+  uploadedBy      User?           @relation("MediaUploader", fields: [organizationId, uploadedById], references: [organizationId, id], onDelete: Restrict)
+  uploadedBySuperAdmin User?      @relation("PlatformMediaUploader", fields: [uploadedBySuperAdminId], references: [id], onDelete: SetNull)
   job             MediaJob?
   watchProgress   WatchProgress[]
 
@@ -1135,6 +1147,7 @@ model Certificate {
   issuedById       String?
   certificateNo    String
   verificationCode String       @unique
+  isSample         Boolean      @default(false)
   issuedAt         DateTime     @default(now())
   organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   course           Course       @relation(fields: [organizationId, courseId], references: [organizationId, id], onDelete: Restrict)
@@ -1143,6 +1156,43 @@ model Certificate {
 
   @@unique([organizationId, certificateNo])
   @@index([organizationId, studentId, issuedAt])
+}
+
+model JobOpening {
+  id             String           @id @default(cuid())
+  organizationId String?
+  createdById    String
+  title          String
+  company        String
+  description    String           @db.Text
+  externalUrl    String
+  postedAt       DateTime         @default(now())
+  closesAt       DateTime?
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User             @relation("JobOpeningCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  applications   JobApplication[]
+
+  @@index([organizationId, isActive, postedAt])
+}
+
+model JobApplication {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  jobOpeningId       String
+  studentId          String
+  resumeStorageKey   String
+  resumeOriginalName String
+  resumeMimeType     String
+  createdAt          DateTime     @default(now())
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  jobOpening         JobOpening   @relation(fields: [jobOpeningId], references: [id], onDelete: Cascade)
+  student            User         @relation("JobApplicationStudent", fields: [organizationId, studentId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, jobOpeningId, studentId])
+  @@index([organizationId, studentId, createdAt])
 }
 
 model GameRating {

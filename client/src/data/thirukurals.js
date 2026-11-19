@@ -38,3 +38,8 @@ export function getDailyThirukural(date = new Date()) {
   );
   return thirukurals[dayOfYear % thirukurals.length];
 }
+
+export function getThirukuralLines(kural) {
+  const words = kural.trim().split(/\s+/);
+  return [words.slice(0, 4).join(' '), words.slice(4).join(' ')];
+}

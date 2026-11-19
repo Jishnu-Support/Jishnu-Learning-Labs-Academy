@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 405" role="img" aria-labelledby="title">
+  <title id="title">Python programming course thumbnail</title>
+  <rect width="720" height="405" fill="#14246B"/>
+  <path d="M0 115C155 205 280 35 445 120S630 204 720 128V0H0Z" fill="#9B1D80" opacity=".82"/>
+  <circle cx="110" cy="305" r="126" fill="#8DC63F" opacity=".9"/>
+  <rect x="251" y="73" width="236" height="248" rx="28" fill="#FFFFFF"/>
+  <path d="M285 120c0-17 14-31 31-31h91c20 0 36 16 36 36v43h-126c-18 0-32 14-32 32zm166 167c0 17-14 31-31 31h-91c-20 0-36-16-36-36v-43h126c18 0 32-14 32-32z" fill="#14246B"/>
+  <circle cx="378" cy="119" r="9" fill="#8DC63F"/>
+  <circle cx="341" cy="286" r="9" fill="#9B1D80"/>
+  <text x="369" y="365" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="21" font-weight="700" letter-spacing="2" text-anchor="middle">PYTHON PROGRAMMING</text>
+</svg>

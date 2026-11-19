@@ -6,8 +6,16 @@ import { aadhaarNumberSchema, apaarIdSchema } from '../students/students.schemas
 
 const password = z.string().min(8, 'Password must be at least 8 characters').max(128);
 const registrationPhone = z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit mobile number');
-const optionalAadhaar = z.union([z.literal(''), aadhaarNumberSchema]).optional().transform((value) => value || undefined);
-const optionalApaarId = z.union([z.literal(''), apaarIdSchema]).optional().transform((value) => value || undefined);
+const normalizedAadhaar = z.preprocess(
+  (value) => typeof value === 'string' ? value.replace(/[\s-]/g, '') : value,
+  aadhaarNumberSchema,
+);
+const normalizedApaarId = z.preprocess(
+  (value) => typeof value === 'string' ? value.replace(/[\s-]/g, '') : value,
+  apaarIdSchema,
+);
+const optionalAadhaar = z.union([z.literal(''), normalizedAadhaar]).optional().transform((value) => value || undefined);
+const optionalApaarId = z.union([z.literal(''), normalizedApaarId]).optional().transform((value) => value || undefined);
 const formBoolean = z.preprocess((value) => {
   if (value === 'true') return true;
   if (value === 'false') return false;
@@ -57,6 +65,8 @@ export const registrationStatusSchema = z.object({
 
 export const studentRegistrationSchema = z.object({
   ...registrationFields,
+  aadhaarNumber: normalizedAadhaar,
+  apaarId: normalizedApaarId,
   studentId: z.string().trim().min(1).max(40),
 }).superRefine(validateRegistrationPrivacy);
 

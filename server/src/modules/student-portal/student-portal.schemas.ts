@@ -4,9 +4,11 @@ import { z } from 'zod';
 const id = z.string().min(1).max(64);
 
 export const sessionIdSchema = z.object({ sessionId: id });
+export const courseIdSchema = z.object({ courseId: id });
 export const sessionAttendanceParamsSchema = z.object({ sessionId: id, studentId: id });
 export const libraryItemIdSchema = z.object({ itemId: id });
 export const verificationCodeSchema = z.object({ verificationCode: z.string().min(16).max(100) });
+export const studentReportsQuerySchema = z.object({ courseId: id.optional() });
 
 export const sessionListQuerySchema = z.object({
   tab: z.enum(['LIVE', 'UPCOMING', 'PAST']).optional(),

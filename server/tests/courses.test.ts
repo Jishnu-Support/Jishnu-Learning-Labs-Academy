@@ -209,7 +209,7 @@ describe('course management and student enrollment', () => {
     expect(crossTenant.status).toBe(404);
   });
 
-  it('lists only active courses belonging to the authenticated student', async () => {
+  it('lists active and completed courses belonging to the authenticated student', async () => {
     const activeCourse = await prisma.course.create({
       data: {
         organizationId: organization.id,
@@ -250,6 +250,18 @@ describe('course management and student enrollment', () => {
     await prisma.enrollment.update({ where: { id: activeEnrollment.id }, data: { status: 'PENDING' } });
     const pendingCourses = await request(app).get('/api/student/courses/enrolled').set('Cookie', studentCookie);
     expect(pendingCourses.body.data.enrollments.map((item: { course: { id: string } }) => item.course.id)).not.toContain(activeCourse.id);
+
+    const completedAt = new Date();
+    await prisma.enrollment.update({
+      where: { id: activeEnrollment.id },
+      data: { status: 'COMPLETED', completedAt },
+    });
+    const completedCourses = await request(app).get('/api/student/courses/enrolled').set('Cookie', studentCookie);
+    expect(completedCourses.body.data.enrollments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'COMPLETED', completedAt: completedAt.toISOString(), course: expect.objectContaining({ id: activeCourse.id }) }),
+    ]));
+    const completedDetail = await request(app).get(`/api/student/courses/${activeCourse.id}`).set('Cookie', studentCookie);
+    expect(completedDetail.body.data.course.enrollments[0].status).toBe('COMPLETED');
   });
 
   it('seeds all twelve course fixtures idempotently without deleting or overwriting seeded data', async () => {

@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
+import { Navigate, Route, Routes, useParams, useSearchParams } from 'react-router-dom';
 import { RouteGuard } from './components/route-guard';
 import { Shell } from './components/shell';
 import { PageHeader } from './components/page-header';
@@ -33,12 +33,15 @@ import { StudentCourseCatalogPage, StudentCoursesPage } from './pages/student-co
 import { StudentTutorsPage } from './pages/student-tutors-page';
 import { OrganizationTutorRatingsPage } from './pages/tutor-ratings-page';
 import { StudentMediaPlayerPage } from './pages/student-media-page';
-import { StudentReportsPage } from './pages/student-reports-page';
 import { QuestionPaperGeneratorPage } from './pages/question-paper-generator-page';
 import { TutorCourseAssessmentPage } from './pages/tutor-course-assessment-page';
 import { StudentPaymentsPage } from './pages/student-payments-page';
 import { PaymentsManagementPage } from './pages/payments-management-page';
 import { StudentsPage } from './pages/students-page';
+import { StudentCompletedCoursesPage } from './pages/student-completed-courses-page';
+import { OpportunitiesPage } from './pages/opportunities-page';
+import { SuperAdminAuditPage } from './pages/super-admin-audit-page';
+import { SuperAdminDirectoriesPage } from './pages/super-admin-directories-page';
 import {
   PracticeQuestionBankPage, StudentAssessmentAttemptPage, StudentAssessmentResultPage,
   TeacherAssessmentsPage,
@@ -59,10 +62,31 @@ function LegacyTutorAdminRoute() {
   return <Navigate to="/org-admin/tutors" replace />;
 }
 
+function SuperAdminOrganizationNotesPage() {
+  const { organizationId } = useParams();
+  return <NotesPage apiPrefix={`/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}`} />;
+}
+
+function SuperAdminOrganizationMediaPage() {
+  const { organizationId } = useParams();
+  return <MediaPage apiPrefix={`/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}`} />;
+}
+
+function SuperAdminOrganizationLibraryPage() {
+  const { organizationId } = useParams();
+  return <LibraryPage apiPrefix={`/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}`} />;
+}
+
+function SuperAdminOrganizationSessionAttendeesPage() {
+  const { organizationId } = useParams();
+  return <SessionAttendeesPage apiPrefix={`/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}`} />;
+}
+
 export function LegacyStudentLearningRedirect({ tab }: { tab: 'media' | 'sessions' | 'materials' | 'practice' | 'assessments' }) {
   const [searchParams] = useSearchParams();
   const courseId = searchParams.get('courseId');
-  return <Navigate to={courseId ? `/student/courses/${encodeURIComponent(courseId)}/${tab}` : '/student/courses'} replace />;
+  const courseTab = tab === 'media' ? 'videos' : tab === 'assessments' ? 'assessment' : tab;
+  return <Navigate to={courseId ? `/student/courses/${encodeURIComponent(courseId)}/${courseTab}` : '/student/courses'} replace />;
 }
 
 function Unauthorized() {
@@ -90,7 +114,9 @@ export function App() {
         <Route element={<RouteGuard roles={['STUDENT']} />}>
           <Route path="/student" element={<Dashboard role="STUDENT" />} />
           <Route path="/student/courses" element={<StudentCoursesPage />} />
-          <Route path="/student/courses/reports" element={<StudentReportsPage />} />
+          <Route path="/student/completed-courses" element={<StudentCompletedCoursesPage />} />
+          <Route path="/student/opportunities" element={<OpportunitiesPage />} />
+          <Route path="/student/courses/reports" element={<Navigate to="/student/courses" replace />} />
           <Route path="/student/course-catalog" element={<StudentCourseCatalogPage />} />
           <Route path="/student/question-paper" element={<QuestionPaperGeneratorPage />} />
           <Route path="/student/tutors" element={<StudentTutorsPage />} />
@@ -141,7 +167,6 @@ export function App() {
             <Route path="/tutor/learning/reports" element={<Navigate to="/tutor/courses" replace />} />
             <Route path="/tutor/courses/:courseId/assessments/new" element={<TutorCourseAssessmentPage />} />
             <Route path="/tutor/courses" element={<CoursesPage />} />
-            <Route path="/tutor/courses/new" element={<CourseFormPage />} />
             <Route path="/tutor/courses/:courseId/edit" element={<CourseFormPage />} />
             <Route path="/tutor/courses/:courseId" element={<CourseDetailPage />} />
           </Route>
@@ -167,6 +192,7 @@ export function App() {
           <Route path="/org-admin/learning/assessments" element={<TeacherAssessmentsPage />} />
           <Route path="/org-admin/learning/reports" element={<AssessmentReportsPage />} />
           <Route path="/org-admin/courses" element={<CoursesPage />} />
+          <Route path="/org-admin/opportunities" element={<OpportunitiesPage />} />
           <Route path="/org-admin/courses/new" element={<CourseFormPage />} />
           <Route path="/org-admin/courses/:courseId/edit" element={<CourseFormPage />} />
           <Route path="/org-admin/courses/:courseId" element={<CourseDetailPage />} />
@@ -182,6 +208,17 @@ export function App() {
           <Route path="/super-admin/dashboard" element={<Dashboard role="SUPER_ADMIN" />} />
           <Route path="/super-admin/payments" element={<PaymentsManagementPage />} />
           <Route path="/super-admin/organizations" element={<OrganizationApprovalsPage />} />
+          <Route path="/super-admin/opportunities" element={<OpportunitiesPage />} />
+          <Route path="/super-admin/audit" element={<SuperAdminAuditPage />} />
+          <Route path="/super-admin/organizations/:organizationId/directories" element={<SuperAdminDirectoriesPage />} />
+          <Route path="/super-admin/organizations/:organizationId/courses" element={<CoursesPage />} />
+          <Route path="/super-admin/organizations/:organizationId/courses/new" element={<CourseFormPage />} />
+          <Route path="/super-admin/organizations/:organizationId/courses/:courseId/edit" element={<CourseFormPage />} />
+          <Route path="/super-admin/organizations/:organizationId/courses/:courseId" element={<CourseDetailPage />} />
+          <Route path="/super-admin/organizations/:organizationId/materials" element={<SuperAdminOrganizationNotesPage />} />
+          <Route path="/super-admin/organizations/:organizationId/media" element={<SuperAdminOrganizationMediaPage />} />
+          <Route path="/super-admin/organizations/:organizationId/library" element={<SuperAdminOrganizationLibraryPage />} />
+          <Route path="/super-admin/organizations/:organizationId/sessions/:sessionId/attendees" element={<SuperAdminOrganizationSessionAttendeesPage />} />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Route>

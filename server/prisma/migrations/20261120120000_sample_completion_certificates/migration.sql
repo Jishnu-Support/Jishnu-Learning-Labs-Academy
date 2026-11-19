@@ -1,0 +1,2 @@
+ALTER TABLE "Certificate"
+ADD COLUMN "isSample" BOOLEAN NOT NULL DEFAULT false;

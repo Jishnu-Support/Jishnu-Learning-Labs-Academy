@@ -21,8 +21,9 @@ type CourseCard = {
 };
 type Enrollment = {
   id: string;
-  status: string;
+  status: 'ACTIVE' | 'COMPLETED';
   enrolledAt: string;
+  completedAt: string | null;
   selectedTutor: { id: string; name: string; expertise: string[]; hasPhoto: boolean } | null;
   pendingTutor: { id: string; name: string } | null;
   course: CourseCard & {
@@ -64,6 +65,8 @@ function StudentCourseListPage({ catalogOnly }: { catalogOnly: boolean }) {
   });
   const courses = browse.data?.courses ?? [];
   const enrollments = enrolled.data?.enrollments ?? [];
+  const activeEnrollments = enrollments.filter(({ status }) => status === 'ACTIVE');
+  const completedEnrollments = enrollments.filter(({ status }) => status === 'COMPLETED');
   const pageSize = 8;
   const page = Math.max(1, Number(searchParams.get('page') ?? 1) || 1);
   const pageCount = Math.max(1, Math.ceil(courses.length / pageSize));
@@ -86,10 +89,6 @@ function StudentCourseListPage({ catalogOnly }: { catalogOnly: boolean }) {
         <PageHeader title={catalogOnly ? 'Explore Courses' : 'My Course'} backTo="/student" breadcrumbs={['Dashboard', catalogOnly ? 'Explore Courses' : 'My Course']} />
         <p className="muted">{catalogOnly ? 'Explore published courses from your organization.' : 'Continue with courses you are actively enrolled in.'}</p>
         {catalogOnly && <p><Link className="text-link" to="/student/courses">Back to My Course</Link></p>}
-        {!catalogOnly && <nav className="media-tabs student-course-page-tabs" role="tablist" aria-label="My Course sections">
-          <Link className="tab-button active" role="tab" aria-selected="true" to="/student/courses">My Course</Link>
-          <Link className="tab-button" role="tab" aria-selected="false" to="/student/courses/reports">My Reports</Link>
-        </nav>}
         {tab === 'browse' && <>
           <label className="field search-field course-search"><span>Search courses</span><input className="input" value={search} onChange={(event) => updateQuery('search', event.target.value)} /></label>
           {browse.isLoading && <p className="loading">Loading published courses…</p>}
@@ -122,8 +121,8 @@ function StudentCourseListPage({ catalogOnly }: { catalogOnly: boolean }) {
         {tab === 'enrolled' && <>
           {enrolled.isLoading && <p className="loading">Loading enrolled courses…</p>}
           {enrolled.error && <p className="notice notice-error" role="alert">Your courses could not be loaded.</p>}
-          {enrolled.data && enrollments.length === 0 && <div className="card empty-state"><h2>No active courses yet</h2><p>Explore published courses to find one to join.</p><Link className="button" to="/student/course-catalog">Explore courses</Link></div>}
-          <div className="student-course-grid">{enrollments.map(({ id, status, course, selectedTutor, pendingTutor }) => {
+          {enrolled.data && activeEnrollments.length === 0 && <div className="card empty-state"><h2>No active courses yet</h2><p>Explore published courses to find one to join.</p><Link className="button" to="/student/course-catalog">Explore courses</Link></div>}
+          {activeEnrollments.length > 0 && <div className="student-course-grid">{activeEnrollments.map(({ id, status, course, selectedTutor, pendingTutor }) => {
             const progress = course.progressPercent;
             return <article className="card course-card" key={id}>
               {course.thumbnailUrl ? <img className="course-card-thumbnail" src={course.thumbnailUrl} alt={`${course.title} course thumbnail`} referrerPolicy="no-referrer" /> : <div className="course-card-thumbnail course-card-thumbnail-placeholder" aria-label={`${course.title} course thumbnail`}><span>{course.category}</span></div>}
@@ -140,7 +139,22 @@ function StudentCourseListPage({ catalogOnly }: { catalogOnly: boolean }) {
                 <Link className="button button-secondary" to={`/student/courses/${course.id}/overview?returnTo=${encodeURIComponent(returnTo)}`}>Continue course</Link>
               </div>
             </article>;
-          })}</div>
+          })}</div>}
+          {completedEnrollments.length > 0 && <section className="completed-courses-section">
+            <div className="list-heading"><h2>Completed Courses</h2><span>{completedEnrollments.length}</span></div>
+            <div className="student-course-grid">{completedEnrollments.map(({ id, completedAt, course }) => <article className="card course-card" key={id}>
+              {course.thumbnailUrl ? <img className="course-card-thumbnail" src={course.thumbnailUrl} alt={`${course.title} course thumbnail`} referrerPolicy="no-referrer" /> : <div className="course-card-thumbnail course-card-thumbnail-placeholder" aria-label={`${course.title} course thumbnail`}><span>{course.category}</span></div>}
+              <div className="course-meta"><span>{course.code}</span><span className="status-pill status-published">COMPLETED</span></div>
+              <h3>{course.title}</h3>
+              <p>{course.description || 'No description provided.'}</p>
+              <p className="muted">Completed{completedAt ? ` on ${new Date(completedAt).toLocaleDateString()}` : ''} · {course.progressPercent}% course progress</p>
+              <p className="notice notice-info">Course completed. Course materials are no longer available.</p>
+              <div className="course-actions">
+                <Link className="button button-secondary" to={`/student/courses/${course.id}/overview`}>Course summary</Link>
+                <Link className="button" to={`/student/courses/${course.id}/certificate`}>View certificate</Link>
+              </div>
+            </article>)}</div>
+          </section>}
         </>}
         <p className="muted course-greeting">Welcome{user?.name ? `, ${user.name.split(' ')[0]}` : ''}.</p>
       </section>

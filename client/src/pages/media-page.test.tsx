@@ -96,4 +96,27 @@ describe('MediaPage', () => {
     expect(screen.getByText('1 KB · audio/mpeg')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Upload & Publish' })).toBeEnabled();
   });
+
+  it('renders the embedded YouTube-link form without nesting content in an input', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === '/media/courses') return { courses: [{ id: 'course-1', title: 'Python', code: 'PY101', topics: [] }] };
+      if (path === '/media/limits') return { limits: { maxVideoBytes: 500 * 1024 * 1024, maxAudioBytes: 100 * 1024 * 1024 } };
+      if (path.startsWith('/media?')) return { media: [], storage: null };
+      throw new Error(`Unexpected API request: ${path}`);
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={{ user: tutorUser, loading: false, logout: vi.fn() }}>
+          <MemoryRouter initialEntries={['/tutor/courses/course-1?tab=youtube']}>
+            <MediaPage embeddedCourseId="course-1" embeddedSource="YOUTUBE" />
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByLabelText('YouTube video URL')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save & Publish' })).toBeInTheDocument();
+  });
 });

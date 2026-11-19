@@ -37,9 +37,10 @@ tutorRouter.put('/reviews/:reviewId/visibility', requireRoles(Role.ORG_ADMIN), v
 tutorRouter.put('/:userId/review', requireRoles(Role.STUDENT), reviewLimiter, validateParams(tutorParamSchema), validateBody(tutorReviewSchema), controller.submitReview);
 tutorRouter.delete('/:userId/review', requireRoles(Role.STUDENT), reviewLimiter, validateParams(tutorParamSchema), validateBody(deleteTutorReviewSchema), controller.deleteReview);
 tutorRouter.get('/:userId/reviews', requireRoles(Role.ORG_ADMIN, Role.TUTOR), validateParams(tutorParamSchema), controller.reviews);
-tutorRouter.get('/', requireRoles(Role.ORG_ADMIN, Role.TUTOR), controller.list);
+tutorRouter.get('/', requireRoles(Role.ORG_ADMIN), controller.list);
 tutorRouter.get('/:userId/photo', validateParams(tutorParamSchema), controller.photo);
-tutorRouter.get('/:userId', requireRoles(Role.ORG_ADMIN, Role.TUTOR), validateParams(tutorParamSchema), controller.get);
+tutorRouter.get('/:userId/resume', requireRoles(Role.ORG_ADMIN), validateParams(tutorParamSchema), controller.resume);
+tutorRouter.get('/:userId', requireRoles(Role.ORG_ADMIN), validateParams(tutorParamSchema), controller.get);
 tutorRouter.get('/:userId/ratings', requireRoles(Role.TUTOR, Role.ORG_ADMIN), validateParams(tutorParamSchema), validateQuery(tutorCourseQuerySchema), controller.ratingDashboard);
 tutorRouter.post('/', requireRoles(Role.ORG_ADMIN), validateBody(createTutorSchema), controller.create);
 tutorRouter.put('/:userId/photo', requireRoles(Role.ORG_ADMIN, Role.TUTOR), validateParams(tutorParamSchema), photoUpload.single('photo'), mapUploadError, controller.uploadPhoto);

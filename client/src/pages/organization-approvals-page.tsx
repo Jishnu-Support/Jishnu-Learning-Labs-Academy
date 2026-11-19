@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { PageHeader } from '../components/page-header';
 import { api, ApiError } from '../lib/api';
@@ -111,6 +112,13 @@ export function OrganizationApprovalsPage() {
               <p className="muted">Registered {new Date(organization.createdAt).toLocaleDateString()} · {organization.counts.students} students · {organization.counts.tutors} Tutors</p>
               <p className="muted">Tutor rating: {organization.tutorRating.averageRating === null ? 'No ratings' : `${organization.tutorRating.averageRating.toFixed(1)} / 5`} · {organization.tutorRating.reviewCount} reviews</p>
               {organization.isPlatformOwner && <span className="status-pill status-published">Platform owner</span>}
+              {['ACTIVE', 'APPROVED'].includes(organization.status) && <div className="row-actions">
+                <Link className="button button-secondary" to={`/super-admin/organizations/${encodeURIComponent(organization.id)}/directories`}>Student & Tutor directories</Link>
+                <Link className="button button-secondary" to={`/super-admin/organizations/${encodeURIComponent(organization.id)}/courses`}>Manage courses</Link>
+                <Link className="button button-secondary" to={`/super-admin/organizations/${encodeURIComponent(organization.id)}/materials`}>Study materials</Link>
+                <Link className="button button-secondary" to={`/super-admin/organizations/${encodeURIComponent(organization.id)}/media`}>Videos & audio</Link>
+                <Link className="button button-secondary" to={`/super-admin/organizations/${encodeURIComponent(organization.id)}/library`}>Question papers & library</Link>
+              </div>}
             </div>
             <div className="row-actions">
               {!organization.isPlatformOwner && (

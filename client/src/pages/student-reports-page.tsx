@@ -1,41 +1,37 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { PageHeader } from '../components/page-header';
-import { PortalSidebar } from '../components/portal-sidebar';
 import { api, ApiError } from '../lib/api';
-import { buildReportsChart, summarizeSubjects, type StudentReport } from './student-reports-utils';
+import { buildWeeklyReportsChart, summarizeSubjects, type StudentReport } from './student-reports-utils';
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value));
 }
 
-export function StudentReportsPage() {
+export function StudentReportsPage({ embeddedCourseId }: { embeddedCourseId: string }) {
   const reports = useQuery({
-    queryKey: ['student-reports'],
-    queryFn: () => api<{ studentReports: StudentReport[] }>('/portal/student/reports'),
+    queryKey: ['student-reports', embeddedCourseId],
+    queryFn: () => api<{ studentReports: StudentReport[] }>(`/portal/student/reports?courseId=${encodeURIComponent(embeddedCourseId)}`),
     refetchInterval: 24 * 60 * 60 * 1000,
     refetchOnWindowFocus: true,
   });
-  const studentReports = reports.data?.studentReports ?? EMPTY_REPORTS;
-  const chartData = useMemo(() => buildReportsChart(studentReports), [studentReports]);
+  const releasedReports = reports.data?.studentReports ?? EMPTY_REPORTS;
+  const isSampleReport = Boolean(reports.data) && releasedReports.length === 0;
+  const studentReports = isSampleReport ? SAMPLE_REPORTS : releasedReports;
+  const chartData = useMemo(() => buildWeeklyReportsChart(studentReports), [studentReports]);
   const reportSubjects = useMemo(() => [...new Set(studentReports.map((report) => report.subject))], [studentReports]);
   const subjects = useMemo(() => summarizeSubjects(studentReports), [studentReports]);
-  const today = formatDate(new Date().toISOString());
-  const firstResultDate = studentReports.length ? formatDate(studentReports[0]!.date) : today;
 
-  return <div className="portal-layout">
-    <PortalSidebar role="STUDENT" />
-    <section className="portal-content student-reports-page">
-      <PageHeader title="My Reports" backTo="/student/courses" breadcrumbs={['My Course', 'My Reports']} />
-      <p className="muted">Your released assessment marks and progress from your first result through today.</p>
+  return <section className="course-section student-reports-page">
+      <h2>Evaluation reports</h2>
+      <p className="muted">Your released assessment marks by course week, from Week 1 through your latest result.</p>
       {reports.isError && <p className="notice notice-error" role="alert">{reports.error instanceof ApiError ? reports.error.message : 'Your reports could not be loaded.'}</p>}
       {reports.isLoading && <p className="loading">Loading your assessment results…</p>}
-      {reports.data && studentReports.length === 0 && <div className="card empty-state"><h2>No released marks yet</h2><p>Released assessment results will appear here as you complete assessments.</p></div>}
+      {isSampleReport && <p className="notice notice-info" role="status">Sample report preview — no released marks are available for this course yet.</p>}
       {studentReports.length > 0 && <>
         <section className="card report-chart-card">
-          <div className="report-card-heading"><div><h2>Marks over time</h2><p className="muted">{firstResultDate} – {today}</p></div><span className="report-refresh-note">Refreshes daily</span></div>
-          <div className="student-report-chart" role="img" aria-label="Line chart of your assessment marks over time">
+          <div className="report-card-heading"><div><h3>{isSampleReport ? 'Sample student growth' : 'Marks by week'}</h3><p className="muted">Week 1 – Week {chartData.length}</p></div><span className="report-refresh-note">{isSampleReport ? 'Sample data only' : 'Refreshes daily'}</span></div>
+          <div className="student-report-chart" role="img" aria-label="Line chart of your assessment marks from week one through the latest result">
             <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240}>
               <LineChart data={chartData} margin={{ top: 16, right: 12, bottom: 8, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
@@ -65,12 +61,25 @@ export function StudentReportsPage() {
         <section className="card student-report-list">
           <h2>Assessment results</h2>
           <div className="student-report-rows">{studentReports.map((report, index) => <article className="student-report-row" key={`${report.date}-${report.subject}-${index}`}>
-            <span>{formatDate(report.date)}</span><strong>{report.subject}</strong><span>{report.marks} / {report.totalMarks} marks</span>
+            <span>{report.week ? `Week ${report.week} · ` : ''}{formatDate(report.date)}</span><strong>{report.subject}</strong><span>{report.marks} / {report.totalMarks} marks</span>
           </article>)}</div>
         </section>
       </>}
-    </section>
-  </div>;
+    </section>;
 }
 
 const EMPTY_REPORTS: StudentReport[] = [];
+const SAMPLE_REPORTS: StudentReport[] = [
+  { week: 1, date: '2026-10-05T00:00:00.000Z', subject: 'HTML', marks: 58, totalMarks: 100, percentage: 58 },
+  { week: 2, date: '2026-10-12T00:00:00.000Z', subject: 'HTML', marks: 66, totalMarks: 100, percentage: 66 },
+  { week: 3, date: '2026-10-19T00:00:00.000Z', subject: 'HTML', marks: 72, totalMarks: 100, percentage: 72 },
+  { week: 4, date: '2026-10-26T00:00:00.000Z', subject: 'HTML', marks: 78, totalMarks: 100, percentage: 78 },
+  { week: 5, date: '2026-11-02T00:00:00.000Z', subject: 'HTML', marks: 82, totalMarks: 100, percentage: 82 },
+  { week: 6, date: '2026-11-09T00:00:00.000Z', subject: 'HTML', marks: 88, totalMarks: 100, percentage: 88 },
+  { week: 1, date: '2026-10-05T00:00:00.000Z', subject: 'CSS', marks: 52, totalMarks: 100, percentage: 52 },
+  { week: 2, date: '2026-10-12T00:00:00.000Z', subject: 'CSS', marks: 61, totalMarks: 100, percentage: 61 },
+  { week: 3, date: '2026-10-19T00:00:00.000Z', subject: 'CSS', marks: 68, totalMarks: 100, percentage: 68 },
+  { week: 4, date: '2026-10-26T00:00:00.000Z', subject: 'CSS', marks: 75, totalMarks: 100, percentage: 75 },
+  { week: 5, date: '2026-11-02T00:00:00.000Z', subject: 'CSS', marks: 80, totalMarks: 100, percentage: 80 },
+  { week: 6, date: '2026-11-09T00:00:00.000Z', subject: 'CSS', marks: 86, totalMarks: 100, percentage: 86 },
+];

@@ -4,6 +4,7 @@ import { Role } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { authenticate, requireOrganization, requireRoles } from '../../middleware/authenticate.js';
 import { validateBody, validateParams } from '../../middleware/validate.js';
+import { selectActiveOrganizationForSuperAdmin } from '../../middleware/super-admin-organization.js';
 import * as controller from './media.controller.js';
 import {
   mediaAssetParamsSchema,
@@ -45,6 +46,24 @@ mediaRouter.post('/:mediaId/unpublish', validateParams(mediaIdSchema), controlle
 mediaRouter.post('/:mediaId/retry', validateParams(mediaIdSchema), controller.retry);
 mediaRouter.post('/:mediaId/cancel', validateParams(mediaIdSchema), controller.cancel);
 mediaRouter.delete('/:mediaId', validateParams(mediaIdSchema), controller.remove);
+
+export const superAdminMediaRouter = Router({ mergeParams: true });
+superAdminMediaRouter.use(authenticate, requireRoles(Role.SUPER_ADMIN), selectActiveOrganizationForSuperAdmin);
+superAdminMediaRouter.get('/:mediaId/key', validateParams(mediaIdSchema), controller.key);
+superAdminMediaRouter.get('/limits', controller.limits);
+superAdminMediaRouter.get('/courses', controller.courses);
+superAdminMediaRouter.get('/storage', controller.storage);
+superAdminMediaRouter.get('/', controller.list);
+superAdminMediaRouter.post('/', uploadLimiter, controller.create);
+superAdminMediaRouter.put('/:mediaId/file', uploadLimiter, validateParams(mediaIdSchema), controller.upload);
+superAdminMediaRouter.get('/:mediaId/stream/:rendition/:asset', validateParams(mediaRenditionParamsSchema), controller.streamRenditionAsset);
+superAdminMediaRouter.get('/:mediaId/stream/:asset', validateParams(mediaAssetParamsSchema), controller.streamAsset);
+superAdminMediaRouter.patch('/:mediaId', validateParams(mediaIdSchema), validateBody(updateMediaSchema), controller.update);
+superAdminMediaRouter.post('/:mediaId/publish', validateParams(mediaIdSchema), controller.publish);
+superAdminMediaRouter.post('/:mediaId/unpublish', validateParams(mediaIdSchema), controller.unpublish);
+superAdminMediaRouter.post('/:mediaId/retry', validateParams(mediaIdSchema), controller.retry);
+superAdminMediaRouter.post('/:mediaId/cancel', validateParams(mediaIdSchema), controller.cancel);
+superAdminMediaRouter.delete('/:mediaId', validateParams(mediaIdSchema), controller.remove);
 
 export const studentMediaRouter = Router();
 studentMediaRouter.use(authenticate, requireOrganization, requireRoles(Role.STUDENT));

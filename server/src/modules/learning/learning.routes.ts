@@ -3,6 +3,7 @@ import { rateLimit } from 'express-rate-limit';
 import { Role } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { authenticate, requireOrganization, requireRoles } from '../../middleware/authenticate.js';
+import { selectActiveOrganizationForSuperAdmin } from '../../middleware/super-admin-organization.js';
 import { validateBody, validateParams } from '../../middleware/validate.js';
 import * as controller from './learning.controller.js';
 import * as reportController from './assessment-reports.controller.js';
@@ -17,7 +18,7 @@ import {
 import { assessmentReportStudentParamsSchema } from './assessment-reports.schemas.js';
 
 const teacherRouter = Router();
-teacherRouter.use(requireRoles(Role.ORG_ADMIN, Role.TUTOR));
+teacherRouter.use(requireRoles(Role.ORG_ADMIN, Role.TUTOR, Role.SUPER_ADMIN));
 const aiGenerationLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: env.NODE_ENV === 'test' ? 1000 : 10,
@@ -87,3 +88,11 @@ learningRouter.use(authenticate, requireOrganization);
 learningRouter.use('/teacher', teacherRouter);
 learningRouter.use('/student', studentRouter);
 learningRouter.use('/reports', reportsRouter);
+
+export const superAdminLearningRouter = Router({ mergeParams: true });
+superAdminLearningRouter.use(
+  authenticate,
+  requireRoles(Role.SUPER_ADMIN),
+  selectActiveOrganizationForSuperAdmin,
+);
+superAdminLearningRouter.use('/teacher', teacherRouter);

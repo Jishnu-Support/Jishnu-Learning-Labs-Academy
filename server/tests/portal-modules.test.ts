@@ -1,12 +1,16 @@
+import { createServer } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import bcrypt from 'bcrypt';
+import WebSocket from 'ws';
 import {
-  AccountStatus, AssessmentAttemptStatus, AssessmentStatus, OrganizationStatus, PrismaClient, ResultReleaseMode,
-  Role, StudentStatus,
+  AccountStatus, AssessmentAttemptStatus, AssessmentStatus, MediaSource, MediaStatus, MediaType,
+  MediaVisibility, OrganizationStatus, PrismaClient, ResultReleaseMode, Role, StudentStatus,
 } from '@prisma/client';
 import { app } from '../src/app.js';
+import { env } from '../src/config/env.js';
 import { localDiskStorage } from '../src/modules/notes/storage.service.js';
+import { attachLiveClassSignaling } from '../src/modules/student-portal/live-class-signaling.js';
 import { createSamplePdf } from '../prisma/library-sample.js';
 
 const prisma = new PrismaClient();
@@ -118,6 +122,21 @@ async function createNote(cookie: string, input: { title: string; published?: bo
   return created;
 }
 
+function nextSignal(socket: WebSocket): Promise<Record<string, unknown>> {
+  return new Promise((resolvePromise, reject) => {
+    const onError = (error: Error) => reject(error);
+    socket.once('error', onError);
+    socket.once('message', (data) => {
+      socket.off('error', onError);
+      try {
+        resolvePromise(JSON.parse(data.toString()) as Record<string, unknown>);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
 beforeAll(async () => prisma.$connect());
 
 afterAll(async () => {
@@ -144,6 +163,7 @@ afterAll(async () => {
     await prisma.savedLibraryItem.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.libraryItem.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.expertSession.deleteMany({ where: { organizationId: { in: organizationIds } } });
+    await prisma.mediaItem.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.course.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.auditLog.deleteMany({ where: { organizationId: { in: organizationIds } } });
     await prisma.studentProfile.updateMany({
@@ -468,6 +488,14 @@ describe('PF-2 student portal APIs', () => {
         createdById: admin.id,
       },
     });
+    await prisma.enrollment.create({
+      data: {
+        organizationId: organization.id,
+        courseId: course.id,
+        studentId: student.id,
+        enrolledAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
     const immediate = await prisma.assessment.create({
       data: {
         organizationId: organization.id, courseId: course.id, createdById: admin.id, title: 'Released assessment',
@@ -509,6 +537,11 @@ describe('PF-2 student portal APIs', () => {
     expect(reports.body.data.studentReports[0]).toMatchObject({
       subject: course.title, totalMarks: 20, percentage: 70,
     });
+    const courseReports = await request(app)
+      .get(`/api/portal/student/reports?courseId=${course.id}`)
+      .set('Cookie', studentCookie);
+    expect(courseReports.status).toBe(200);
+    expect(courseReports.body.data.studentReports.map((item: { week: number }) => item.week)).toEqual([2, 2]);
     expect((await request(app).get('/api/portal/student/reports').set('Cookie', otherStudentCookie)).body.data.studentReports)
       .toHaveLength(1);
     expect((await request(app).get('/api/portal/student/reports')).status).toBe(401);
@@ -563,7 +596,7 @@ describe('PF-2 student portal APIs', () => {
 
     const joined = await request(app).post(`/api/portal/student/sessions/${sessionId}/join`).set('Cookie', studentCookie);
     expect(joined.status).toBe(200);
-    expect(joined.body.data.room.roomUrl).toContain('https://meet.jit.si/');
+    expect(joined.body.data.room.sessionId).toBe(sessionId);
     const marked = await request(app).put(`/api/portal/manage/sessions/${sessionId}/attendance/${student.id}`)
       .set('Cookie', tutorCookie).send({ status: 'ABSENT' });
     expect(marked.status).toBe(200);
@@ -655,6 +688,346 @@ describe('PF-2 student portal APIs', () => {
     expect(certificates.body.data.certificates).toHaveLength(1);
     expect((await request(app).get(`/api/public/certificates/${prefix}-VERIFY-1`)).status).toBe(200);
     expect((await request(app).get('/api/portal/student/certificates').set('Cookie', otherStudentCookie)).body.data.certificates).toHaveLength(0);
+  });
+
+  it('issues one eligible course certificate, completes the enrollment, and locks course content', async () => {
+    const organization = await makeOrganization('certificate-completion');
+    const admin = await makeUser(organization.id, Role.ORG_ADMIN, 'certificate-completion-admin');
+    const student = await makeUser(organization.id, Role.STUDENT, 'certificate-completion-student', { identifier: 'CERT-STU-1' });
+    const course = await prisma.course.create({
+      data: {
+        organizationId: organization.id,
+        code: 'PF2-CERT',
+        title: 'Certificate Test Course',
+        category: 'Testing',
+        plannedHours: 2,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2027-01-01T00:00:00.000Z'),
+        minimumAttendancePercent: 75,
+        requiresAssessmentPass: true,
+        status: 'PUBLISHED',
+        createdById: admin.id,
+      },
+    });
+    await prisma.enrollment.create({
+      data: { organizationId: organization.id, courseId: course.id, studentId: student.id },
+    });
+    const topic = await prisma.courseTopic.create({
+      data: { organizationId: organization.id, courseId: course.id, title: 'Covered topic', plannedHours: 2, order: 1 },
+    });
+    const assessment = await prisma.assessment.create({
+      data: {
+        organizationId: organization.id,
+        courseId: course.id,
+        createdById: admin.id,
+        title: 'Required assessment',
+        instructions: '',
+        totalMarks: 10,
+        passMark: 5,
+        durationMinutes: 30,
+        status: AssessmentStatus.PUBLISHED,
+      },
+    });
+    const attempt = await prisma.assessmentAttempt.create({
+      data: {
+        organizationId: organization.id,
+        assessmentId: assessment.id,
+        studentId: student.id,
+        status: AssessmentAttemptStatus.SUBMITTED,
+        snapshot: [],
+        expiresAt: new Date(Date.now() + 30 * 60_000),
+        submittedAt: new Date(),
+        score: 8,
+        percentage: 80,
+        passed: true,
+      },
+    });
+    const session = await prisma.expertSession.create({
+      data: {
+        organizationId: organization.id,
+        hostId: admin.id,
+        courseId: course.id,
+        title: 'Completed session',
+        description: '',
+        startsAt: new Date(Date.now() - 2 * 60 * 60_000),
+        durationMinutes: 60,
+        roomName: `certificate-${prefix}-room`,
+        status: 'COMPLETED',
+      },
+    });
+    const attendance = await prisma.attendanceRecord.create({
+      data: {
+        organizationId: organization.id,
+        sessionId: session.id,
+        courseId: course.id,
+        studentId: student.id,
+        markedById: admin.id,
+        status: 'PRESENT',
+      },
+    });
+    const studentCookie = cookieHeader(await login('students', organization.code!, 'CERT-STU-1'));
+    const certificatePath = `/api/portal/student/courses/${course.id}/certificate`;
+
+    const missingTopic = await request(app).post(certificatePath).set('Cookie', studentCookie);
+    expect(missingTopic.status).toBe(409);
+    expect(missingTopic.body.error.message).toMatch(/topics must be covered/i);
+    expect(await prisma.certificate.count({ where: { organizationId: organization.id } })).toBe(0);
+    expect((await prisma.enrollment.findFirstOrThrow({ where: { organizationId: organization.id, courseId: course.id, studentId: student.id } })).status).toBe('ACTIVE');
+
+    await prisma.courseTopic.update({ where: { id: topic.id }, data: { covered: true, coveredAt: new Date() } });
+    await prisma.attendanceRecord.update({ where: { id: attendance.id }, data: { status: 'ABSENT' } });
+    const insufficientAttendance = await request(app).post(certificatePath).set('Cookie', studentCookie);
+    expect(insufficientAttendance.status).toBe(409);
+    expect(insufficientAttendance.body.error.message).toMatch(/attendance must be at least/i);
+    await prisma.attendanceRecord.update({ where: { id: attendance.id }, data: { status: 'PRESENT' } });
+    await prisma.assessmentAttempt.update({ where: { id: attempt.id }, data: { passed: false } });
+    const unpassedAssessment = await request(app).post(certificatePath).set('Cookie', studentCookie);
+    expect(unpassedAssessment.status).toBe(409);
+    expect(unpassedAssessment.body.error.message).toMatch(/pass every published/i);
+    await prisma.assessmentAttempt.update({ where: { id: attempt.id }, data: { passed: true } });
+    const issued = await request(app).post(certificatePath).set('Cookie', studentCookie);
+    expect(issued.status).toBe(201);
+    expect(issued.body.data.certificate).toMatchObject({
+      student: { name: 'certificate-completion-student Person' },
+      course: { id: course.id, title: course.title },
+      organization: { name: organization.name },
+    });
+    const enrollment = await prisma.enrollment.findFirstOrThrow({
+      where: { organizationId: organization.id, courseId: course.id, studentId: student.id },
+    });
+    expect(enrollment.status).toBe('COMPLETED');
+    expect(enrollment.completedAt).not.toBeNull();
+    expect(await prisma.certificate.count({ where: { organizationId: organization.id } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { organizationId: organization.id, action: 'CERTIFICATE_ISSUED' } })).toBe(1);
+
+    const listed = await request(app).get('/api/student/courses/enrolled').set('Cookie', studentCookie);
+    expect(listed.body.data.enrollments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'COMPLETED', completedAt: expect.any(String), course: expect.objectContaining({ id: course.id }) }),
+    ]));
+    const repeated = await request(app).post(certificatePath).set('Cookie', studentCookie);
+    expect(repeated.status).toBe(201);
+    expect(repeated.body.data.certificate.id).toBe(issued.body.data.certificate.id);
+    expect(await prisma.certificate.count({ where: { organizationId: organization.id } })).toBe(1);
+
+    expect((await request(app).get(`/api/notes?courseId=${course.id}`).set('Cookie', studentCookie)).status).toBe(403);
+    expect((await request(app).get(`/api/student/media?courseId=${course.id}`).set('Cookie', studentCookie)).status).toBe(403);
+    expect((await request(app).get(`/api/learning/student/assessments?courseId=${course.id}`).set('Cookie', studentCookie)).status).toBe(404);
+    expect((await request(app).get(`/api/learning/student/practice-sets?courseId=${course.id}`).set('Cookie', studentCookie)).status).toBe(404);
+    expect((await request(app).get(`/api/portal/student/library?courseId=${course.id}`).set('Cookie', studentCookie)).status).toBe(403);
+    expect((await request(app).get(`/api/portal/student/sessions?courseId=${course.id}`).set('Cookie', studentCookie)).status).toBe(403);
+    expect((await request(app).get(`/api/portal/student/reports?courseId=${course.id}`).set('Cookie', studentCookie)).status).toBe(200);
+  });
+
+  it('shows seeded sample completions without presenting their certificates as verifiable', async () => {
+    const organization = await makeOrganization('sample-completion');
+    const admin = await makeUser(organization.id, Role.ORG_ADMIN, 'sample-completion-admin');
+    const student = await makeUser(organization.id, Role.STUDENT, 'sample-completion-student', { identifier: 'SAMPLE-COMP-STU-1' });
+    const completedAt = new Date('2026-10-20T12:00:00.000Z');
+    const course = await prisma.course.create({
+      data: {
+        organizationId: organization.id,
+        code: 'SAMPLE-WEB-01',
+        title: 'Sample Web Development',
+        category: 'Web Development',
+        plannedHours: 24,
+        startDate: new Date('2026-06-01T00:00:00.000Z'),
+        endDate: new Date('2026-11-30T00:00:00.000Z'),
+        thumbnailUrl: '/brand/course-web-development.svg',
+        createdById: admin.id,
+      },
+    });
+    await prisma.enrollment.create({
+      data: {
+        organizationId: organization.id,
+        courseId: course.id,
+        studentId: student.id,
+        status: 'COMPLETED',
+        completedAt,
+      },
+    });
+    const verificationCode = `${prefix}-sample-completion-certificate`;
+    await prisma.certificate.create({
+      data: {
+        organizationId: organization.id,
+        courseId: course.id,
+        studentId: student.id,
+        issuedStudentName: student.name,
+        certificateNo: `${prefix}-sample-certificate`,
+        verificationCode,
+        isSample: true,
+        issuedAt: completedAt,
+      },
+    });
+    const studentCookie = cookieHeader(await login('students', organization.code!, 'SAMPLE-COMP-STU-1'));
+
+    const completed = await request(app).get('/api/portal/student/completed-courses').set('Cookie', studentCookie);
+    expect(completed.status).toBe(200);
+    expect(completed.body.data.courses).toEqual([
+      expect.objectContaining({
+        completedAt: completedAt.toISOString(),
+        progressPercent: 100,
+        course: expect.objectContaining({
+          id: course.id,
+          title: course.title,
+          thumbnailUrl: '/brand/course-web-development.svg',
+        }),
+        certificate: expect.objectContaining({ isSample: true }),
+      }),
+    ]);
+
+    const enrollmentList = await request(app).get('/api/student/courses/enrolled').set('Cookie', studentCookie);
+    expect(enrollmentList.body.data.enrollments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ course: expect.objectContaining({ id: course.id }), status: 'COMPLETED' }),
+    ]));
+    const verification = await request(app).get(`/api/public/certificates/${verificationCode}`);
+    expect(verification.status).toBe(404);
+  });
+
+  it('automatically issues a certificate from My Certificates after all course requirements are met', async () => {
+    const organization = await makeOrganization('automatic-certificate');
+    const admin = await makeUser(organization.id, Role.ORG_ADMIN, 'automatic-certificate-admin');
+    const student = await makeUser(organization.id, Role.STUDENT, 'automatic-certificate-student', { identifier: 'AUTO-CERT-STU-1' });
+    const course = await prisma.course.create({
+      data: {
+        organizationId: organization.id,
+        code: 'PF2-AUTO-CERT',
+        title: 'Automatic Certificate Course',
+        category: 'Testing',
+        plannedHours: 2,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2027-01-01T00:00:00.000Z'),
+        minimumAttendancePercent: 75,
+        requiresAssessmentPass: true,
+        status: 'PUBLISHED',
+        createdById: admin.id,
+      },
+    });
+    await prisma.enrollment.create({
+      data: { organizationId: organization.id, courseId: course.id, studentId: student.id },
+    });
+    await prisma.courseTopic.create({
+      data: { organizationId: organization.id, courseId: course.id, title: 'Covered topic', plannedHours: 2, order: 1, covered: true, coveredAt: new Date() },
+    });
+    const assessment = await prisma.assessment.create({
+      data: {
+        organizationId: organization.id,
+        courseId: course.id,
+        createdById: admin.id,
+        title: 'Passed assessment',
+        instructions: '',
+        totalMarks: 10,
+        passMark: 5,
+        durationMinutes: 30,
+        status: AssessmentStatus.PUBLISHED,
+      },
+    });
+    await prisma.assessmentAttempt.create({
+      data: {
+        organizationId: organization.id,
+        assessmentId: assessment.id,
+        studentId: student.id,
+        status: AssessmentAttemptStatus.SUBMITTED,
+        snapshot: [],
+        expiresAt: new Date(Date.now() + 30 * 60_000),
+        submittedAt: new Date(),
+        score: 8,
+        percentage: 80,
+        passed: true,
+      },
+    });
+    const session = await prisma.expertSession.create({
+      data: {
+        organizationId: organization.id,
+        hostId: admin.id,
+        courseId: course.id,
+        title: 'Attended session',
+        description: '',
+        startsAt: new Date(Date.now() - 2 * 60 * 60_000),
+        durationMinutes: 60,
+        roomName: `automatic-certificate-${prefix}-room`,
+        status: 'COMPLETED',
+      },
+    });
+    await prisma.attendanceRecord.create({
+      data: {
+        organizationId: organization.id,
+        sessionId: session.id,
+        courseId: course.id,
+        studentId: student.id,
+        markedById: admin.id,
+        status: 'PRESENT',
+      },
+    });
+    const media = await prisma.mediaItem.create({
+      data: {
+        organizationId: organization.id,
+        courseId: course.id,
+        uploadedById: admin.id,
+        title: 'Completed sample video',
+        type: MediaType.VIDEO,
+        source: MediaSource.UPLOAD,
+        status: MediaStatus.READY,
+        visibility: MediaVisibility.PUBLISHED,
+        durationSeconds: 60,
+        sizeBytes: 1n,
+        storageBytes: 1n,
+      },
+    });
+    const audio = await prisma.mediaItem.create({
+      data: {
+        organizationId: organization.id,
+        courseId: course.id,
+        uploadedById: admin.id,
+        title: 'Completed sample audio',
+        type: MediaType.AUDIO,
+        source: MediaSource.UPLOAD,
+        status: MediaStatus.READY,
+        visibility: MediaVisibility.PUBLISHED,
+        durationSeconds: 60,
+        sizeBytes: 1n,
+        storageBytes: 1n,
+      },
+    });
+    await prisma.watchProgress.create({
+      data: {
+        organizationId: organization.id,
+        studentId: student.id,
+        mediaId: media.id,
+        lastPositionSeconds: 60,
+        watchedSeconds: 60,
+        completed: true,
+      },
+    });
+
+    const studentCookie = cookieHeader(await login('students', organization.code!, 'AUTO-CERT-STU-1'));
+    const incompleteCertificates = await request(app).get('/api/portal/student/certificates').set('Cookie', studentCookie);
+    expect(incompleteCertificates.body.data.certificates).toHaveLength(0);
+    expect((await prisma.enrollment.findFirstOrThrow({
+      where: { organizationId: organization.id, courseId: course.id, studentId: student.id },
+    })).status).toBe('ACTIVE');
+    await prisma.watchProgress.create({
+      data: {
+        organizationId: organization.id,
+        studentId: student.id,
+        mediaId: audio.id,
+        lastPositionSeconds: 60,
+        watchedSeconds: 60,
+        completed: true,
+      },
+    });
+    const response = await request(app).get('/api/portal/student/certificates').set('Cookie', studentCookie);
+    expect(response.status).toBe(200);
+    expect(response.body.data.certificates).toHaveLength(1);
+    expect(response.body.data.certificates[0]).toMatchObject({
+      student: { name: 'automatic-certificate-student Person' },
+      course: { id: course.id, title: course.title },
+      organization: { name: organization.name },
+    });
+    expect((await prisma.enrollment.findFirstOrThrow({
+      where: { organizationId: organization.id, courseId: course.id, studentId: student.id },
+    })).status).toBe('COMPLETED');
+    expect((await request(app).get(`/api/student/media?courseId=${course.id}`).set('Cookie', studentCookie)).status).toBe(403);
+    expect((await request(app).get(`/api/student/media/${media.id}/stream/master.m3u8`).set('Cookie', studentCookie)).status).toBe(404);
   });
 });
 
@@ -810,5 +1183,108 @@ describe('Student profile, preferred Tutors, reviews, and saved notes', () => {
     const otherCourse = await request(app).get(`/api/student/courses/${course.id}`).set('Cookie', otherStudentCookie);
     expect(ownCourse.body.data.course.notes.map((item: { id: string }) => item.id)).toContain(noteId);
     expect(otherCourse.body.data.course.notes).toHaveLength(0);
+  });
+});
+
+describe('Live Expert Session signaling', () => {
+  it('authenticates same-origin participants and relays offers only inside their room', async () => {
+    const organization = await makeOrganization('live-signaling');
+    const tutor = await makeUser(organization.id, Role.TUTOR, 'live-signaling-tutor');
+    const student = await makeUser(organization.id, Role.STUDENT, 'live-signaling-student', { identifier: 'LIVE-STU-1' });
+    const course = await prisma.course.create({
+      data: {
+        organizationId: organization.id,
+        code: 'PF2-LIVE',
+        title: 'Live signaling course',
+        category: 'Testing',
+        plannedHours: 2,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2027-01-01T00:00:00.000Z'),
+        createdById: tutor.id,
+      },
+    });
+    await prisma.courseInstructor.create({
+      data: { organizationId: organization.id, courseId: course.id, instructorId: tutor.id },
+    });
+    await prisma.enrollment.create({
+      data: { organizationId: organization.id, courseId: course.id, studentId: student.id },
+    });
+    const session = await prisma.expertSession.create({
+      data: {
+        organizationId: organization.id,
+        hostId: tutor.id,
+        courseId: course.id,
+        title: 'Live signaling test session',
+        description: '',
+        startsAt: new Date(Date.now() - 60_000),
+        durationMinutes: 30,
+        roomName: `live-signaling-${prefix}-room`,
+        status: 'LIVE',
+      },
+    });
+    await prisma.attendanceRecord.create({
+      data: {
+        organizationId: organization.id,
+        sessionId: session.id,
+        courseId: course.id,
+        studentId: student.id,
+        status: 'PRESENT',
+        joinedAt: new Date(),
+      },
+    });
+    const studentCookie = cookieHeader(await login('students', organization.code!, 'LIVE-STU-1'));
+    const tutorCookie = cookieHeader(await login('tutors', organization.code!, tutor.email));
+    const server = createServer(app);
+    const stopSignaling = attachLiveClassSignaling(server);
+    let studentSocket: WebSocket | undefined;
+    let tutorSocket: WebSocket | undefined;
+
+    try {
+      const port = await new Promise<number>((resolvePromise, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => {
+          const address = server.address();
+          if (!address || typeof address === 'string') {
+            reject(new Error('The signaling test server did not bind to a TCP port'));
+            return;
+          }
+          resolvePromise(address.port);
+        });
+      });
+      const origin = new URL(env.CLIENT_URL).origin;
+      const url = `ws://127.0.0.1:${port}/api/portal/rooms/ws?sessionId=${encodeURIComponent(session.id)}`;
+      const studentFirst = new WebSocket(url, { headers: { Cookie: studentCookie, Origin: origin } });
+      studentSocket = studentFirst;
+      expect(await nextSignal(studentFirst)).toEqual({ type: 'peers', peers: [] });
+      const studentJoined = nextSignal(studentFirst);
+      const tutorFirst = new WebSocket(url, { headers: { Cookie: tutorCookie, Origin: origin } });
+      tutorSocket = tutorFirst;
+      const tutorPeers = await nextSignal(tutorFirst);
+      expect(tutorPeers.type).toBe('peers');
+      expect(tutorPeers.peers).toEqual([
+        expect.objectContaining({ name: 'live-signaling-student Person', role: 'STUDENT' }),
+      ]);
+      const tutorJoined = await studentJoined;
+      expect(tutorJoined).toMatchObject({ type: 'peer-joined', peer: { name: 'live-signaling-tutor Person', role: 'TUTOR' } });
+
+      const tutorPeer = tutorPeers.peers as Array<{ id: string }>;
+      tutorFirst.send(JSON.stringify({
+        type: 'offer',
+        to: tutorPeer[0]!.id,
+        description: { type: 'offer', sdp: 'v=0' },
+      }));
+      expect(await nextSignal(studentFirst)).toMatchObject({ type: 'offer', description: { type: 'offer', sdp: 'v=0' } });
+
+      const rejected = new WebSocket(url, { headers: { Origin: 'https://invalid.example' } });
+      await new Promise<void>((resolvePromise, reject) => {
+        rejected.once('open', () => reject(new Error('A cross-origin signaling connection was accepted')));
+        rejected.once('error', () => resolvePromise());
+      });
+    } finally {
+      studentSocket?.close();
+      tutorSocket?.close();
+      stopSignaling();
+      await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+    }
   });
 });

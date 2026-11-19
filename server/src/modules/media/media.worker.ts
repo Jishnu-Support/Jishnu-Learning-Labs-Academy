@@ -126,7 +126,7 @@ export async function processNextJob(processor: MediaProcessor, organizationId?:
       await tx.auditLog.create({
         data: {
           organizationId: job.organizationId,
-          actorId: job.media.uploadedById,
+          actorId: job.media.uploadedBySuperAdminId ?? job.media.uploadedById,
           action: 'MEDIA_PROCESSING_COMPLETED',
           targetType: 'MediaItem',
           targetId: job.media.id,
@@ -176,7 +176,7 @@ export async function processNextJob(processor: MediaProcessor, organizationId?:
       await tx.auditLog.create({
         data: {
           organizationId: job.organizationId,
-          actorId: job.media.uploadedById,
+          actorId: job.media.uploadedBySuperAdminId ?? job.media.uploadedById,
           action: retry ? 'MEDIA_PROCESSING_RETRY_SCHEDULED' : 'MEDIA_PROCESSING_FAILED',
           targetType: 'MediaItem',
           targetId: job.media.id,

@@ -12,6 +12,7 @@ import { hashToken, makeAccessToken, makeRefreshToken, verifyRefreshToken } from
 import { encryptIdentifier } from '../students/student-identifiers.crypto.js';
 import { notifyAfterCommit, notifyUsers } from '../notifications/notifications.service.js';
 import { removeRegistrationReceipt, saveRegistrationReceipt } from '../payments/registration-receipt.service.js';
+import { removeResume, saveResume } from '../opportunities/resume.storage.js';
 
 type RequestMeta = { ip: string | undefined; userAgent: string | undefined };
 type Credentials = { user: User; accessToken: string; refreshToken: string };
@@ -153,10 +154,9 @@ export async function getRegistrationOptions(organizationCode: string) {
     where: {
       organizationId: organization.id,
       status: CourseStatus.PUBLISHED,
-      registrationMonthlyFee: { gt: 0 },
     },
     orderBy: { title: 'asc' },
-    select: { id: true, title: true, category: true, registrationMonthlyFee: true },
+    select: { id: true, code: true, title: true, category: true, registrationMonthlyFee: true },
   });
   return {
     courses: courses.map((course) => ({
@@ -318,12 +318,12 @@ export async function registerStudent(input: RegistrationDetails & {
 export async function registerTutor(input: {
   organizationCode: string;
   tutorId: string;
-} & RegistrationDetails & { receipt?: Express.Multer.File }) {
+} & RegistrationDetails & { receipt?: Express.Multer.File; resume?: Express.Multer.File }) {
   return registerPendingAccount(input);
 }
 
 async function registerPendingAccount(
-  input: RegistrationDetails & { tutorId: string; receipt?: Express.Multer.File },
+  input: RegistrationDetails & { tutorId: string; receipt?: Express.Multer.File; resume?: Express.Multer.File },
 ) {
   const organization = await prisma.organization.findFirst({
     where: { code: input.organizationCode, status: { in: [OrganizationStatus.ACTIVE, OrganizationStatus.APPROVED] } },
@@ -335,7 +335,9 @@ async function registerPendingAccount(
   const courseLabel = `${selectedCourse.category} — ${selectedCourse.title}`;
   const passwordHash = await bcrypt.hash(input.password, 12);
   const receipt = await saveRegistrationReceipt(input.receipt);
+  let resume: Awaited<ReturnType<typeof saveResume>> = null;
   try {
+    resume = await saveResume(input.resume);
     const user = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -350,6 +352,8 @@ async function registerPendingAccount(
             create: {
               organizationId: organization.id,
               tutorId: requireTutorId(input.tutorId),
+              resumeStorageKey: resume?.storageKey,
+              resumeOriginalName: resume?.originalName,
               ...registrationProfileFields(input, courseLabel),
             },
           },
@@ -402,6 +406,7 @@ async function registerPendingAccount(
     return user;
   } catch (error) {
     await removeRegistrationReceipt(receipt?.storageKey);
+    await removeResume(resume?.storageKey);
     if (error instanceof Error && 'code' in error && error.code === 'P2002') {
       throw new HttpError(409, 'Email or Tutor ID is already registered in this organization');
     }

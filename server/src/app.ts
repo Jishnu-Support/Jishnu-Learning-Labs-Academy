@@ -8,16 +8,23 @@ import { logger } from './config/logger.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { approvalsRouter, orgAdminApprovalsRouter } from './modules/approvals/approvals.routes.js';
 import { authRouter } from './modules/auth/auth.routes.js';
-import { coursesRouter, studentCoursesRouter } from './modules/courses/courses.routes.js';
-import { notesRouter } from './modules/notes/notes.routes.js';
-import { mediaRouter, studentMediaRouter } from './modules/media/media.routes.js';
+import { coursesRouter, studentCoursesRouter, superAdminCoursesRouter } from './modules/courses/courses.routes.js';
+import { notesRouter, superAdminNotesRouter } from './modules/notes/notes.routes.js';
+import { mediaRouter, studentMediaRouter, superAdminMediaRouter } from './modules/media/media.routes.js';
 import { organizationAdminSettingsRouter, organizationsRouter, publicBrandRouter, superAdminOrganizationsRouter } from './modules/organizations/organizations.routes.js';
 import { tutorRouter } from './modules/tutors/tutor.routes.js';
 import { studentsRouter } from './modules/students/students.routes.js';
-import { learningRouter } from './modules/learning/learning.routes.js';
+import { learningRouter, superAdminLearningRouter } from './modules/learning/learning.routes.js';
 import { notificationsRouter } from './modules/notifications/notifications.routes.js';
-import { publicStudentPortalRouter, studentPortalRouter } from './modules/student-portal/student-portal.routes.js';
+import { publicStudentPortalRouter, studentPortalRouter, superAdminStudentPortalRouter } from './modules/student-portal/student-portal.routes.js';
 import { paymentsRouter } from './modules/payments/payments.routes.js';
+import {
+  orgAdminOpportunitiesRouter,
+  studentOpportunitiesRouter,
+  superAdminOpportunitiesRouter,
+} from './modules/opportunities/opportunities.routes.js';
+import { superAdminAuditRouter } from './modules/super-admin/audit.routes.js';
+import { superAdminDirectoriesRouter } from './modules/super-admin/directories.routes.js';
 
 export const app = express();
 app.disable('x-powered-by');
@@ -25,7 +32,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-      'frame-src': ["'self'", 'https://www.youtube-nocookie.com', 'https://meet.jit.si'],
+      'frame-src': ["'self'", 'https://www.youtube-nocookie.com'],
     },
   },
 }));
@@ -40,17 +47,27 @@ app.use('/api/auth', authRouter);
 app.use('/api/organizations', organizationsRouter);
 app.use('/api/organizations/settings', organizationAdminSettingsRouter);
 app.use('/api/super-admin/organizations', superAdminOrganizationsRouter);
+app.use('/api/super-admin/audit', superAdminAuditRouter);
+app.use('/api/super-admin/organizations/:organizationId/directories', superAdminDirectoriesRouter);
 app.use('/api/students', studentsRouter);
 app.use('/api/tutors', tutorRouter);
 app.use('/api/courses', coursesRouter);
 app.use('/api/student/courses', studentCoursesRouter);
+app.use('/api/super-admin/organizations/:organizationId/courses', superAdminCoursesRouter);
+app.use('/api/super-admin/organizations/:organizationId/learning', superAdminLearningRouter);
+app.use('/api/super-admin/organizations/:organizationId/portal', superAdminStudentPortalRouter);
 app.use('/api/notes', notesRouter);
 app.use('/api/media', mediaRouter);
+app.use('/api/super-admin/organizations/:organizationId/notes', superAdminNotesRouter);
+app.use('/api/super-admin/organizations/:organizationId/media', superAdminMediaRouter);
 app.use('/api/student/media', studentMediaRouter);
 app.use('/api/learning', learningRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/portal', studentPortalRouter);
 app.use('/api/payments', paymentsRouter);
+app.use('/api/opportunities', studentOpportunitiesRouter);
+app.use('/api/org-admin/opportunities', orgAdminOpportunitiesRouter);
+app.use('/api/super-admin/opportunities', superAdminOpportunitiesRouter);
 app.use('/api/tutor/registrations', approvalsRouter);
 app.use('/api/org-admin', orgAdminApprovalsRouter);
 app.use((_req, res) => res.status(404).json({ error: { message: 'Route not found' } }));

@@ -59,7 +59,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function dashboardPath(role?: string) {
-  return role === 'ORG_ADMIN' ? '/org-admin' : role === 'TUTOR' ? '/tutor' : '/student';
+  return role === 'ORG_ADMIN' ? '/org-admin' : role === 'SUPER_ADMIN' ? '/super-admin/organizations' : role === 'TUTOR' ? '/tutor' : '/student';
 }
 
 function assessmentReturnTo(state: unknown) {
@@ -109,10 +109,10 @@ function formatError(error: unknown) {
   return error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'The request could not be completed.';
 }
 
-function useTeacherCourses() {
+function useTeacherCourses(courseBase = '/courses') {
   return useQuery({
-    queryKey: ['courses', 'learning-teacher'],
-    queryFn: () => api<{ courses: Course[] }>('/courses'),
+    queryKey: ['courses', 'learning-teacher', courseBase],
+    queryFn: () => api<{ courses: Course[] }>(courseBase),
   });
 }
 
@@ -126,31 +126,33 @@ function useStudentCourses() {
   });
 }
 
-export function PracticeQuestionBankPage() {
+export function PracticeQuestionBankPage({ embeddedCourseId, apiPrefix = '' }: { embeddedCourseId?: string; apiPrefix?: string } = {}) {
   const { user } = useAuth();
   const role = user?.role ?? 'TUTOR';
   const base = `${dashboardPath(role)}/learning/questions`;
-  const courses = useTeacherCourses();
+  const teacherBase = `${apiPrefix}/learning/teacher`;
+  const courseBase = `${apiPrefix}/courses`;
+  const courses = useTeacherCourses(courseBase);
   const client = useQueryClient();
-  const [form, setForm] = useState(initialQuestion);
+  const [form, setForm] = useState(() => ({ ...initialQuestion, courseId: embeddedCourseId ?? '' }));
   const [editingId, setEditingId] = useState('');
   const [showQuestionForm, setShowQuestionForm] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [previewQuestion, setPreviewQuestion] = useState<Question | null>(null);
   const [search, setSearch] = useState('');
-  const [filterCourseId, setFilterCourseId] = useState('');
+  const [filterCourseId, setFilterCourseId] = useState(embeddedCourseId ?? '');
   const [filterTopicId, setFilterTopicId] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterDifficulty, setFilterDifficulty] = useState('');
   const [csv, setCsv] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [practiceSetForm, setPracticeSetForm] = useState({ courseId: '', title: '', topic: '', difficulty: 'BEGINNER', questionIds: [] as string[] });
+  const [practiceSetForm, setPracticeSetForm] = useState({ courseId: embeddedCourseId ?? '', title: '', topic: '', difficulty: 'BEGINNER', questionIds: [] as string[] });
   const [previewSetId, setPreviewSetId] = useState('');
   const [previewAnswers, setPreviewAnswers] = useState<Record<string, unknown>>({});
   const [previewChecked, setPreviewChecked] = useState(false);
   const questions = useQuery({
-    queryKey: ['learning', 'questions', search, filterCourseId, filterTopicId, filterType, filterDifficulty],
+    queryKey: ['learning', 'questions', apiPrefix, search, filterCourseId, filterTopicId, filterType, filterDifficulty],
     queryFn: () => {
       const params = new URLSearchParams();
       if (search) params.set('search', search);
@@ -158,32 +160,32 @@ export function PracticeQuestionBankPage() {
       if (filterTopicId) params.set('topicId', filterTopicId);
       if (filterType) params.set('type', filterType);
       if (filterDifficulty) params.set('difficulty', filterDifficulty);
-      return api<{ questions: Question[] }>(`/learning/teacher/questions${params.size ? `?${params}` : ''}`);
+      return api<{ questions: Question[] }>(`${teacherBase}/questions${params.size ? `?${params}` : ''}`);
     },
   });
   const filterCourseDetail = useQuery({
-    queryKey: ['courses', 'learning-filter', filterCourseId],
-    queryFn: () => api<{ course: { topics: Array<{ id: string; title: string }> } }>(`/courses/${filterCourseId}`),
+    queryKey: ['courses', 'learning-filter', apiPrefix, filterCourseId],
+    queryFn: () => api<{ course: { topics: Array<{ id: string; title: string }> } }>(`${courseBase}/${filterCourseId}`),
     enabled: Boolean(filterCourseId),
   });
   const formCourseDetail = useQuery({
-    queryKey: ['courses', 'learning-form', form.courseId],
-    queryFn: () => api<{ course: { topics: Array<{ id: string; title: string }> } }>(`/courses/${form.courseId}`),
+    queryKey: ['courses', 'learning-form', apiPrefix, form.courseId],
+    queryFn: () => api<{ course: { topics: Array<{ id: string; title: string }> } }>(`${courseBase}/${form.courseId}`),
     enabled: Boolean(form.courseId),
   });
   const practiceSets = useQuery({
-    queryKey: ['learning', 'practice-sets'],
-    queryFn: () => api<{ practiceSets: PracticeSetSummary[] }>('/learning/teacher/practice-sets'),
+    queryKey: ['learning', 'practice-sets', apiPrefix],
+    queryFn: () => api<{ practiceSets: PracticeSetSummary[] }>(`${teacherBase}/practice-sets`),
   });
   const setQuestions = useQuery({
-    queryKey: ['learning', 'practice-set-questions', practiceSetForm.courseId, practiceSetForm.difficulty],
-    queryFn: () => api<{ questions: Question[] }>(`/learning/teacher/questions?courseId=${encodeURIComponent(practiceSetForm.courseId)}&difficulty=${encodeURIComponent(practiceSetForm.difficulty)}`),
+    queryKey: ['learning', 'practice-set-questions', apiPrefix, practiceSetForm.courseId, practiceSetForm.difficulty],
+    queryFn: () => api<{ questions: Question[] }>(`${teacherBase}/questions?courseId=${encodeURIComponent(practiceSetForm.courseId)}&difficulty=${encodeURIComponent(practiceSetForm.difficulty)}`),
     enabled: Boolean(practiceSetForm.courseId),
   });
   const setQuestionOptions = (setQuestions.data?.questions ?? []).filter((question) => question.topic === practiceSetForm.topic);
   const previewSet = useQuery({
-    queryKey: ['learning', 'practice-set-preview', previewSetId],
-    queryFn: () => api<{ practiceSet: PracticeSetDetail }>(`/learning/teacher/practice-sets/${previewSetId}`),
+    queryKey: ['learning', 'practice-set-preview', apiPrefix, previewSetId],
+    queryFn: () => api<{ practiceSet: PracticeSetDetail }>(`${teacherBase}/practice-sets/${previewSetId}`),
     enabled: Boolean(previewSetId),
   });
   const save = useMutation({
@@ -194,88 +196,89 @@ export function PracticeQuestionBankPage() {
         difficulty: form.difficulty, marks: Number(form.marks), explanation: form.explanation || null,
       };
       return editingId
-        ? api(`/learning/teacher/questions/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) })
-        : api('/learning/teacher/questions', { method: 'POST', body: JSON.stringify(payload) });
+        ? api(`${teacherBase}/questions/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) })
+        : api(`${teacherBase}/questions`, { method: 'POST', body: JSON.stringify(payload) });
     },
     onSuccess: async () => {
-      setForm(initialQuestion);
+      setForm({ ...initialQuestion, courseId: embeddedCourseId ?? '' });
       setEditingId('');
       setShowQuestionForm(false);
       setMessage(editingId ? 'Question updated.' : 'Question added.');
       setError('');
-      await client.invalidateQueries({ queryKey: ['learning', 'questions'] });
+      await client.invalidateQueries({ queryKey: ['learning', 'questions', apiPrefix] });
     },
     onError: (reason) => setError(formatError(reason)),
   });
   const remove = useMutation({
-    mutationFn: (id: string) => api(`/learning/teacher/questions/${id}`, { method: 'DELETE' }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ['learning', 'questions'] }),
+    mutationFn: (id: string) => api(`${teacherBase}/questions/${id}`, { method: 'DELETE' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['learning', 'questions', apiPrefix] }),
     onError: (reason) => setError(formatError(reason)),
   });
   const importCsv = useMutation({
-    mutationFn: () => api<{ imported: number; errors: number; results: Array<{ row: number; status: string; message?: string }> }>('/learning/teacher/questions/import', { method: 'POST', body: JSON.stringify({ csv }) }),
+    mutationFn: () => api<{ imported: number; errors: number; results: Array<{ row: number; status: string; message?: string }> }>(`${teacherBase}/questions/import`, { method: 'POST', body: JSON.stringify({ csv }) }),
     onSuccess: async (result) => {
       setMessage(`${result.imported} row(s) imported; ${result.errors} row(s) need attention.`);
       setError(result.results.filter((row) => row.status === 'error').map((row) => `Row ${row.row}: ${row.message}`).join('\n'));
-      await client.invalidateQueries({ queryKey: ['learning', 'questions'] });
+      await client.invalidateQueries({ queryKey: ['learning', 'questions', apiPrefix] });
     },
     onError: (reason) => setError(formatError(reason)),
   });
   const createSet = useMutation({
-    mutationFn: () => api<{ practiceSet: PracticeSetSummary }>('/learning/teacher/practice-sets', {
+    mutationFn: () => api<{ practiceSet: PracticeSetSummary }>(`${teacherBase}/practice-sets`, {
       method: 'POST',
       body: JSON.stringify({ ...practiceSetForm, published: false }),
     }),
     onSuccess: async () => {
-      setPracticeSetForm({ courseId: '', title: '', topic: '', difficulty: 'BEGINNER', questionIds: [] });
+      setPracticeSetForm({ courseId: embeddedCourseId ?? '', title: '', topic: '', difficulty: 'BEGINNER', questionIds: [] });
       setMessage('Practice set saved as a draft.');
       setError('');
-      await client.invalidateQueries({ queryKey: ['learning', 'practice-sets'] });
+      await client.invalidateQueries({ queryKey: ['learning', 'practice-sets', apiPrefix] });
     },
     onError: (reason) => setError(formatError(reason)),
   });
   const setPublication = useMutation({
-    mutationFn: ({ id, published }: { id: string; published: boolean }) => api(`/learning/teacher/practice-sets/${id}`, {
+    mutationFn: ({ id, published }: { id: string; published: boolean }) => api(`${teacherBase}/practice-sets/${id}`, {
       method: 'PATCH', body: JSON.stringify({ published }),
     }),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['learning', 'practice-sets'] }); },
+    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['learning', 'practice-sets', apiPrefix] }); },
     onError: (reason) => setError(formatError(reason)),
   });
   const removeSet = useMutation({
-    mutationFn: (id: string) => api(`/learning/teacher/practice-sets/${id}`, { method: 'DELETE' }),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['learning', 'practice-sets'] }); },
+    mutationFn: (id: string) => api(`${teacherBase}/practice-sets/${id}`, { method: 'DELETE' }),
+    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['learning', 'practice-sets', apiPrefix] }); },
     onError: (reason) => setError(formatError(reason)),
   });
   const startEdit = (question: Question) => {
     setEditingId(question.id);
     setShowQuestionForm(true);
     setForm({
-      courseId: question.courseId, topicId: question.topicId ?? '', type: question.type, prompt: question.prompt,
+      courseId: embeddedCourseId ?? question.courseId, topicId: question.topicId ?? '', type: question.type, prompt: question.prompt,
       options: JSON.stringify(question.options), correctAnswer: JSON.stringify(question.correctAnswer),
       topic: question.topic, difficulty: question.difficulty, marks: String(question.marks), explanation: question.explanation ?? '',
     });
   };
   const update = (key: keyof typeof initialQuestion, value: string) => setForm((current) => ({ ...current, [key]: value }));
 
-  return <div className="portal-layout"><PortalSidebar role={role} /><section className="portal-content">
-    <PageHeader title="Practice Q/A" backTo={dashboardPath(role)} breadcrumbs={['Learning', 'Question bank']} />
-    <p className="muted">Build and maintain a tenant-scoped practice question bank.</p>
+  const visiblePracticeSets = (practiceSets.data?.practiceSets ?? []).filter((set) => !embeddedCourseId || set.course.id === embeddedCourseId);
+  return <div className={embeddedCourseId ? 'course-embedded-content' : 'portal-layout'}>{!embeddedCourseId && <PortalSidebar role={role} />}<section className="portal-content">
+    {!embeddedCourseId && <PageHeader title="Practice Q/A" backTo={dashboardPath(role)} breadcrumbs={['Learning', 'Question bank']} />}
+    {!embeddedCourseId && <p className="muted">Build and maintain a tenant-scoped practice question bank.</p>}
     {error && <p className="notice notice-error" role="alert">{error}</p>}{message && <p className="notice">{message}</p>}
     <div className="practice-toolbar">
       <Field label="Search questions"><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} /></Field>
-      <Field label="Course"><select className="input" value={filterCourseId} onChange={(event) => { setFilterCourseId(event.target.value); setFilterTopicId(''); }}><option value="">All courses</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code}</option>)}</select></Field>
+      {!embeddedCourseId && <Field label="Course"><select className="input" value={filterCourseId} onChange={(event) => { setFilterCourseId(event.target.value); setFilterTopicId(''); }}><option value="">All courses</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code}</option>)}</select></Field>}
       <Field label="Topic"><select className="input" value={filterTopicId} onChange={(event) => setFilterTopicId(event.target.value)}><option value="">All topics</option>{filterCourseDetail.data?.course.topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></Field>
       <Field label="Difficulty"><select className="input" value={filterDifficulty} onChange={(event) => setFilterDifficulty(event.target.value)}><option value="">All</option>{['BEGINNER', 'INTERMEDIATE', 'ADVANCED'].map((value) => <option key={value}>{value}</option>)}</select></Field>
       <Field label="Type"><select className="input" value={filterType} onChange={(event) => setFilterType(event.target.value)}><option value="">All</option>{questionTypes.map((value) => <option key={value}>{value}</option>)}</select></Field>
       <div className="practice-toolbar-actions">
-        <Button type="button" onClick={() => { setEditingId(''); setForm(initialQuestion); setShowQuestionForm((current) => !current); }}>{showQuestionForm ? 'Close form' : 'Add Practice Q/A'}</Button>
+        <Button type="button" onClick={() => { setEditingId(''); setForm({ ...initialQuestion, courseId: embeddedCourseId ?? '' }); setShowQuestionForm((current) => !current); }}>{showQuestionForm ? 'Close form' : 'Add Practice Q/A'}</Button>
         <Button type="button" variant="secondary" onClick={() => setShowCsvImport((current) => !current)}>{showCsvImport ? 'Close import' : 'Import CSV'}</Button>
       </div>
     </div>
     {showQuestionForm && <div className="card practice-question-form">
       <h2>{editingId ? 'Edit question' : 'Add Practice Q/A'}</h2>
       <div className="form-grid">
-        <Field label="Course"><select className="input" value={form.courseId} onChange={(event) => setForm((current) => ({ ...current, courseId: event.target.value, topicId: '' }))}><option value="">Select a course</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></Field>
+        {!embeddedCourseId && <Field label="Course"><select className="input" value={form.courseId} onChange={(event) => setForm((current) => ({ ...current, courseId: event.target.value, topicId: '' }))}><option value="">Select a course</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></Field>}
         <Field label="Course topic"><select className="input" value={form.topicId} onChange={(event) => update('topicId', event.target.value)}><option value="">General / no topic</option>{formCourseDetail.data?.course.topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></Field>
         <Field label="Question type"><select className="input" value={form.type} onChange={(event) => update('type', event.target.value)}>{questionTypes.map((type) => <option key={type}>{type}</option>)}</select></Field>
         <Field label="Topic"><input className="input" value={form.topic} onChange={(event) => update('topic', event.target.value)} /></Field>
@@ -287,7 +290,7 @@ export function PracticeQuestionBankPage() {
       <Field label="Accepted answer (JSON; arrays support multiple accepted answers/blanks)"><textarea className="input" value={form.correctAnswer} onChange={(event) => update('correctAnswer', event.target.value)} /></Field>
       <Field label="Explanation"><textarea className="input" value={form.explanation} onChange={(event) => update('explanation', event.target.value)} /></Field>
       <div className="card"><strong>Preview</strong><p>{form.prompt || 'Your question preview appears here.'}</p><pre>{form.options}</pre></div>
-      <div className="button-row"><Button type="button" onClick={() => save.mutate()} disabled={save.isPending || !form.courseId || !form.prompt}>{save.isPending ? 'Saving…' : editingId ? 'Save question' : 'Add question'}</Button>{editingId && <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setForm(initialQuestion); }}>Cancel edit</Button>}</div>
+      <div className="button-row"><Button type="button" onClick={() => save.mutate()} disabled={save.isPending || !form.courseId || !form.prompt}>{save.isPending ? 'Saving…' : editingId ? 'Save question' : 'Add question'}</Button>{editingId && <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setForm({ ...initialQuestion, courseId: embeddedCourseId ?? '' }); }}>Cancel edit</Button>}</div>
     </div>
     }
     {showCsvImport && <div className="card practice-csv-import">
@@ -307,7 +310,7 @@ export function PracticeQuestionBankPage() {
       <div className="card practice-set-builder">
         <h3>Create a practice set</h3>
         <div className="form-grid">
-          <Field label="Course"><select className="input" value={practiceSetForm.courseId} onChange={(event) => setPracticeSetForm((current) => ({ ...current, courseId: event.target.value, topic: '', questionIds: [] }))}><option value="">Select a course</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></Field>
+          {!embeddedCourseId && <Field label="Course"><select className="input" value={practiceSetForm.courseId} onChange={(event) => setPracticeSetForm((current) => ({ ...current, courseId: event.target.value, topic: '', questionIds: [] }))}><option value="">Select a course</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></Field>}
           <Field label="Title"><input className="input" value={practiceSetForm.title} onChange={(event) => setPracticeSetForm((current) => ({ ...current, title: event.target.value }))} /></Field>
           <Field label="Difficulty"><select className="input" value={practiceSetForm.difficulty} onChange={(event) => setPracticeSetForm((current) => ({ ...current, difficulty: event.target.value, topic: '', questionIds: [] }))}>{['BEGINNER', 'INTERMEDIATE', 'ADVANCED'].map((value) => <option key={value}>{value}</option>)}</select></Field>
           <Field label="Topic"><select className="input" value={practiceSetForm.topic} onChange={(event) => setPracticeSetForm((current) => ({ ...current, topic: event.target.value, questionIds: [] }))}><option value="">Select a topic</option>{[...new Set((setQuestions.data?.questions ?? []).map((question) => question.topic))].map((topic) => <option key={topic}>{topic}</option>)}</select></Field>
@@ -316,23 +319,25 @@ export function PracticeQuestionBankPage() {
         <Button type="button" disabled={createSet.isPending || !practiceSetForm.courseId || practiceSetForm.title.trim().length < 2 || !practiceSetForm.topic || !practiceSetForm.questionIds.length} onClick={() => createSet.mutate()}>{createSet.isPending ? 'Saving…' : 'Save as draft'}</Button>
       </div>
       {practiceSets.isError && <p className="notice notice-error" role="alert">{formatError(practiceSets.error)}</p>}
-      <div className="practice-set-list">{practiceSets.data?.practiceSets.map((set) => <article className="card practice-set-card" key={set.id}>
+      <div className="practice-set-list">{visiblePracticeSets.map((set) => <article className="card practice-set-card" key={set.id}>
         <div><p className="eyebrow">{set.course.code} · {set.topic} · {set.difficulty}</p><h3>{set.title}</h3><p className="muted">{set.questionCount} questions · {set.published ? 'Published' : 'Draft'}</p></div>
         <div className="practice-set-actions"><Button type="button" variant="secondary" onClick={() => { setPreviewSetId(set.id); setPreviewChecked(false); setPreviewAnswers({}); }}>View</Button><Button type="button" variant="secondary" disabled={setPublication.isPending} onClick={() => setPublication.mutate({ id: set.id, published: !set.published })}>{set.published ? 'Unpublish' : 'Publish'}</Button><Button type="button" variant="secondary" onClick={() => { if (window.confirm(`Delete practice set "${set.title}"?`)) removeSet.mutate(set.id); }}>Delete</Button></div>
       </article>)}</div>
     </section>
-    <Link to={`${base}/assessments`}>Manage assessments</Link>
+    {!embeddedCourseId && <Link to={`${base}/assessments`}>Manage assessments</Link>}
     {previewQuestion && <div className="viewer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewQuestion(null); }}><section className="card practice-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="question-preview-title"><PageHeader title="Practice Q/A preview" backTo={`${base}`} breadcrumbs={['Practice Q/A', 'Preview']} onBack={() => setPreviewQuestion(null)} /><p className="eyebrow">{previewQuestion.course.code} · {previewQuestion.topic} · {previewQuestion.difficulty}</p><h2 id="question-preview-title">{previewQuestion.prompt}</h2><pre>{JSON.stringify(previewQuestion.options, null, 2)}</pre><p><strong>Correct answer:</strong> {JSON.stringify(previewQuestion.correctAnswer)}</p><p><strong>Explanation:</strong> {previewQuestion.explanation || 'No explanation provided.'}</p><Button type="button" variant="secondary" onClick={() => setPreviewQuestion(null)}>Close</Button></section></div>}
     {previewSetId && <div className="viewer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewSetId(''); }}><section className="card practice-preview-dialog practice-set-preview" role="dialog" aria-modal="true" aria-labelledby="practice-set-preview-title"><PageHeader title={previewSet.data?.practiceSet.title ?? 'Practice set preview'} backTo={`${base}`} breadcrumbs={['Practice Sets', 'Preview']} onBack={() => setPreviewSetId('')} /><p className="muted">Preview how this set appears to students. No student attempt is created.</p>{previewSet.isPending && <p className="loading">Loading practice set…</p>}{previewSet.isError && <p className="notice notice-error" role="alert">{formatError(previewSet.error)}</p>}{previewSet.data?.practiceSet.questions.map((question, index) => <article className="practice-preview-question" key={question.id}><p className="eyebrow">Question {index + 1} · {question.type}</p><h3>{question.prompt}</h3><PracticeAnswerInput question={question} value={previewAnswers[question.id]} onChange={(value) => setPreviewAnswers((current) => ({ ...current, [question.id]: value }))} />{previewChecked && <div className={practiceAnswerMatches(question, previewAnswers[question.id]) ? 'notice practice-feedback-correct' : 'notice practice-feedback-incorrect'}><strong>{practiceAnswerMatches(question, previewAnswers[question.id]) ? 'Correct' : 'Review this answer'}</strong><p>Correct answer: {JSON.stringify(question.correctAnswer)}</p><p>{question.explanation || 'No explanation provided.'}</p></div>}</article>)}{previewSet.data?.practiceSet.questions.length ? <Button type="button" disabled={previewChecked && previewSet.data.practiceSet.questions.every((question) => hasAnswer(previewAnswers[question.id]))} onClick={() => setPreviewChecked(true)}>Check answers</Button> : null}<Button type="button" variant="secondary" onClick={() => setPreviewSetId('')}>Close preview</Button></section></div>}
   </section></div>;
 }
 
-export function TeacherAssessmentsPage() {
+export function TeacherAssessmentsPage({ embeddedCourseId, apiPrefix = '' }: { embeddedCourseId?: string; apiPrefix?: string } = {}) {
   const { user } = useAuth();
   const role = user?.role ?? 'TUTOR';
-  const courses = useTeacherCourses();
+  const teacherBase = `${apiPrefix}/learning/teacher`;
+  const courseBase = `${apiPrefix}/courses`;
+  const courses = useTeacherCourses(courseBase);
   const client = useQueryClient();
-  const [courseId, setCourseId] = useState('');
+  const [courseId, setCourseId] = useState(embeddedCourseId ?? '');
   const [title, setTitle] = useState('');
   const [instructions, setInstructions] = useState('');
   const [totalMarks, setTotalMarks] = useState('10');
@@ -354,20 +359,20 @@ export function TeacherAssessmentsPage() {
   const [regradeQuestionId, setRegradeQuestionId] = useState('');
   const [regradeAnswer, setRegradeAnswer] = useState('');
   const [error, setError] = useState('');
-  const assessments = useQuery({ queryKey: ['learning', 'assessments'], queryFn: () => api<{ assessments: Assessment[] }>('/learning/teacher/assessments') });
+  const assessments = useQuery({ queryKey: ['learning', 'assessments', apiPrefix], queryFn: () => api<{ assessments: Assessment[] }>(`${teacherBase}/assessments`) });
   const bankQuestions = useQuery({
-    queryKey: ['learning', 'assessment-bank', courseId],
-    queryFn: () => api<{ questions: Question[] }>(`/learning/teacher/questions?courseId=${encodeURIComponent(courseId)}`),
+    queryKey: ['learning', 'assessment-bank', apiPrefix, courseId],
+    queryFn: () => api<{ questions: Question[] }>(`${teacherBase}/questions?courseId=${encodeURIComponent(courseId)}`),
     enabled: Boolean(courseId),
   });
   const results = useQuery({
-    queryKey: ['learning', 'assessment-results', selectedId],
-    queryFn: () => api<{ assessment: Assessment; summary: Record<string, number>; attempts: Array<{ id: string; student: { name: string; studentProfile: { studentId: string } | null }; score: number | null; passed: boolean | null; flaggedEvents: unknown[] }>; questionAnalysis: Array<{ questionId: string; prompt: string; averagePercent: number }> }>(`/learning/teacher/assessments/${selectedId}/results`),
+    queryKey: ['learning', 'assessment-results', apiPrefix, selectedId],
+    queryFn: () => api<{ assessment: Assessment; summary: Record<string, number>; attempts: Array<{ id: string; student: { name: string; studentProfile: { studentId: string } | null }; score: number | null; passed: boolean | null; flaggedEvents: unknown[] }>; questionAnalysis: Array<{ questionId: string; prompt: string; averagePercent: number }> }>(`${teacherBase}/assessments/${selectedId}/results`),
     enabled: Boolean(selectedId),
   });
   const preview = useQuery({
-    queryKey: ['learning', 'assessment-preview', previewAssessmentId],
-    queryFn: () => api<{ assessment: AssessmentDetail }>(`/learning/teacher/assessments/${previewAssessmentId}`),
+    queryKey: ['learning', 'assessment-preview', apiPrefix, previewAssessmentId],
+    queryFn: () => api<{ assessment: AssessmentDetail }>(`${teacherBase}/assessments/${previewAssessmentId}`),
     enabled: Boolean(previewAssessmentId),
   });
   const create = useMutation({
@@ -379,7 +384,7 @@ export function TeacherAssessmentsPage() {
         maxAttempts: Number(maxAttempts), shuffleQuestions, shuffleOptions, resultReleaseMode, answerReviewAllowed,
       };
       if (!editingAssessmentId) {
-        return api('/learning/teacher/assessments', {
+        return api(`${teacherBase}/assessments`, {
           method: 'POST',
           body: JSON.stringify({
             ...config,
@@ -394,34 +399,34 @@ export function TeacherAssessmentsPage() {
           }),
         });
       }
-      await api(`/learning/teacher/assessments/${editingAssessmentId}`, { method: 'PATCH', body: JSON.stringify({ ...config, courseId: undefined }) });
+      await api(`${teacherBase}/assessments/${editingAssessmentId}`, { method: 'PATCH', body: JSON.stringify({ ...config, courseId: undefined }) });
       const existingIds = new Set(questions.filter((question) => question.id).map((question) => question.id!));
       const desiredOrder: string[] = [];
       for (const question of questions) {
         const { id, ...fields } = question;
         if (id) {
-          await api(`/learning/teacher/assessments/${editingAssessmentId}/questions/${id}`, { method: 'PATCH', body: JSON.stringify(fields) });
+          await api(`${teacherBase}/assessments/${editingAssessmentId}/questions/${id}`, { method: 'PATCH', body: JSON.stringify(fields) });
           desiredOrder.push(id);
         } else {
-          const created = await api<{ question: { id: string } }>(`/learning/teacher/assessments/${editingAssessmentId}/questions`, { method: 'POST', body: JSON.stringify(fields) });
+          const created = await api<{ question: { id: string } }>(`${teacherBase}/assessments/${editingAssessmentId}/questions`, { method: 'POST', body: JSON.stringify(fields) });
           desiredOrder.push(created.question.id);
         }
       }
       for (const id of originalQuestionIds) {
-        if (!existingIds.has(id)) await api(`/learning/teacher/assessments/${editingAssessmentId}/questions/${id}`, { method: 'DELETE' });
+        if (!existingIds.has(id)) await api(`${teacherBase}/assessments/${editingAssessmentId}/questions/${id}`, { method: 'DELETE' });
       }
-      if (desiredOrder.length) await api(`/learning/teacher/assessments/${editingAssessmentId}/questions/reorder`, { method: 'PATCH', body: JSON.stringify({ questionIds: desiredOrder }) });
+      if (desiredOrder.length) await api(`${teacherBase}/assessments/${editingAssessmentId}/questions/reorder`, { method: 'PATCH', body: JSON.stringify({ questionIds: desiredOrder }) });
       return undefined;
     },
     onSuccess: async () => {
       setTitle(''); setEditingAssessmentId(''); setOriginalQuestionIds([]); setError('');
-      await client.invalidateQueries({ queryKey: ['learning', 'assessments'] });
+      await client.invalidateQueries({ queryKey: ['learning', 'assessments', apiPrefix] });
     },
     onError: (reason) => setError(formatError(reason)),
   });
   const editDraft = async (id: string) => {
     try {
-      const { assessment } = await api<{ assessment: AssessmentDetail }>(`/learning/teacher/assessments/${id}`);
+      const { assessment } = await api<{ assessment: AssessmentDetail }>(`${teacherBase}/assessments/${id}`);
       setEditingAssessmentId(id);
       setOriginalQuestionIds(assessment.questions.map(({ id: questionId }) => questionId));
       setCourseId(assessment.course.id); setTitle(assessment.title); setInstructions(assessment.instructions);
@@ -434,16 +439,17 @@ export function TeacherAssessmentsPage() {
     }
   };
   const action = useMutation({
-    mutationFn: ({ id, operation }: { id: string; operation: 'publish' | 'duplicate' | 'release' | 'close' | 'reopen' }) => api(`/learning/teacher/assessments/${id}/${operation === 'release' ? 'results/release' : operation}`, { method: 'POST' }),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['learning', 'assessments'] }); if (selectedId) await client.invalidateQueries({ queryKey: ['learning', 'assessment-results', selectedId] }); },
+    mutationFn: ({ id, operation }: { id: string; operation: 'publish' | 'duplicate' | 'release' | 'close' | 'reopen' }) => api(`${teacherBase}/assessments/${id}/${operation === 'release' ? 'results/release' : operation}`, { method: 'POST' }),
+    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['learning', 'assessments', apiPrefix] }); if (selectedId) await client.invalidateQueries({ queryKey: ['learning', 'assessment-results', apiPrefix, selectedId] }); },
     onError: (reason) => setError(formatError(reason)),
   });
-  return <div className="portal-layout"><PortalSidebar role={role} /><section className="portal-content">
-    <PageHeader title="Assessments" backTo={dashboardPath(role)} breadcrumbs={['Learning', 'Assessments']} />
-    <p className="muted">Create draft assessments, publish an immutable question snapshot, and review student results.</p>
+  const visibleAssessments = (assessments.data?.assessments ?? []).filter((assessment) => !embeddedCourseId || assessment.course.id === embeddedCourseId);
+  return <div className={embeddedCourseId ? 'course-embedded-content' : 'portal-layout'}>{!embeddedCourseId && <PortalSidebar role={role} />}<section className="portal-content">
+    {!embeddedCourseId && <PageHeader title="Assessments" backTo={dashboardPath(role)} breadcrumbs={['Learning', 'Assessments']} />}
+    {!embeddedCourseId && <p className="muted">Create draft assessments, publish an immutable question snapshot, and review student results.</p>}
     {error && <p className="notice notice-error" role="alert">{error}</p>}
     <div className="card"><h2>{editingAssessmentId ? 'Edit draft assessment' : 'Create Your Own Assessment'}</h2><div className="form-grid">
-      <Field label="Course"><select className="input" value={courseId} onChange={(event) => { setCourseId(event.target.value); setSelectedBankQuestions([]); }}><option value="">Select a course</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></Field>
+      {!embeddedCourseId && <Field label="Course"><select className="input" value={courseId} onChange={(event) => { setCourseId(event.target.value); setSelectedBankQuestions([]); }}><option value="">Select a course</option>{courses.data?.courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></Field>}
       <Field label="Title"><input className="input" value={title} onChange={(event) => setTitle(event.target.value)} /></Field>
       <Field label="Total marks"><input className="input" type="number" value={totalMarks} onChange={(event) => setTotalMarks(event.target.value)} /></Field>
       <Field label="Pass mark"><input className="input" type="number" value={passMark} onChange={(event) => setPassMark(event.target.value)} /></Field>
@@ -461,7 +467,7 @@ export function TeacherAssessmentsPage() {
       <Button disabled={!title || !courseId || create.isPending} onClick={() => create.mutate()}>{create.isPending ? 'Saving…' : editingAssessmentId ? 'Save draft changes' : 'Create Your Own Assessment'}</Button>
       {editingAssessmentId && <Button variant="secondary" onClick={() => { setEditingAssessmentId(''); setOriginalQuestionIds([]); }}>Cancel edit</Button>}
     </div>
-    {assessments.data?.assessments.map((assessment) => <article className="card" key={assessment.id}>
+    {visibleAssessments.map((assessment) => <article className="card" key={assessment.id}>
       <p className="eyebrow">{assessment.course.code} · {assessment.status}</p><h2>{assessment.title}</h2><p>{assessment.totalMarks} marks · {assessment.durationMinutes} minutes</p>
       <div className="button-row">{assessment.status === 'DRAFT' && <Button onClick={() => action.mutate({ id: assessment.id, operation: 'publish' })}>Publish</Button>}
         {assessment.status === 'DRAFT' && <Button variant="secondary" onClick={() => void editDraft(assessment.id)}>Edit draft</Button>}
@@ -485,7 +491,7 @@ export function TeacherAssessmentsPage() {
       <h3>Question analysis and regrade</h3>{results.data.questionAnalysis.map((item) => <div key={item.questionId}><p>{item.prompt}: {item.averagePercent.toFixed(1)}% average</p>
         <div className="button-row"><Button variant="secondary" onClick={() => setRegradeQuestionId(item.questionId)}>Regrade this question</Button>
           {regradeQuestionId === item.questionId && <><input className="input" aria-label="New correct answer (JSON)" value={regradeAnswer} onChange={(event) => setRegradeAnswer(event.target.value)} /><Button onClick={() => {
-            void api(`/learning/teacher/assessments/${selectedId}/results/regrade`, { method: 'POST', body: JSON.stringify({ questionId: item.questionId, correctAnswer: parseJsonOrText(regradeAnswer) }) })
+            void api(`${teacherBase}/assessments/${selectedId}/results/regrade`, { method: 'POST', body: JSON.stringify({ questionId: item.questionId, correctAnswer: parseJsonOrText(regradeAnswer) }) })
               .then(() => results.refetch()).catch((reason: unknown) => setError(formatError(reason)));
           }}>Apply audited regrade</Button></>}
         </div></div>)}

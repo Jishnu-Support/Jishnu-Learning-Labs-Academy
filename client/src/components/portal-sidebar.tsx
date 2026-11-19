@@ -11,6 +11,7 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/org-admin', label: 'Overview' },
     { href: '/org-admin/payments', label: 'Payments' },
     { href: '/org-admin/courses', label: 'Courses' },
+    { href: '/org-admin/opportunities', label: 'Job Openings' },
     { href: '/org-admin/tutors/pending', label: 'Pending Tutors' },
     { href: '/org-admin/create-tutor', label: 'Create Tutor' },
     { href: '/org-admin/students', label: 'Student Details' },
@@ -33,6 +34,8 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
   STUDENT: [
     { href: '/student', label: 'Dashboard' },
     { href: '/student/courses', label: 'My Course' },
+    { href: '/student/completed-courses', label: 'My Completed Courses' },
+    { href: '/student/opportunities', label: 'Opportunities' },
     { href: '/student/question-paper', label: 'Question Paper Generator' },
     { href: '/student/library', label: 'Library' },
     { href: '/student/attendance', label: 'My Attendance' },
@@ -45,6 +48,8 @@ const linksByRole: Partial<Record<Role, PortalLink[]>> = {
     { href: '/super-admin/dashboard', label: 'Overview' },
     { href: '/super-admin/payments', label: 'Payments' },
     { href: '/super-admin/organizations', label: 'Organizations' },
+    { href: '/super-admin/opportunities', label: 'Job Openings' },
+    { href: '/super-admin/audit', label: 'Audit' },
   ],
 };
 

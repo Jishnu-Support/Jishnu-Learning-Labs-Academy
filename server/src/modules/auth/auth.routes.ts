@@ -38,8 +38,8 @@ const registrationStatusLimiter = rateLimit({
 });
 const receiptUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
-}).single('receipt');
+  limits: { fileSize: 5 * 1024 * 1024, files: 2 },
+}).fields([{ name: 'receipt', maxCount: 1 }, { name: 'resume', maxCount: 1 }]);
 
 const registrationReceiptUpload: RequestHandler = (req, res, next) => {
   receiptUpload(req, res, (error?: unknown) => {

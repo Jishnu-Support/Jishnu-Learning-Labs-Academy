@@ -1,4 +1,5 @@
 import type { Request, RequestHandler, Response } from 'express';
+import type { Express } from 'express';
 import { env } from '../../config/env.js';
 import { prisma } from '../../config/prisma.js';
 import { HttpError } from '../../utils/http-error.js';
@@ -19,6 +20,11 @@ function requestMeta(req: Request) {
   return { ip: req.ip, userAgent: req.get('user-agent') };
 }
 
+function registrationFile(req: Request, field: 'receipt' | 'resume'): Express.Multer.File | undefined {
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+  return files?.[field]?.[0];
+}
+
 function loginResponse(res: Response, credentials: Awaited<ReturnType<typeof authService.loginStudent>>): void {
   setAuthCookies(res, credentials.accessToken, credentials.refreshToken);
   res.json({
@@ -36,7 +42,7 @@ function loginResponse(res: Response, credentials: Awaited<ReturnType<typeof aut
 }
 
 export const registerStudent: RequestHandler = async (req, res) => {
-  const result = await authService.registerStudent({ ...req.body, receipt: req.file });
+  const result = await authService.registerStudent({ ...req.body, receipt: registrationFile(req, 'receipt') });
   res.status(201).json({
     data: {
       user: result.user,
@@ -62,7 +68,11 @@ export const deprecatedInstructorRegistration: RequestHandler = () => {
 };
 
 export const registerTutor: RequestHandler = async (req, res) => {
-  const user = await authService.registerTutor({ ...req.body, receipt: req.file });
+  const user = await authService.registerTutor({
+    ...req.body,
+    receipt: registrationFile(req, 'receipt'),
+    resume: registrationFile(req, 'resume'),
+  });
   res.status(201).json({ data: { user, message: 'Tutor registration submitted. Payment must be verified before an Org Admin reviews the registration.' } });
 };
 

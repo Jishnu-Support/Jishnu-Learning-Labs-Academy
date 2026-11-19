@@ -7,9 +7,15 @@ import { PageHeader } from '../components/page-header';
 import { PortalSidebar } from '../components/portal-sidebar';
 import { ProtectedPdfViewer } from '../components/protected-pdf-viewer';
 import { StudentMediaEmbed, type StudentPlayableMedia } from '../components/student-media-embed';
+import { LiveClassRoom } from '../components/live-class-room';
 import { DailyWisdomCards } from '../components/daily-wisdom-cards';
 import { Button } from '../components/ui/button';
 import { ApiError, api, apiBlob, apiUrl } from '../lib/api';
+import { downloadCertificatePdf } from './certificate-pdf';
+import {
+  CertificateArtwork, CertificatePreviewDialog,
+} from './certificate-artwork-preview';
+import { certificateArtworkData, type CertificateArtworkData } from './certificate-artwork';
 
 type Course = { id: string; code: string; title: string };
 type ExpertSession = {
@@ -39,9 +45,17 @@ type AttendanceSummary = {
   sessions: Array<ExpertSession & { status: string; joinedAt: string | null }>;
 };
 type Certificate = {
-  id: string; certificateNo: string; verificationCode: string; issuedAt: string;
+  id: string; certificateNo: string; verificationCode: string; issuedAt: string; isSample: boolean;
   student: { name: string; studentProfile: { studentId: string } | null };
   course: Course; organization: { name: string };
+};
+const sampleCertificateArtwork: CertificateArtworkData = {
+  studentName: 'Sample Student',
+  courseName: 'Web Development Fundamentals',
+  completionDate: 'June 15, 2026',
+  certificateId: 'SAMPLE ONLY',
+  organizationName: 'Jishnu Learning Labs',
+  sample: true,
 };
 type Knowledge = {
   attempts: Array<{ id: string; score: number | null; percentage: number | null; passed: boolean | null; submittedAt: string | null; assessment: { title: string; course: Course } }>;
@@ -77,40 +91,42 @@ function dateTimeInput(value: string) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
-export function ExpertSessionsPage({ embeddedCourseId }: { embeddedCourseId?: string } = {}) {
+export function ExpertSessionsPage({ embeddedCourseId, apiPrefix = '' }: { embeddedCourseId?: string; apiPrefix?: string } = {}) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const client = useQueryClient();
-  const manager = user?.role === 'ORG_ADMIN' || user?.role === 'TUTOR';
-  const courseFilter = manager ? '' : embeddedCourseId ?? searchParams.get('courseId') ?? '';
+  const manager = user?.role === 'ORG_ADMIN' || user?.role === 'TUTOR' || user?.role === 'SUPER_ADMIN';
+  const managerBase = `${apiPrefix}/portal/manage`;
+  const courseBase = `${apiPrefix}/courses`;
+  const courseFilter = embeddedCourseId ?? searchParams.get('courseId') ?? '';
   const [tab, setTab] = useState<(typeof sessionTabs)[number]>('UPCOMING');
   const [editingId, setEditingId] = useState('');
   const [startError, setStartError] = useState('');
-  const [form, setForm] = useState({ courseId: '', title: '', description: '', startsAt: '', durationMinutes: '60', freePreview: false });
+  const [form, setForm] = useState({ courseId: embeddedCourseId ?? '', title: '', description: '', startsAt: '', durationMinutes: '60', freePreview: false });
   const courses = useQuery({
-    queryKey: ['portal-session-courses', user?.role],
+    queryKey: ['portal-session-courses', user?.role, apiPrefix],
     queryFn: async () => {
       if (user?.role === 'STUDENT') {
         const result = await api<{ enrollments: Array<{ course: Course }> }>('/student/courses/enrolled');
         return result.enrollments.map(({ course }) => course);
       }
-      const result = await api<{ courses: Course[] }>('/courses');
+      const result = await api<{ courses: Course[] }>(courseBase);
       return result.courses;
     },
   });
   const sessions = useQuery({
-    queryKey: ['expert-sessions', tab, user?.role, courseFilter],
-    queryFn: () => api<{ sessions: ExpertSession[] }>(`${manager ? '/portal/manage' : '/portal/student'}/sessions?${new URLSearchParams({ tab, ...(courseFilter ? { courseId: courseFilter } : {}) })}`),
+    queryKey: ['expert-sessions', tab, user?.role, apiPrefix, courseFilter],
+    queryFn: () => api<{ sessions: ExpertSession[] }>(`${manager ? managerBase : '/portal/student'}/sessions?${new URLSearchParams({ tab, ...(courseFilter ? { courseId: courseFilter } : {}) })}`),
   });
   const schedule = useMutation({
-    mutationFn: () => api(`/portal/manage/sessions${editingId ? `/${editingId}` : ''}`, {
+    mutationFn: () => api(`${managerBase}/sessions${editingId ? `/${editingId}` : ''}`, {
       method: editingId ? 'PATCH' : 'POST',
-      body: JSON.stringify({ ...form, startsAt: new Date(form.startsAt).toISOString(), durationMinutes: Number(form.durationMinutes) }),
+      body: JSON.stringify({ ...form, courseId: embeddedCourseId ?? form.courseId, startsAt: new Date(form.startsAt).toISOString(), durationMinutes: Number(form.durationMinutes) }),
     }),
     onSuccess: async () => {
       setEditingId('');
-      setForm({ courseId: '', title: '', description: '', startsAt: '', durationMinutes: '60', freePreview: false });
+      setForm({ courseId: embeddedCourseId ?? '', title: '', description: '', startsAt: '', durationMinutes: '60', freePreview: false });
       await client.invalidateQueries({ queryKey: ['expert-sessions'] });
     },
   });
@@ -127,14 +143,14 @@ export function ExpertSessionsPage({ embeddedCourseId }: { embeddedCourseId?: st
   };
   const action = useMutation({
     mutationFn: ({ id, kind }: { id: string; kind: 'start' | 'cancel' }) =>
-      api(`/portal/manage/sessions/${id}/${kind}`, { method: 'POST' }),
+      api(`${managerBase}/sessions/${id}/${kind}`, { method: 'POST' }),
     onSuccess: async (_result, variables) => {
       setTab(variables.kind === 'start' ? 'LIVE' : 'PAST');
       await client.invalidateQueries({ queryKey: ['expert-sessions'] });
     },
   });
   const startTutorSession = useMutation({
-    mutationFn: (id: string) => api(`/portal/manage/sessions/${id}/start`, { method: 'POST' }),
+    mutationFn: (id: string) =>     api(`${managerBase}/sessions/${id}/start`, { method: 'POST' }),
     onSuccess: async (_result, id) => {
       await client.invalidateQueries({ queryKey: ['expert-sessions'] });
       navigate(`/tutor/sessions/${encodeURIComponent(id)}/host`, { state: { autoOpenRoom: true } });
@@ -159,17 +175,17 @@ export function ExpertSessionsPage({ embeddedCourseId }: { embeddedCourseId?: st
     }
   };
   return <PortalPage embedded={Boolean(embeddedCourseId)}>
-    {!embeddedCourseId && <PageHeader title="Experts Session" backTo={manager ? (user?.role === 'TUTOR' ? '/tutor' : '/org-admin') : '/student/courses'} breadcrumbs={['My Course', 'Experts Session']} />}
+    {!embeddedCourseId && <PageHeader title="Experts Session" backTo={manager ? (user?.role === 'SUPER_ADMIN' ? `${apiPrefix}/courses` : user?.role === 'TUTOR' ? '/tutor' : '/org-admin') : '/student/courses'} breadcrumbs={['My Course', 'Experts Session']} />}
     {manager && <form className="card form-grid" onSubmit={(event) => { event.preventDefault(); schedule.mutate(); }}>
       <h2 className="form-grid-span">{editingId ? 'Edit Expert Session' : 'Schedule an Expert Session'}</h2>
-      <label className="field"><span>Course</span><select className="input" required value={form.courseId} onChange={(event) => setForm({ ...form, courseId: event.target.value })}><option value="">Select a course</option>{courses.data?.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></label>
+      {!embeddedCourseId && <label className="field"><span>Course</span><select className="input" required value={form.courseId} onChange={(event) => setForm({ ...form, courseId: event.target.value })}><option value="">Select a course</option>{courses.data?.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select></label>}
       <label className="field"><span>Title</span><input className="input" required minLength={3} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label>
       <label className="field"><span>Start time</span><input className="input" type="datetime-local" required value={form.startsAt} onChange={(event) => setForm({ ...form, startsAt: event.target.value })} /></label>
       <label className="field"><span>Duration (minutes)</span><input className="input" type="number" min={5} max={240} required value={form.durationMinutes} onChange={(event) => setForm({ ...form, durationMinutes: event.target.value })} /></label>
       <label className="field form-grid-span"><span>Description</span><textarea className="input" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
       <label className="field checkbox-field form-grid-span"><input type="checkbox" checked={form.freePreview} onChange={(event) => setForm({ ...form, freePreview: event.target.checked })} /><span>Free preview (accessible without a subscription)</span></label>
       <div className="form-grid-span button-row"><Button disabled={schedule.isPending || !courses.data?.length}>{schedule.isPending ? 'Saving…' : editingId ? 'Save changes' : 'Schedule session'}</Button>
-        {editingId && <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setForm({ courseId: '', title: '', description: '', startsAt: '', durationMinutes: '60', freePreview: false }); }}>Cancel edit</Button>}</div>
+        {editingId && <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setForm({ courseId: embeddedCourseId ?? '', title: '', description: '', startsAt: '', durationMinutes: '60', freePreview: false }); }}>Cancel edit</Button>}</div>
       {schedule.isError && <p className="notice notice-error form-grid-span" role="alert">{errorText(schedule.error)}</p>}
       {schedule.isSuccess && <p className="notice notice-success form-grid-span">Session scheduled and enrolled students notified.</p>}
     </form>}
@@ -183,10 +199,10 @@ export function ExpertSessionsPage({ embeddedCourseId }: { embeddedCourseId?: st
       <div className="portal-page-heading"><div><p className="eyebrow">{session.course?.code ?? 'Class'} · {session.status}{session.freePreview ? ' · FREE PREVIEW' : ''}</p><h2>{session.title}</h2><p>{session.description}</p><p className="muted">{formatWhen(session.startsAt)} · {session.durationMinutes} minutes · Host: {session.host.name}</p></div>
         {manager ? <div className="button-row">
           {session.status === 'SCHEDULED' && <Button variant="secondary" onClick={() => editSession(session)}>Edit</Button>}
-          {session.status === 'SCHEDULED' && <Button disabled={action.isPending || startTutorSession.isPending} onClick={() => void startSession(session.id)}>{user?.role === 'TUTOR' ? 'Check camera / mic and start' : 'Start'}</Button>}
+          {session.status === 'SCHEDULED' && user?.role !== 'SUPER_ADMIN' && <Button disabled={action.isPending || startTutorSession.isPending} onClick={() => void startSession(session.id)}>{user?.role === 'TUTOR' ? 'Check camera / mic and start' : 'Start'}</Button>}
           {session.status === 'SCHEDULED' && <Button variant="secondary" onClick={() => { if (window.confirm('Cancel this session? Enrolled students will no longer be able to join.')) action.mutate({ id: session.id, kind: 'cancel' }); }}>Cancel</Button>}
-          {session.status === 'LIVE' && <Link className="button" to={`${user?.role === 'TUTOR' ? '/tutor' : '/org-admin'}/sessions/${session.id}/host`}>Host</Link>}
-          {session.status !== 'CANCELLED' && <Link className="button button-secondary" to={`${user?.role === 'TUTOR' ? '/tutor' : '/org-admin'}/sessions/${session.id}/attendees`}>Attendees</Link>}
+          {session.status === 'LIVE' && user?.role !== 'SUPER_ADMIN' && <Link className="button" to={`${user?.role === 'TUTOR' ? '/tutor' : '/org-admin'}/sessions/${session.id}/host`}>Host</Link>}
+          {session.status !== 'CANCELLED' && <Link className="button button-secondary" to={user?.role === 'SUPER_ADMIN' ? `${apiPrefix}/sessions/${session.id}/attendees` : `${user?.role === 'TUTOR' ? '/tutor' : '/org-admin'}/sessions/${session.id}/attendees`}>Attendees</Link>}
         </div> : session.locked
           ? <Link className="button" to="/student/payments">Pay My Fee</Link>
           : <Link className="button" aria-disabled={!session.joinAvailable} onClick={(event) => { if (!session.joinAvailable) event.preventDefault(); }} to={`/student/sessions/${session.id}/prepare${courseFilter ? `?courseId=${encodeURIComponent(courseFilter)}` : ''}`}>{session.joinAvailable ? 'Join class' : 'Check devices / Join'}</Link>}
@@ -199,19 +215,20 @@ export function ExpertSessionsPage({ embeddedCourseId }: { embeddedCourseId?: st
   </PortalPage>;
 }
 
-export function SessionAttendeesPage() {
+export function SessionAttendeesPage({ apiPrefix = '' }: { apiPrefix?: string } = {}) {
   const { sessionId } = useParams();
   const { user } = useAuth();
-  const sessionsPath = user?.role === 'TUTOR' ? '/tutor/sessions' : '/org-admin/sessions';
+  const sessionsPath = user?.role === 'SUPER_ADMIN' ? `${apiPrefix}/courses` : user?.role === 'TUTOR' ? '/tutor/sessions' : '/org-admin/sessions';
+  const managerBase = `${apiPrefix}/portal/manage`;
   const client = useQueryClient();
   const attendees = useQuery({
-    queryKey: ['expert-session-attendees', sessionId],
-    queryFn: () => api<{ attendees: Array<{ student: { id: string; name: string; studentProfile: { studentId: string }; attendanceRecords: Array<{ status: string; joinedAt: string | null }> } }> }>(`/portal/manage/sessions/${sessionId}/attendees`),
+    queryKey: ['expert-session-attendees', apiPrefix, sessionId],
+    queryFn: () => api<{ attendees: Array<{ student: { id: string; name: string; studentProfile: { studentId: string }; attendanceRecords: Array<{ status: string; joinedAt: string | null }> } }> }>(`${managerBase}/sessions/${sessionId}/attendees`),
   });
   const mark = useMutation({
     mutationFn: ({ studentId, status }: { studentId: string; status: string }) =>
-      api(`/portal/manage/sessions/${sessionId}/attendance/${studentId}`, { method: 'PUT', body: JSON.stringify({ status }) }),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['expert-session-attendees', sessionId] }); },
+      api(`${managerBase}/sessions/${sessionId}/attendance/${studentId}`, { method: 'PUT', body: JSON.stringify({ status }) }),
+    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['expert-session-attendees', apiPrefix, sessionId] }); },
   });
   return <PortalPage><PageHeader title="Session attendance" backTo={sessionsPath} breadcrumbs={['Experts Session', 'Attendance']} />
     {attendees.isError && <p className="notice notice-error" role="alert">{errorText(attendees.error)}</p>}
@@ -222,16 +239,17 @@ export function SessionAttendeesPage() {
   </PortalPage>;
 }
 
-export function SessionHostPage() {
+export function SessionHostPage({ apiPrefix = '' }: { apiPrefix?: string } = {}) {
   const { sessionId } = useParams();
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const sessionsPath = user?.role === 'TUTOR' ? '/tutor/sessions' : '/org-admin/sessions';
-  const [roomUrl, setRoomUrl] = useState('');
+  const sessionsPath = user?.role === 'SUPER_ADMIN' ? `${apiPrefix}/courses` : user?.role === 'TUTOR' ? '/tutor/sessions' : '/org-admin/sessions';
+  const managerBase = `${apiPrefix}/portal/manage`;
+  const [roomSessionId, setRoomSessionId] = useState('');
   const host = useMutation({
-    mutationFn: () => api<{ room: { roomUrl: string } }>(`/portal/manage/sessions/${sessionId}/host`, { method: 'POST' }),
-    onSuccess: ({ room }) => setRoomUrl(room.roomUrl),
+    mutationFn: () => api<{ room: { sessionId: string } }>(`${managerBase}/sessions/${sessionId}/host`, { method: 'POST' }),
+    onSuccess: ({ room }) => setRoomSessionId(room.sessionId),
   });
   const openHostRoom = host.mutate;
   const autoOpenAttempted = useRef(false);
@@ -244,15 +262,11 @@ export function SessionHostPage() {
     navigate(location.pathname, { replace: true, state: null });
   }, [autoOpenRoom, location.pathname, navigate, openHostRoom]);
   return <PortalPage><PageHeader title="Host Expert Session" backTo={sessionsPath} breadcrumbs={['Experts Session', 'Host']} />
-    {!roomUrl && <div className="card"><p>Open the live room for this session. Your camera and microphone settings can be managed inside Jitsi.</p>
+    {!roomSessionId && <div className="card"><p>Open the in-platform live room for this session. Camera and microphone access will be requested by your browser.</p>
       <Button disabled={host.isPending} onClick={() => host.mutate()}>{host.isPending ? 'Opening room…' : 'Open host room'}</Button>
       {host.isError && <p role="alert" className="notice notice-error">{errorText(host.error)}</p>}
     </div>}
-    {roomUrl && <div className="card live-room-card"><div className="button-row"><h2>Live Expert Session</h2>
-      <Button variant="secondary" onClick={() => { if (window.confirm('Leave this class?')) navigate(sessionsPath); }}>Leave class</Button></div>
-      <iframe title="Jitsi Meet host room" src={roomUrl} allow="camera; microphone; display-capture; fullscreen" allowFullScreen />
-      <p className="muted">The room is available only while the session is live and within its scheduled time window.</p>
-    </div>}
+    {roomSessionId && <LiveClassRoom sessionId={roomSessionId} onLeave={() => { if (window.confirm('Leave this class?')) navigate(sessionsPath); }} />}
   </PortalPage>;
 }
 
@@ -270,7 +284,7 @@ export function StudentSessionPreparePage() {
   const [deviceError, setDeviceError] = useState('');
   const [cameraId, setCameraId] = useState('');
   const [micId, setMicId] = useState('');
-  const [roomUrl, setRoomUrl] = useState('');
+  const [roomSessionId, setRoomSessionId] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const sessionQuery = useQuery({
     queryKey: ['expert-sessions', 'UPCOMING', 'STUDENT'],
@@ -278,8 +292,8 @@ export function StudentSessionPreparePage() {
   });
   const session = sessionQuery.data?.sessions.find((item) => item.id === sessionId);
   const join = useMutation({
-    mutationFn: () => api<{ room: { roomUrl: string } }>(`/portal/student/sessions/${sessionId}/join`, { method: 'POST' }),
-    onSuccess: ({ room }) => setRoomUrl(room.roomUrl),
+    mutationFn: () => api<{ room: { sessionId: string } }>(`/portal/student/sessions/${sessionId}/join`, { method: 'POST' }),
+    onSuccess: ({ room }) => setRoomSessionId(room.sessionId),
   });
   useEffect(() => {
     if (videoRef.current) videoRef.current.srcObject = stream;
@@ -300,9 +314,9 @@ export function StudentSessionPreparePage() {
     }
   };
   const devicesAvailable = typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
-  return <PortalPage><PageHeader title={roomUrl ? 'Live Expert Session' : 'Check your devices'} backTo={returnTo} breadcrumbs={['My Course', 'Experts Session', 'Prepare']} />
+  return <PortalPage><PageHeader title={roomSessionId ? 'Live Expert Session' : 'Check your devices'} backTo={returnTo} breadcrumbs={['My Course', 'Experts Session', 'Prepare']} />
     {!sessionQuery.isLoading && !session && <div className="card"><p className="notice notice-error">This session is unavailable or you are not enrolled in its course.</p></div>}
-    {session && !roomUrl && <div className="card device-check-card"><p className="eyebrow">{session.course?.code}</p><h2>{session.title}</h2><p>{formatWhen(session.startsAt)}</p>
+    {session && !roomSessionId && <div className="card device-check-card"><p className="eyebrow">{session.course?.code}</p><h2>{session.title}</h2><p>{formatWhen(session.startsAt)}</p>
       <div className="form-grid">
         <label className="field"><span><input type="checkbox" checked={cameraOn} onChange={(event) => setCameraOn(event.target.checked)} /> Camera on</span><select className="input" aria-label="Camera device" value={cameraId} onChange={(event) => setCameraId(event.target.value)}><option value="">Default camera</option>{devices.filter((device) => device.kind === 'videoinput').map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || 'Camera'}</option>)}</select></label>
         <label className="field"><span><input type="checkbox" checked={micOn} onChange={(event) => setMicOn(event.target.checked)} /> Microphone on</span><select className="input" aria-label="Microphone device" value={micId} onChange={(event) => setMicId(event.target.value)}><option value="">Default microphone</option>{devices.filter((device) => device.kind === 'audioinput').map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || 'Microphone'}</option>)}</select></label>
@@ -314,23 +328,21 @@ export function StudentSessionPreparePage() {
       {deviceError && <p role="alert" className="notice notice-error">{deviceError}</p>}
       {join.isError && <p role="alert" className="notice notice-error">{errorText(join.error)}</p>}
       {!session.joinAvailable && <p className="muted">Joining opens 10 minutes before the start and closes when the class ends.</p>}
-      <p className="muted">Leaving this page will disconnect you. The class uses Jitsi Meet and requires HTTPS for camera and microphone access in production.</p>
+      <p className="muted">Leaving this page will disconnect you. Camera and microphone access requires HTTPS in production.</p>
     </div>}
-    {roomUrl && <div className="card live-room-card"><div className="button-row"><h2>{session?.title ?? 'Live class'}</h2><Button variant="secondary" onClick={() => { if (window.confirm('Leave this class?')) navigate(returnTo); }}>Leave class</Button></div>
-      <iframe title="Jitsi Meet live class" src={roomUrl} allow="camera; microphone; display-capture; fullscreen" allowFullScreen />
-      <p className="muted">Attendance is recorded when you join. Use the leave button to exit the room.</p>
-    </div>}
+    {roomSessionId && <LiveClassRoom sessionId={roomSessionId} initialStream={stream ?? undefined} onLeave={() => { if (window.confirm('Leave this class?')) navigate(returnTo); }} />}
     <span className="sr-only">{user?.name}</span>
   </PortalPage>;
 }
 
-export function LibraryPage({ embeddedCourseId }: { embeddedCourseId?: string } = {}) {
+export function LibraryPage({ embeddedCourseId, apiPrefix = '' }: { embeddedCourseId?: string; apiPrefix?: string } = {}) {
   const { user } = useAuth();
   const { itemId } = useParams();
   const [searchParams] = useSearchParams();
   const client = useQueryClient();
-  const manager = user?.role === 'ORG_ADMIN' || user?.role === 'TUTOR';
-  const base = manager ? '/portal/manage/library' : '/portal/student/library';
+  const manager = user?.role === 'ORG_ADMIN' || user?.role === 'TUTOR' || user?.role === 'SUPER_ADMIN';
+  const base = manager ? `${apiPrefix}/portal/manage/library` : '/portal/student/library';
+  const courseBase = `${apiPrefix}/courses`;
   const courseFilter = manager ? '' : embeddedCourseId ?? searchParams.get('courseId') ?? '';
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
@@ -340,7 +352,7 @@ export function LibraryPage({ embeddedCourseId }: { embeddedCourseId?: string } 
   const [file, setFile] = useState<File | null>(null);
   const [form, setForm] = useState({ title: '', description: '', category: '', kind: 'BOOK', courseId: '', contentText: '', externalUrl: '', freePreview: false });
   const items = useQuery({
-    queryKey: ['library', user?.role, search, category, kind, saved, courseFilter],
+    queryKey: ['library', user?.role, apiPrefix, search, category, kind, saved, courseFilter],
     queryFn: () => api<{ items: LibraryItem[] }>(`${base}?${new URLSearchParams({ ...(search ? { search } : {}), ...(category ? { category } : {}), ...(kind ? { kind } : {}), ...(saved && !manager ? { saved: 'true' } : {}), ...(courseFilter ? { courseId: courseFilter } : {}) })}`),
     enabled: !itemId,
   });
@@ -350,20 +362,20 @@ export function LibraryPage({ embeddedCourseId }: { embeddedCourseId?: string } 
     enabled: user?.role === 'STUDENT' && !itemId,
   });
   const detail = useQuery({
-    queryKey: ['library-item', itemId, user?.role],
+    queryKey: ['library-item', itemId, user?.role, apiPrefix],
     queryFn: () => api<{ item: LibraryItem }>(`${base}/${itemId}`),
     enabled: Boolean(itemId),
   });
   const document = useQuery({
-    queryKey: ['library-document', itemId, user?.role],
+    queryKey: ['library-document', itemId, user?.role, apiPrefix],
     queryFn: () => apiBlob(`${base}/${itemId}/content`),
     enabled: Boolean(itemId && detail.data?.item.hasDocument),
   });
   const courses = useQuery({
-    queryKey: ['library-courses', user?.role],
+    queryKey: ['library-courses', user?.role, apiPrefix],
     queryFn: async () => {
       if (user?.role === 'STUDENT') return (await api<{ enrollments: Array<{ course: Course }> }>('/student/courses/enrolled')).enrollments.map(({ course }) => course);
-      return (await api<{ courses: Course[] }>('/courses')).courses;
+      return (await api<{ courses: Course[] }>(courseBase)).courses;
     },
     enabled: manager,
   });
@@ -392,10 +404,10 @@ export function LibraryPage({ embeddedCourseId }: { embeddedCourseId?: string } 
     onSuccess: async () => { await client.invalidateQueries({ queryKey: ['library-item', itemId] }); await client.invalidateQueries({ queryKey: ['library'] }); },
   });
   const publish = useMutation({
-    mutationFn: ({ id, changes }: { id: string; changes: { published?: boolean; freePreview?: boolean } }) => api(`/portal/manage/library/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+    mutationFn: ({ id, changes }: { id: string; changes: { published?: boolean; freePreview?: boolean } }) => api(`${base}/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
     onSuccess: async () => { await client.invalidateQueries({ queryKey: ['library'] }); await client.invalidateQueries({ queryKey: ['library-item'] }); },
   });
-  if (itemId) return <PortalPage><PageHeader title={detail.data?.item.title ?? 'Library reader'} backTo={manager ? '/tutor/library' : `/student/library${courseFilter ? `?courseId=${encodeURIComponent(courseFilter)}` : ''}`} breadcrumbs={['Library', 'Reader']} />
+  if (itemId) return <PortalPage><PageHeader title={detail.data?.item.title ?? 'Library reader'} backTo={manager ? (user?.role === 'SUPER_ADMIN' ? `${apiPrefix}/library` : user?.role === 'TUTOR' ? '/tutor/library' : '/org-admin/library') : `/student/library${courseFilter ? `?courseId=${encodeURIComponent(courseFilter)}` : ''}`} breadcrumbs={['Library', 'Reader']} />
     {!embeddedCourseId && <DailyWisdomCards />}
     {detail.isError && <p role="alert" className="notice notice-error">{errorText(detail.error)}</p>}
     {detail.data && <article className="card library-reader"><div className="button-row"><span className="eyebrow">{detail.data.item.category} · {detail.data.item.kind}</span>{!manager && <Button variant="secondary" onClick={() => save.mutate(!detail.data?.item.saved)}>{detail.data.item.saved ? 'Remove from My List' : 'Save to My List'}</Button>}</div>
@@ -419,7 +431,7 @@ export function LibraryPage({ embeddedCourseId }: { embeddedCourseId?: string } 
     <div className="button-row">
       {!manager && item.locked
         ? <Link className="button" to="/student/payments">Pay My Fee</Link>
-        : <Link className="button button-secondary" to={`${manager ? (user?.role === 'TUTOR' ? '/tutor/library' : '/org-admin/library') : '/student/library'}/${item.id}${embeddedCourseId ? `?courseId=${encodeURIComponent(embeddedCourseId)}` : ''}`}>View</Link>}
+        : <Link className="button button-secondary" to={`${manager ? (user?.role === 'SUPER_ADMIN' ? `${apiPrefix}/library` : user?.role === 'TUTOR' ? '/tutor/library' : '/org-admin/library') : '/student/library'}/${item.id}${embeddedCourseId ? `?courseId=${encodeURIComponent(embeddedCourseId)}` : ''}`}>View</Link>}
       {manager && <Button variant="secondary" onClick={() => publish.mutate({ id: item.id, changes: { published: !item.published } })}>{item.published ? 'Unpublish' : 'Publish'}</Button>}
       {manager && <Button variant="secondary" onClick={() => publish.mutate({ id: item.id, changes: { freePreview: !item.freePreview } })}>{item.freePreview ? 'Require subscription' : 'Mark free preview'}</Button>}
       {!manager && item.saved && <span className="muted">Saved to My List</span>}
@@ -427,7 +439,7 @@ export function LibraryPage({ embeddedCourseId }: { embeddedCourseId?: string } 
     {publish.isError && <p role="alert" className="notice notice-error">{errorText(publish.error)}</p>}
   </article>;
   return <PortalPage embedded={Boolean(embeddedCourseId)}>{!embeddedCourseId && <>
-    <PageHeader title={courseFilter ? 'Course Books' : 'Library'} backTo={manager ? (user?.role === 'TUTOR' ? '/tutor' : '/org-admin') : courseFilter ? `/student/courses/${encodeURIComponent(courseFilter)}` : '/student'} breadcrumbs={['Learn', courseFilter ? 'Course Books' : 'Library']} />
+    <PageHeader title={courseFilter ? 'Course Books' : 'Library'} backTo={manager ? (user?.role === 'SUPER_ADMIN' ? `${apiPrefix}/courses` : user?.role === 'TUTOR' ? '/tutor' : '/org-admin') : courseFilter ? `/student/courses/${encodeURIComponent(courseFilter)}` : '/student'} breadcrumbs={['Learn', courseFilter ? 'Course Books' : 'Library']} />
     <DailyWisdomCards />
   </>}
     {manager && <form className="card form-grid library-create-form" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}>
@@ -546,11 +558,26 @@ export function TrackKnowledgePage() {
 }
 
 export function MyCertificatesPage() {
+  const client = useQueryClient();
   const certificates = useQuery({ queryKey: ['student-certificates'], queryFn: () => api<{ certificates: Certificate[] }>('/portal/student/certificates') });
+  const [downloadError, setDownloadError] = useState('');
+  useEffect(() => {
+    if (!certificates.data?.certificates.length) return;
+    void client.invalidateQueries({ queryKey: ['student-courses-enrolled'] });
+  }, [certificates.data, client]);
+  const download = async (certificate: Certificate) => {
+    setDownloadError('');
+    try {
+      await downloadCertificatePdf(certificate);
+    } catch (error) {
+      setDownloadError(errorText(error));
+    }
+  };
   return <PortalPage><PageHeader title="My Certificates" backTo="/student" breadcrumbs={['Progress', 'My Certificates']} />
     {certificates.isError && <p role="alert" className="notice notice-error">{errorText(certificates.error)}</p>}
+    {downloadError && <p role="alert" className="notice notice-error">{downloadError}</p>}
     {!certificates.isLoading && !certificates.data?.certificates.length && <div className="card empty-state"><h2>No certificates yet</h2><p>Certificates will appear here when they are issued for your completed courses.</p></div>}
-    <div className="course-list">{certificates.data?.certificates.map((certificate) => <article className="card" key={certificate.id}><p className="eyebrow">{certificate.certificateNo}</p><h2>{certificate.course.title}</h2><p>{certificate.organization.name} · Issued {new Date(certificate.issuedAt).toLocaleDateString()}</p><div className="button-row"><Link className="button button-secondary" to={`/student/certificates/${certificate.id}`}>View</Link><a className="button" href={`/student/certificates/${certificate.id}?print=true`}>Print / Download</a><Link to={`/certificate-verify/${certificate.verificationCode}`}>Verify certificate</Link></div></article>)}</div>
+    <div className="course-list">{certificates.data?.certificates.map((certificate) => <article className="card" key={certificate.id}><p className={certificate.isSample ? 'notice notice-info' : 'eyebrow'}>{certificate.isSample ? 'SAMPLE · NOT ISSUED' : certificate.certificateNo}</p><h2>{certificate.course.title}</h2><p>{certificate.organization.name} · {certificate.isSample ? 'Sample completion' : `Issued ${new Date(certificate.issuedAt).toLocaleDateString()}`}</p><div className="button-row"><Link className="button button-secondary" to={`/student/certificates/${certificate.id}`}>View</Link><Button onClick={() => void download(certificate)}>{certificate.isSample ? 'Download Sample PDF' : 'Download PDF'}</Button>{!certificate.isSample && <Link to={`/certificate-verify/${certificate.verificationCode}`}>Verify certificate</Link>}</div></article>)}</div>
   </PortalPage>;
 }
 
@@ -558,12 +585,90 @@ export function CertificateDetailPage() {
   const { certificateId } = useParams();
   const certificates = useQuery({ queryKey: ['student-certificates'], queryFn: () => api<{ certificates: Certificate[] }>('/portal/student/certificates') });
   const certificate = certificates.data?.certificates.find((item) => item.id === certificateId);
+  const artwork = useMemo(() => certificate ? certificateArtworkData(certificate) : null, [certificate]);
+  const backTo = certificate ? `/student/courses/${encodeURIComponent(certificate.course.id)}/certificate` : '/student/certificates';
+  const [downloadError, setDownloadError] = useState('');
   useEffect(() => {
     if (certificate && new URLSearchParams(window.location.search).get('print') === 'true') window.print();
   }, [certificate]);
-  return <PortalPage><PageHeader title="Certificate" backTo="/student/certificates" breadcrumbs={['Progress', 'My Certificates']} />
-    {certificate ? <article className="certificate-page"><p className="eyebrow">{certificate.organization.name}</p><h1>Certificate of Completion</h1><p>This certificate is proudly presented to</p><h2>{certificate.student.name}</h2><p>for successful completion of</p><h2>{certificate.course.title}</h2><p>Certificate No. {certificate.certificateNo}</p><p>Issued {new Date(certificate.issuedAt).toLocaleDateString()}</p><p className="certificate-verify-text">Verification: {window.location.origin}/certificate-verify/{certificate.verificationCode}</p><button className="button no-print" type="button" onClick={() => window.print()}>Print / Save as PDF</button></article> : <div className="card">Loading certificate…</div>}
+  return <PortalPage><PageHeader title="Certificate" backTo={backTo} breadcrumbs={['My Courses', 'My Certificate']} />
+    {downloadError && <p role="alert" className="notice notice-error">{downloadError}</p>}
+    {certificates.isLoading && <p className="loading">Loading certificate…</p>}
+    {certificates.isError && <p role="alert" className="notice notice-error">{errorText(certificates.error)}</p>}
+    {!certificates.isLoading && !certificates.isError && !certificate && <div className="card empty-state"><h2>Certificate not found</h2><p>This certificate is not available in your account.</p></div>}
+    {certificate && artwork && <article className="certificate-page certificate-print-root">
+      <CertificateArtwork data={artwork} />
+      <div className="button-row no-print">
+        <Button onClick={() => { void downloadCertificatePdf(certificate).catch((error: unknown) => setDownloadError(errorText(error))); }}>
+          {certificate.isSample ? 'Download Sample Certificate' : 'Download Certificate'}
+        </Button>
+        <Button variant="secondary" onClick={() => window.print()}>Print Certificate</Button>
+      </div>
+    </article>}
   </PortalPage>;
+}
+
+export function CourseCertificatePage({ courseId }: { courseId: string }) {
+  const client = useQueryClient();
+  const [downloadError, setDownloadError] = useState('');
+  const [samplePreviewOpen, setSamplePreviewOpen] = useState(false);
+  const certificates = useQuery({
+    queryKey: ['student-certificates'],
+    queryFn: () => api<{ certificates: Certificate[] }>('/portal/student/certificates'),
+  });
+  const certificate = certificates.data?.certificates.find((item) => item.course.id === courseId);
+  const artwork = useMemo(() => certificate ? certificateArtworkData(certificate) : null, [certificate]);
+  useEffect(() => {
+    if (!certificate) return;
+    void Promise.all([
+      client.invalidateQueries({ queryKey: ['student-courses-enrolled'] }),
+      client.invalidateQueries({ queryKey: ['student-course', courseId] }),
+    ]);
+  }, [certificate, client, courseId]);
+  const download = async (item: Certificate) => {
+    setDownloadError('');
+    try {
+      await downloadCertificatePdf(item);
+    } catch (error) {
+      setDownloadError(errorText(error));
+    }
+  };
+  return <section className="course-section course-certificate-section">
+    <h2>My certificate</h2>
+    {certificates.isError && <p role="alert" className="notice notice-error">{errorText(certificates.error)}</p>}
+    {certificates.isLoading && <p className="loading">Loading your certificate…</p>}
+    {!certificates.isLoading && !certificates.isError && !certificate && <div className="card empty-state">
+      <p className="status-pill status-pending">NOT YET ISSUED</p>
+      <h3>Certificate status</h3>
+      <p>Your certificates will appear here once you complete a course.</p>
+      <p className="muted">Eligibility follows the course’s existing completion rules, including syllabus, attendance, published media, and required assessment criteria.</p>
+    </div>}
+    {certificate && artwork && <article className="card certificate-summary">
+      <div className="certificate-summary-details">
+        <p className={certificate.isSample ? 'notice notice-info' : 'notice notice-success'}>
+          {certificate.isSample ? 'SAMPLE · NOT ISSUED' : 'Course completed · Certificate issued'}
+        </p>
+        <p className="eyebrow">{certificate.organization.name}</p>
+        <h3>{certificate.course.title}</h3>
+        <p>{certificate.student.name}</p>
+        <p className="muted">{certificate.isSample
+          ? `Sample completion ${new Date(certificate.issuedAt).toLocaleDateString()} · Not an issued certificate`
+          : `Completed ${new Date(certificate.issuedAt).toLocaleDateString()} · Certificate ID ${certificate.certificateNo}`}
+        </p>
+        <div className="button-row">
+          <Link className="button button-secondary" to={`/student/certificates/${certificate.id}`}>View Certificate</Link>
+          <Button onClick={() => void download(certificate)}>{certificate.isSample ? 'Download Sample Certificate' : 'Download Certificate'}</Button>
+        </div>
+      </div>
+      <div className="certificate-summary-preview"><CertificateArtwork data={artwork} compact /></div>
+    </article>}
+    {downloadError && <p role="alert" className="notice notice-error">{downloadError}</p>}
+    <div className="certificate-sample-action">
+      <p className="muted">Review the certificate design using clearly marked sample data. This preview does not create an issued certificate.</p>
+      <Button type="button" variant="secondary" onClick={() => setSamplePreviewOpen(true)}>Preview Sample Certificate</Button>
+    </div>
+    {samplePreviewOpen && <CertificatePreviewDialog data={sampleCertificateArtwork} onClose={() => setSamplePreviewOpen(false)} />}
+  </section>;
 }
 
 export function CertificateVerificationPage() {

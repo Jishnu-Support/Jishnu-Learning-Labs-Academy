@@ -7,7 +7,7 @@ import { logger } from '../../config/logger.js';
 import { HttpError } from '../../utils/http-error.js';
 import { localDiskStorage } from './storage.service.js';
 import { notifyAfterCommit, notifyCourseStudents, notifyOrganizationStudents } from '../notifications/notifications.service.js';
-import { canAccessContent, requireContentAccess } from '../student-portal/content-access.service.js';
+import { assertActiveCourseEnrollment, canAccessContent, requireContentAccess } from '../student-portal/content-access.service.js';
 
 const maximumFileSize = 20 * 1024 * 1024;
 const allowedTypes = new Map([
@@ -80,11 +80,11 @@ async function storeUpload(file: Express.Multer.File | undefined) {
 
 function isVisible(note: { published: boolean; authorId: string }, userId: string, role: Role): boolean {
   if (role === Role.STUDENT) return note.published;
-  return note.published || note.authorId === userId || role === Role.ORG_ADMIN;
+  return note.published || note.authorId === userId || role === Role.ORG_ADMIN || role === Role.SUPER_ADMIN;
 }
 
 function requireNoteOwner(note: { authorId: string }, userId: string, role: Role): void {
-  if (role !== Role.ORG_ADMIN && note.authorId !== userId) {
+  if (role !== Role.ORG_ADMIN && role !== Role.SUPER_ADMIN && note.authorId !== userId) {
     throw new HttpError(403, 'You can manage only notes you created');
   }
 }
@@ -114,6 +114,9 @@ async function findNote(organizationId: string, noteId: string) {
 export async function listNotes(organizationId: string | null, userId: string, role: Role, input: NoteListInput) {
   const tenantId = requireOrganizationId(organizationId);
   if (input.saved && role !== Role.STUDENT) throw new HttpError(403, 'Only students can filter their saved notes');
+  if (role === Role.STUDENT && input.courseId) {
+    await assertActiveCourseEnrollment(tenantId, userId, input.courseId);
+  }
   const activeCourseIds = role === Role.STUDENT
     ? (await prisma.enrollment.findMany({
       where: { organizationId: tenantId, studentId: userId, status: 'ACTIVE' },
@@ -399,7 +402,7 @@ export async function noteForView(organizationId: string | null, noteId: string,
 
 export async function noteForDownload(organizationId: string | null, noteId: string, userId: string, role: Role) {
   const tenantId = requireOrganizationId(organizationId);
-  if (role !== Role.ORG_ADMIN && role !== Role.TUTOR) {
+  if (role !== Role.ORG_ADMIN && role !== Role.SUPER_ADMIN && role !== Role.TUTOR) {
     throw new HttpError(403, 'You do not have permission to download note files');
   }
   const note = await findNote(tenantId, noteId);

@@ -40,7 +40,33 @@ export async function canAccessContent(input: {
   }));
 }
 
+export async function assertActiveCourseEnrollment(organizationId: string, userId: string, courseId: string): Promise<void> {
+  const enrollment = await prisma.enrollment.findFirst({
+    where: { organizationId, studentId: userId, courseId },
+    select: { status: true },
+  });
+  if (enrollment?.status === EnrollmentStatus.COMPLETED) {
+    throw new HttpError(403, 'Course completed. Access to course materials is no longer available.');
+  }
+  if (enrollment?.status !== EnrollmentStatus.ACTIVE) {
+    throw new HttpError(404, 'Course enrollment not found');
+  }
+}
+
 export async function requireContentAccess(input: Parameters<typeof canAccessContent>[0]): Promise<void> {
+  if (input.role === Role.STUDENT && input.courseId) {
+    const enrollment = await prisma.enrollment.findFirst({
+      where: {
+        organizationId: input.organizationId,
+        studentId: input.userId,
+        courseId: input.courseId,
+      },
+      select: { status: true },
+    });
+    if (enrollment?.status === EnrollmentStatus.COMPLETED) {
+      throw new HttpError(403, 'Course completed. Access to course materials is no longer available.');
+    }
+  }
   if (!await canAccessContent(input)) {
     throw new HttpError(402, 'A current course subscription is required. Open Pay My Fee to unlock access.');
   }

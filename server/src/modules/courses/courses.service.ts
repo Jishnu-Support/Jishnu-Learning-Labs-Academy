@@ -145,7 +145,7 @@ export async function getManagedCourse(organizationId: string, userId: string, r
 
 export async function createCourse(organizationId: string, actorId: string, role: Role, input: CourseInput) {
   if (isoDate(input.endDate) < isoDate(input.startDate)) throw new HttpError(400, 'End date must be on or after the start date');
-  if (role !== Role.ORG_ADMIN && input.registrationMonthlyFee !== undefined) {
+  if (role !== Role.ORG_ADMIN && role !== Role.SUPER_ADMIN && input.registrationMonthlyFee !== undefined) {
     throw new HttpError(403, 'Only an organization administrator can set the registration fee');
   }
   if (role === Role.TUTOR && input.instructorIds.some((id) => id !== actorId)) {
@@ -157,7 +157,8 @@ export async function createCourse(organizationId: string, actorId: string, role
       const created = await tx.course.create({
         data: {
           organizationId,
-          createdById: actorId,
+          createdById: role === Role.SUPER_ADMIN ? null : actorId,
+          createdBySuperAdminId: role === Role.SUPER_ADMIN ? actorId : null,
           code: input.code,
           title: input.title,
           description: input.description ?? null,
@@ -198,7 +199,7 @@ export async function updateCourse(
   if (role !== Role.ORG_ADMIN && input.instructorIds !== undefined) {
     throw new HttpError(403, 'Only an organization administrator can reassign course Tutors');
   }
-  if (role !== Role.ORG_ADMIN && input.registrationMonthlyFee !== undefined) {
+  if (role !== Role.ORG_ADMIN && role !== Role.SUPER_ADMIN && input.registrationMonthlyFee !== undefined) {
     throw new HttpError(403, 'Only an organization administrator can set the registration fee');
   }
   const nextStartDate = input.startDate ? isoDate(input.startDate) : existing.startDate;
@@ -422,7 +423,14 @@ export async function browseStudentCourses(organizationId: string, studentId: st
 export async function listStudentEnrollments(organizationId: string, studentId: string) {
   const now = new Date();
   const enrollments = await prisma.enrollment.findMany({
-    where: { organizationId, studentId, status: EnrollmentStatus.ACTIVE, course: { status: CourseStatus.PUBLISHED } },
+    where: {
+      organizationId,
+      studentId,
+      OR: [
+        { status: EnrollmentStatus.ACTIVE, course: { status: CourseStatus.PUBLISHED } },
+        { status: EnrollmentStatus.COMPLETED },
+      ],
+    },
     orderBy: { enrolledAt: 'desc' },
     include: {
       course: {
@@ -470,6 +478,7 @@ export async function listStudentEnrollments(organizationId: string, studentId: 
       id: enrollment.id,
       status: enrollment.status,
       enrolledAt: enrollment.enrolledAt,
+      completedAt: enrollment.completedAt,
       selectedTutor: enrollment.selectedTutor ? {
         id: enrollment.selectedTutor.id,
         name: enrollment.selectedTutor.name,
@@ -486,7 +495,7 @@ export async function listStudentEnrollments(organizationId: string, studentId: 
           : Math.round((coveredTopics / enrollment.course.topics.length) * 100),
         learnedHours: enrollment.course.topics.reduce((total, topic) => total + (topic.covered ? topic.plannedHours : 0), 0),
         subscriptionStatus,
-        nextSession: enrollment.course.expertSessions[0] ?? null,
+        nextSession: enrollment.status === EnrollmentStatus.ACTIVE ? enrollment.course.expertSessions[0] ?? null : null,
       },
     };
   });
@@ -494,14 +503,21 @@ export async function listStudentEnrollments(organizationId: string, studentId: 
 
 export async function getStudentCourse(organizationId: string, studentId: string, courseId: string) {
   const course = await prisma.course.findFirst({
-    where: { id: courseId, organizationId, status: CourseStatus.PUBLISHED },
+    where: {
+      id: courseId,
+      organizationId,
+      OR: [
+        { status: CourseStatus.PUBLISHED },
+        { enrollments: { some: { studentId, status: EnrollmentStatus.COMPLETED } } },
+      ],
+    },
     include: {
       instructors: { select: { instructor: { select: { name: true } } }, orderBy: { assignedAt: 'asc' } },
       topics: { orderBy: { order: 'asc' } },
       enrollments: {
-        where: { studentId, status: { in: [EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING] } },
+        where: { studentId, status: { in: [EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING, EnrollmentStatus.COMPLETED] } },
         select: {
-          id: true, status: true, enrolledAt: true, selectedTutorId: true, pendingTutorId: true,
+          id: true, status: true, enrolledAt: true, completedAt: true, selectedTutorId: true, pendingTutorId: true,
           selectedTutor: { select: { id: true, name: true } },
           pendingTutor: { select: { id: true, name: true } },
         },
@@ -516,11 +532,12 @@ export async function getStudentCourse(organizationId: string, studentId: string
   });
   if (!course) throw new HttpError(404, 'Course not found');
   const activeEnrollment = course.enrollments.some((enrollment) => enrollment.status === EnrollmentStatus.ACTIVE);
+  const completedEnrollment = course.enrollments.some((enrollment) => enrollment.status === EnrollmentStatus.COMPLETED);
   const coveredTopics = course.topics.filter((topic) => topic.covered).length;
   return {
     ...course,
     description: course.description,
-    topics: activeEnrollment ? course.topics : [],
+    topics: activeEnrollment || completedEnrollment ? course.topics : [],
     notes: activeEnrollment ? await prisma.note.findMany({
       where: {
         organizationId,
@@ -533,7 +550,7 @@ export async function getStudentCourse(organizationId: string, studentId: string
       orderBy: { updatedAt: 'desc' },
     }) : [],
     progressPercent: course.topics.length === 0 ? 0 : Math.round((coveredTopics / course.topics.length) * 100),
-    assessments: await prisma.assessment.findMany({
+    assessments: completedEnrollment ? [] : await prisma.assessment.findMany({
       where: { organizationId, courseId, status: AssessmentStatus.PUBLISHED },
       select: { id: true, title: true, instructions: true, totalMarks: true, passMark: true, durationMinutes: true, opensAt: true, closesAt: true },
       orderBy: { createdAt: 'asc' },

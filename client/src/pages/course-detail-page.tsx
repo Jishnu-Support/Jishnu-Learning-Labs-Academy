@@ -8,6 +8,10 @@ import { PortalSidebar } from '../components/portal-sidebar';
 import { Button } from '../components/ui/button';
 import { ApiError, api } from '../lib/api';
 import type { Role } from '../types';
+import { NotesPage } from './notes-page';
+import { MediaPage } from './media-page';
+import { PracticeQuestionBankPage, TeacherAssessmentsPage } from './learning-pages';
+import { ExpertSessionsPage } from './student-portal-pages';
 
 type Topic = { id: string; title: string; plannedHours: number; order: number; covered: boolean; coveredAt: string | null };
 type Course = {
@@ -42,23 +46,43 @@ type CourseAssessmentReport = {
   pagination: { total: number; totalPages: number };
 };
 
-function courseListPath(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin/courses' : '/tutor/courses';
+const tutorCourseTabs = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'materials', label: 'Publish Study Material' },
+  { key: 'youtube', label: 'YouTube Links' },
+  { key: 'video', label: 'Video' },
+  { key: 'audio', label: 'Audio' },
+  { key: 'sessions', label: 'Expert Session' },
+  { key: 'practice', label: 'Practice Q/A' },
+  { key: 'assessment', label: 'Assessment' },
+] as const;
+
+function courseListPath(role: Role, organizationId?: string) {
+  return role === 'ORG_ADMIN' ? '/org-admin/courses' : role === 'SUPER_ADMIN'
+    ? `/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}/courses`
+    : '/tutor/courses';
 }
 
 function safeReturnTo(value: string | null, base: string) {
   return value && !value.startsWith('//') && (value === base || value.startsWith(`${base}?`)) ? value : base;
 }
 
-function notesPath(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin/materials' : '/tutor/materials';
+function notesPath(role: Role, organizationId?: string) {
+  return role === 'ORG_ADMIN' ? '/org-admin/materials' : role === 'SUPER_ADMIN'
+    ? `/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}/materials`
+    : '/tutor/materials';
 }
 
 export function CourseDetailPage() {
   const { user } = useAuth();
-  const role = user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'TUTOR';
-  const base = courseListPath(role);
-  const { courseId = '' } = useParams();
+  const role: Role = user?.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'TUTOR';
+  const { courseId = '', organizationId } = useParams();
+  const base = courseListPath(role, organizationId);
+  const organizationApiPrefix = role === 'SUPER_ADMIN'
+    ? `/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}`
+    : '';
+  const apiBase = role === 'SUPER_ADMIN' ? `${organizationApiPrefix}/courses` : '/courses';
+  const managerBase = `${organizationApiPrefix}/portal/manage`;
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -69,29 +93,36 @@ export function CourseDetailPage() {
   const [error, setError] = useState('');
   const [showAssessmentChoices, setShowAssessmentChoices] = useState(false);
   const courseQuery = useQuery({
-    queryKey: ['course', courseId],
-    queryFn: () => api<{ course: Course }>(`/courses/${courseId}`),
+    queryKey: ['course', organizationApiPrefix, courseId],
+    queryFn: () => api<{ course: Course }>(`${apiBase}/${courseId}`),
     enabled: Boolean(courseId),
   });
   const enrollmentQuery = useQuery({
-    queryKey: ['course-enrollments', courseId, studentSearch],
-    queryFn: () => api<{ enrollments: Enrollment[] }>(`/courses/${courseId}/enrollments?${new URLSearchParams(studentSearch ? { search: studentSearch } : {})}`),
+    queryKey: ['course-enrollments', organizationApiPrefix, courseId, studentSearch],
+    queryFn: () => api<{ enrollments: Enrollment[] }>(`${apiBase}/${courseId}/enrollments?${new URLSearchParams(studentSearch ? { search: studentSearch } : {})}`),
     enabled: Boolean(courseId),
   });
   const assessmentReports = useQuery({
-    queryKey: ['learning', 'course-assessment-reports', courseId],
+    queryKey: ['learning', 'course-assessment-reports', organizationApiPrefix, courseId],
     queryFn: () => api<CourseAssessmentReport>(`/learning/reports?${new URLSearchParams({ courseId, page: '1', pageSize: '100' })}`),
     enabled: role === 'TUTOR' && Boolean(courseId),
   });
+  const expertSessions = useQuery({
+    queryKey: ['expert-sessions', 'course-overview', organizationApiPrefix, courseId],
+    queryFn: () => api<{ sessions: Array<{ id: string; title: string; startsAt: string; durationMinutes: number; status: string }> }>(
+      `${managerBase}/sessions?${new URLSearchParams({ courseId })}`,
+    ),
+    enabled: (role === 'TUTOR' || role === 'SUPER_ADMIN') && Boolean(courseId),
+  });
   const invalidate = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['course', courseId] }),
+      queryClient.invalidateQueries({ queryKey: ['course', organizationApiPrefix, courseId] }),
       queryClient.invalidateQueries({ queryKey: ['courses'] }),
-      queryClient.invalidateQueries({ queryKey: ['course-enrollments', courseId] }),
+      queryClient.invalidateQueries({ queryKey: ['course-enrollments', organizationApiPrefix, courseId] }),
     ]);
   };
   const topicMutation = useMutation({
-    mutationFn: () => api(`/courses/${courseId}/topics`, {
+    mutationFn: () => api(`${apiBase}/${courseId}/topics`, {
       method: 'POST',
       body: JSON.stringify({ title: topicTitle, plannedHours: Number(topicHours) }),
     }),
@@ -99,12 +130,12 @@ export function CourseDetailPage() {
     onError: (cause) => setError(cause instanceof ApiError ? cause.message : 'Topic could not be added.'),
   });
   const reorderMutation = useMutation({
-    mutationFn: (topicIds: string[]) => api(`/courses/${courseId}/topics/reorder`, { method: 'PATCH', body: JSON.stringify({ topicIds }) }),
+    mutationFn: (topicIds: string[]) => api(`${apiBase}/${courseId}/topics/reorder`, { method: 'PATCH', body: JSON.stringify({ topicIds }) }),
     onSuccess: invalidate,
     onError: (cause) => setError(cause instanceof ApiError ? cause.message : 'Topic order could not be changed.'),
   });
   const coverMutation = useMutation({
-    mutationFn: ({ topic, covered }: { topic: Topic; covered: boolean }) => api(`/courses/${courseId}/topics/${topic.id}`, {
+    mutationFn: ({ topic, covered }: { topic: Topic; covered: boolean }) => api(`${apiBase}/${courseId}/topics/${topic.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ covered }),
     }),
@@ -112,7 +143,7 @@ export function CourseDetailPage() {
     onError: (cause) => setError(cause instanceof ApiError ? cause.message : 'Topic progress could not be updated.'),
   });
   const statusMutation = useMutation({
-    mutationFn: (action: 'publish' | 'archive') => api(`/courses/${courseId}/${action}`, { method: 'POST' }),
+    mutationFn: (action: 'publish' | 'archive') => api(`${apiBase}/${courseId}/${action}`, { method: 'POST' }),
     onSuccess: async (_result, action) => {
       await invalidate();
       if (action === 'archive') navigate(returnTo, { replace: true });
@@ -120,7 +151,7 @@ export function CourseDetailPage() {
     onError: (cause) => setError(cause instanceof ApiError ? cause.message : 'Course status could not be changed.'),
   });
   const approvalMutation = useMutation({
-    mutationFn: (enrollmentId: string) => api(`/courses/${courseId}/enrollments/${enrollmentId}/approve`, { method: 'POST' }),
+    mutationFn: (enrollmentId: string) => api(`${apiBase}/${courseId}/enrollments/${enrollmentId}/approve`, { method: 'POST' }),
     onSuccess: invalidate,
     onError: (cause) => setError(cause instanceof ApiError ? cause.message : 'Enrollment could not be approved.'),
   });
@@ -128,7 +159,7 @@ export function CourseDetailPage() {
   const topics = course?.topics ?? [];
   const coveredCount = topics.filter((topic) => topic.covered).length;
   const progress = topics.length ? Math.round((coveredCount / topics.length) * 100) : 0;
-  const roleNotes = course ? `${notesPath(role)}?courseId=${encodeURIComponent(course.id)}` : notesPath(role);
+  const roleNotes = course ? `${notesPath(role, organizationId)}?courseId=${encodeURIComponent(course.id)}` : notesPath(role, organizationId);
   const assessmentGroups = new Map<string, CourseAssessmentReport['rows']>();
   for (const row of assessmentReports.data?.rows ?? []) {
     const group = assessmentGroups.get(row.assessmentId) ?? [];
@@ -143,6 +174,91 @@ export function CourseDetailPage() {
     [next[index], next[destination]] = [next[destination], next[index]];
     reorderMutation.mutate(next.map(({ id }) => id));
   };
+
+  if (role === 'TUTOR' || role === 'SUPER_ADMIN') {
+    const requestedTab = searchParams.get('tab') ?? 'overview';
+    const activeTab = tutorCourseTabs.some(({ key }) => key === requestedTab) ? requestedTab : 'overview';
+    const selectTab = (tab: string) => setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('tab', tab);
+      return next;
+    }, { replace: true });
+
+    return (
+      <div className="portal-layout">
+        <PortalSidebar role={role} />
+        <section className="portal-content">
+          <PageHeader title={course?.title ?? (role === 'TUTOR' ? 'My Course' : 'Manage Course')} backTo={returnTo} breadcrumbs={[role === 'TUTOR' ? 'My Courses' : 'Courses', course?.code ?? 'Course']} />
+          {courseQuery.isLoading && <p className="loading">Loading course…</p>}
+          {courseQuery.error && <p className="notice notice-error" role="alert">{courseQuery.error instanceof ApiError ? courseQuery.error.message : 'Course could not be loaded.'}</p>}
+          {course && <>
+            <div className="card course-detail-summary">
+              <div className="course-meta"><span className={`status-pill status-${course.status.toLowerCase()}`}>{course.status}</span><span>{course.code}</span></div>
+              <p>{course.description || 'No description provided.'}</p>
+            </div>
+            <nav className="media-tabs tutor-course-tabs" role="tablist" aria-label="Course management sections">
+              {tutorCourseTabs.map(({ key, label }) => <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === key}
+                className={`tab-button${activeTab === key ? ' active' : ''}`}
+                onClick={() => selectTab(key)}
+              >{label}</button>)}
+            </nav>
+            {activeTab === 'overview' && <section className="course-overview-content">
+              <article className="card course-section">
+                <h2>Course overview</h2>
+                <p>{course.description || 'No description provided.'}</p>
+                <div className="course-facts">
+                  <span><strong>Duration</strong>{new Date(course.startDate).toLocaleDateString()} – {new Date(course.endDate).toLocaleDateString()}</span>
+                  <span><strong>Planned learning</strong>{course.plannedHours} hours</span>
+                  <span><strong>Number of sessions</strong>{expertSessions.data?.sessions.length ?? (expertSessions.isLoading ? 'Loading…' : 0)}</span>
+                </div>
+              </article>
+              <article className="card course-section">
+                <h2>Session timings</h2>
+                {expertSessions.isLoading && <p className="loading">Loading session schedule…</p>}
+                {expertSessions.isError && <p className="notice notice-error" role="alert">Session schedule could not be loaded.</p>}
+                {expertSessions.data?.sessions.length === 0 && <p className="muted">No Expert Sessions are scheduled for this course yet.</p>}
+                {expertSessions.data?.sessions.map((session) => <p key={session.id}>
+                  <strong>{session.title}</strong> · {new Date(session.startsAt).toLocaleString()} · {session.durationMinutes} minutes · {session.status}
+                </p>)}
+              </article>
+              <section className="card course-section">
+                <div className="list-heading"><h2>Topic progress</h2><strong>{progress}% covered</strong></div>
+                <progress className="course-progress" max={100} value={progress}>{progress}%</progress>
+                {topics.length === 0 ? <p className="muted">Add course topics before publishing.</p> : <ol className="course-topics">
+                  {topics.map((topic, index) => <li key={topic.id} className={topic.covered ? 'topic-covered' : ''}>
+                    <span className="topic-index">{index + 1}</span>
+                    <div className="topic-main"><strong>{topic.title}</strong><span className="muted">{topic.plannedHours} hours · {topic.covered ? 'Covered' : 'Not covered'}</span></div>
+                    <div className="topic-actions">
+                      {course.status !== 'ARCHIVED' && <Button variant="ghost" aria-label={`Move ${topic.title} up`} disabled={index === 0 || reorderMutation.isPending} onClick={() => moveTopic(index, -1)}>↑</Button>}
+                      {course.status !== 'ARCHIVED' && <Button variant="ghost" aria-label={`Move ${topic.title} down`} disabled={index === topics.length - 1 || reorderMutation.isPending} onClick={() => moveTopic(index, 1)}>↓</Button>}
+                      {course.status !== 'ARCHIVED' && <Button variant="secondary" disabled={coverMutation.isPending} onClick={() => coverMutation.mutate({ topic, covered: !topic.covered })}>{topic.covered ? 'Mark not covered' : 'Mark covered'}</Button>}
+                    </div>
+                  </li>)}
+                </ol>}
+                {course.status !== 'ARCHIVED' && <form className="course-topic-form" onSubmit={(event) => { event.preventDefault(); setError(''); topicMutation.mutate(); }}>
+                  <Field label="Topic title" value={topicTitle} onChange={(event) => setTopicTitle(event.target.value)} required maxLength={160} />
+                  <Field label="Planned hours" type="number" value={topicHours} onChange={(event) => setTopicHours(event.target.value)} required min={1} max={1000} />
+                  <Button type="submit" disabled={topicMutation.isPending}>{topicMutation.isPending ? 'Adding…' : 'Add topic'}</Button>
+                </form>}
+              </section>
+            </section>}
+            {activeTab === 'materials' && <NotesPage embeddedCourseId={course.id} apiPrefix={organizationApiPrefix} />}
+            {activeTab === 'youtube' && <MediaPage embeddedCourseId={course.id} embeddedSource="YOUTUBE" apiPrefix={organizationApiPrefix} />}
+            {activeTab === 'video' && <MediaPage embeddedCourseId={course.id} embeddedType="VIDEO" apiPrefix={organizationApiPrefix} />}
+            {activeTab === 'audio' && <MediaPage embeddedCourseId={course.id} embeddedType="AUDIO" apiPrefix={organizationApiPrefix} />}
+            {activeTab === 'sessions' && <ExpertSessionsPage embeddedCourseId={course.id} apiPrefix={organizationApiPrefix} />}
+            {activeTab === 'practice' && <PracticeQuestionBankPage embeddedCourseId={course.id} apiPrefix={role === 'SUPER_ADMIN' ? organizationApiPrefix : ''} />}
+            {activeTab === 'assessment' && <TeacherAssessmentsPage embeddedCourseId={course.id} apiPrefix={role === 'SUPER_ADMIN' ? organizationApiPrefix : ''} />}
+            {error && <p className="notice notice-error" role="alert">{error}</p>}
+          </>}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="portal-layout">
@@ -165,7 +281,7 @@ export function CourseDetailPage() {
             </div>
             <div className="course-actions">
               {course.status !== 'ARCHIVED' && <Link className="button button-secondary" to={`${base}/${course.id}/edit?returnTo=${encodeURIComponent(returnTo)}`}>Edit course</Link>}
-              {role === 'TUTOR' && <Link className="button button-secondary" to={roleNotes}>Publish Study Materials</Link>}
+              {user?.role === 'TUTOR' && <Link className="button button-secondary" to={roleNotes}>Publish Study Materials</Link>}
               {course.status === 'DRAFT' && <Button disabled={statusMutation.isPending || topics.length === 0} onClick={() => statusMutation.mutate('publish')}>Publish</Button>}
               {course.status !== 'ARCHIVED' && <Button variant="danger" disabled={statusMutation.isPending} onClick={() => {
                 if (window.confirm(`Archive ${course.title}? Students will no longer be able to browse or enroll in it.`)) statusMutation.mutate('archive');
@@ -221,7 +337,7 @@ export function CourseDetailPage() {
               </Link>
             ))}
           </section>
-          {role === 'TUTOR' && <section className="card course-section">
+          {user?.role === 'TUTOR' && <section className="card course-section">
             <div className="list-heading"><div><h2>Assessment Reports</h2><p className="muted">Participation and progress for assessments in this course.</p></div>
               <Button onClick={() => setShowAssessmentChoices((current) => !current)}>{showAssessmentChoices ? 'Close options' : 'Generate New Assessment'}</Button>
             </div>

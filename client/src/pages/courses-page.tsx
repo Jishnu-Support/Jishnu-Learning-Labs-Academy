@@ -57,7 +57,7 @@ function safeReturnTo(value: string | null, base: string) {
 }
 
 function roleDashboard(role: Role) {
-  return role === 'ORG_ADMIN' ? '/org-admin' : '/tutor';
+  return role === 'ORG_ADMIN' ? '/org-admin' : role === 'SUPER_ADMIN' ? '/super-admin/organizations' : '/tutor';
 }
 
 function emptyForm(instructors: Instructor[], role: Role, userId?: string): CourseForm {
@@ -79,15 +79,19 @@ function emptyForm(instructors: Instructor[], role: Role, userId?: string): Cour
 
 export function CoursesPage() {
   const { user } = useAuth();
-  const role = user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'TUTOR';
-  const base = routeForRole(role);
+  const role: Role = user?.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'TUTOR';
+  const { organizationId } = useParams();
+  const base = role === 'SUPER_ADMIN'
+    ? `/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}/courses`
+    : routeForRole(role);
+  const apiBase = role === 'SUPER_ADMIN' ? base : '/courses';
   const [searchParams, setSearchParams] = useSearchParams();
   const search = searchParams.get('search') ?? '';
   const status = searchParams.get('status') ?? '';
   const page = Math.max(1, Number(searchParams.get('page') ?? 1) || 1);
   const query = useQuery({
     queryKey: ['courses', role, search, status],
-    queryFn: () => api<{ courses: Course[] }>(`/courses?${new URLSearchParams({ ...(search ? { search } : {}), ...(status ? { status } : {}) })}`),
+    queryFn: () => api<{ courses: Course[] }>(`${apiBase}?${new URLSearchParams({ ...(search ? { search } : {}), ...(status ? { status } : {}) })}`),
   });
   const courses = query.data?.courses ?? [];
   const pageSize = 8;
@@ -112,7 +116,7 @@ export function CoursesPage() {
         <div className="directory-filters">
           <label className="field search-field"><span>Search courses</span><input className="input" value={search} onChange={(event) => updateQuery('search', event.target.value)} /></label>
           <label className="field"><span>Status</span><select className="input" value={status} onChange={(event) => updateQuery('status', event.target.value)}><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="PUBLISHED">Published</option><option value="ARCHIVED">Archived</option></select></label>
-          <Link className="button button-primary" to={`${base}/new?returnTo=${encodeURIComponent(`${base}${window.location.search}`)}`}>Create course</Link>
+          {(role === 'ORG_ADMIN' || role === 'SUPER_ADMIN') && <Link className="button button-primary" to={`${base}/new?returnTo=${encodeURIComponent(`${base}${window.location.search}`)}`}>Create course</Link>}
         </div>
         {query.isLoading && <p className="loading">Loading courses…</p>}
         {query.error && <p className="notice notice-error" role="alert">{query.error instanceof ApiError ? query.error.message : 'Courses could not be loaded.'}</p>}
@@ -123,12 +127,12 @@ export function CoursesPage() {
               <div className="course-meta"><span className={`status-pill status-${course.status.toLowerCase()}`}>{course.status}</span><span>{course.code}</span></div>
               <h3>{course.title}</h3>
               <p className="muted course-description">{course.category} · {course.plannedHours} planned hours</p>
-              {role === 'ORG_ADMIN' && <p className="muted course-description">First-month registration fee: {course.registrationMonthlyFee === null ? 'Not set' : new Intl.NumberFormat(undefined, { style: 'currency', currency: course.organization.currency }).format(Number(course.registrationMonthlyFee))}</p>}
+              {(role === 'ORG_ADMIN' || role === 'SUPER_ADMIN') && <p className="muted course-description">First-month registration fee: {course.registrationMonthlyFee === null ? 'Not set' : new Intl.NumberFormat(undefined, { style: 'currency', currency: course.organization.currency }).format(Number(course.registrationMonthlyFee))}</p>}
               <p className="course-description">{course.description || 'No description yet.'}</p>
               <p className="muted course-description">Faculty: {course.instructors.map(({ instructor }) => instructor.name).join(', ') || 'None'} · {course._count.enrollments} enrollments · {course._count.notes} notes</p>
               <div className="course-actions">
                 <Link className="button button-secondary" to={`${base}/${course.id}?returnTo=${encodeURIComponent(`${base}${window.location.search}`)}`}>Manage course</Link>
-                {course.status !== 'ARCHIVED' && <Link className="button button-ghost" to={`${base}/${course.id}/edit?returnTo=${encodeURIComponent(`${base}${window.location.search}`)}`}>Edit</Link>}
+                {course.status !== 'ARCHIVED' && (role === 'ORG_ADMIN' || role === 'SUPER_ADMIN') && <Link className="button button-ghost" to={`${base}/${course.id}/edit?returnTo=${encodeURIComponent(`${base}${window.location.search}`)}`}>Edit</Link>}
               </div>
             </article>
           ))}
@@ -145,17 +149,23 @@ export function CoursesPage() {
 
 export function CourseFormPage() {
   const { user } = useAuth();
-  const role = user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'TUTOR';
-  const base = routeForRole(role);
+  const role: Role = user?.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : user?.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'TUTOR';
   const navigate = useNavigate();
   const params = useParams();
   const [searchParams] = useSearchParams();
+  const organizationId = params.organizationId;
+  const apiBase = role === 'SUPER_ADMIN'
+    ? `/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}/courses`
+    : '/courses';
+  const base = role === 'SUPER_ADMIN'
+    ? `/super-admin/organizations/${encodeURIComponent(organizationId ?? '')}/courses`
+    : routeForRole(role);
   const courseId = params.courseId;
   const returnTo = safeReturnTo(searchParams.get('returnTo'), base);
-  const instructorQuery = useQuery({ queryKey: ['course-faculty'], queryFn: () => api<{ instructors: Instructor[] }>('/courses/faculty') });
+  const instructorQuery = useQuery({ queryKey: ['course-faculty', role, organizationId], queryFn: () => api<{ instructors: Instructor[] }>(`${apiBase}/faculty`) });
   const courseQuery = useQuery({
-    queryKey: ['course', courseId],
-    queryFn: () => api<{ course: Course }>(`/courses/${courseId}`),
+    queryKey: ['course', courseId, role, organizationId],
+    queryFn: () => api<{ course: Course }>(`${apiBase}/${courseId}`),
     enabled: Boolean(courseId),
   });
   const instructors = instructorQuery.data?.instructors ?? noInstructors;
@@ -201,11 +211,11 @@ export function CourseFormPage() {
         minimumAttendancePercent: Number(form.minimumAttendancePercent),
         description: form.description || null,
         thumbnailUrl: form.thumbnailUrl || null,
-        ...(role === 'ORG_ADMIN'
+        ...(role === 'ORG_ADMIN' || role === 'SUPER_ADMIN'
           ? { registrationMonthlyFee: form.registrationMonthlyFee.trim() ? Number(form.registrationMonthlyFee) : null }
           : {}),
       };
-      return api<{ course: Course }>(courseId ? `/courses/${courseId}` : '/courses', {
+      return api<{ course: Course }>(courseId ? `${apiBase}/${courseId}` : apiBase, {
         method: courseId ? 'PATCH' : 'POST',
         body: JSON.stringify(payload),
       });
@@ -247,9 +257,9 @@ export function CourseFormPage() {
             <Field label="Start date" type="date" value={form.startDate} onChange={(event) => update('startDate', event.target.value)} required />
             <Field label="End date" type="date" value={form.endDate} onChange={(event) => update('endDate', event.target.value)} required />
             <Field label="Minimum attendance (%)" type="number" min={0} max={100} value={form.minimumAttendancePercent} onChange={(event) => update('minimumAttendancePercent', event.target.value)} required />
-            {role === 'ORG_ADMIN' && <Field label="First-month registration fee (organization currency)" type="number" min={0.01} step="0.01" value={form.registrationMonthlyFee} onChange={(event) => update('registrationMonthlyFee', event.target.value)} />}
+            {(role === 'ORG_ADMIN' || role === 'SUPER_ADMIN') && <Field label="First-month registration fee (organization currency)" type="number" min={0.01} step="0.01" value={form.registrationMonthlyFee} onChange={(event) => update('registrationMonthlyFee', event.target.value)} />}
           </div>
-          {role === 'ORG_ADMIN' && <p className="muted">This fee is collected for the registration period only. Future renewals continue through Pay My Fee using the selected Tutor’s plan.</p>}
+          {(role === 'ORG_ADMIN' || role === 'SUPER_ADMIN') && <p className="muted">This fee is collected for the registration period only. Future renewals continue through Pay My Fee using the selected Tutor’s plan.</p>}
           <label className="field"><span>Description</span><textarea className="input textarea" value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={5000} /></label>
           <Field label="Course thumbnail URL (HTTPS)" type="url" value={form.thumbnailUrl} onChange={(event) => update('thumbnailUrl', event.target.value)} maxLength={2000} />
           <label className="course-instructor-option"><input type="checkbox" checked={form.requiresAssessmentPass} onChange={(event) => update('requiresAssessmentPass', event.target.checked)} /><span>Require passing the course assessment for completion</span></label>

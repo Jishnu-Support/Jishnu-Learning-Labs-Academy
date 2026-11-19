@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getDailyThirukural, thirukurals } from './thirukurals.js';
+import { getDailyThirukural, getThirukuralLines, thirukurals } from './thirukurals.js';
 
 describe('daily Thirukural', () => {
   it('provides 30 complete, numbered entries', () => {
@@ -11,5 +11,13 @@ describe('daily Thirukural', () => {
   it('selects the same entry for a calendar day and advances by day of year', () => {
     expect(getDailyThirukural(new Date(2026, 0, 1))).toEqual(thirukurals[0]);
     expect(getDailyThirukural(new Date(2026, 0, 2))).toEqual(thirukurals[1]);
+  });
+
+  it('formats every Kural as four words followed by three words', () => {
+    for (const { kural } of thirukurals) {
+      const [firstLine, secondLine] = getThirukuralLines(kural);
+      expect(firstLine.split(/\s+/)).toHaveLength(4);
+      expect(secondLine.split(/\s+/)).toHaveLength(3);
+    }
   });
 });

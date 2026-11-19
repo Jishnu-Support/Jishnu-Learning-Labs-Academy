@@ -75,7 +75,9 @@ export const myPhoto: RequestHandler = async (req, res) => {
 };
 
 export const studentPhoto: RequestHandler = async (req, res) => {
-  if (req.auth!.role !== 'ORG_ADMIN') throw new HttpError(403, 'Only organization administrators can access student profile photos');
+  if (req.auth!.role !== 'ORG_ADMIN' && req.auth!.role !== 'SUPER_ADMIN') {
+    throw new HttpError(403, 'Only administrators can access student profile photos');
+  }
   const file = await studentsService.getStudentPhoto(getOrganizationId(req), studentId(req));
   res.set({
     'Content-Type': file.mimeType,

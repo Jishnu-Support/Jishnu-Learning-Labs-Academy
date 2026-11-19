@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcrypt';
 import { AccountStatus, AssessmentStatus, EnrollmentStatus, LibraryKind, OrganizationStatus, PaymentProviderKind, PaymentStatus, Prisma, PrismaClient, QuestionDifficulty, QuestionType, Role, StudentStatus, SubscriptionPeriod, SubscriptionStatus, type User } from '@prisma/client';
 import { localDiskStorage } from '../src/modules/notes/storage.service.js';
@@ -841,6 +842,119 @@ export async function seedCourses(
   console.log(`${organization.code ?? organization.id}: seeded course codes ${seededCourseCodes.join(', ')}`);
 }
 
+async function seedCompletedCourseSamples(
+  database: PrismaClient,
+  organization: { id: string; code?: string | null },
+  admin: User,
+  tutors: User[],
+  students: User[],
+) {
+  const tutor = tutors.find((user) => user.status === AccountStatus.APPROVED);
+  if (!tutor) throw new Error(`No approved Tutor found for ${organization.code ?? organization.id}`);
+  const fixtures = [
+    {
+      code: 'SAMPLE-WEB-01',
+      title: 'Web Development Fundamentals',
+      description: 'A sample course covering semantic HTML, responsive CSS, and browser-based JavaScript.',
+      category: 'Web Development',
+      plannedHours: 24,
+      thumbnailUrl: '/brand/course-web-development.svg',
+      completedAt: new Date('2026-09-15T12:00:00.000Z'),
+    },
+    {
+      code: 'SAMPLE-PY-01',
+      title: 'Python Programming Essentials',
+      description: 'A sample course covering Python syntax, data structures, functions, and practical scripting.',
+      category: 'Programming',
+      plannedHours: 30,
+      thumbnailUrl: '/brand/course-python.svg',
+      completedAt: new Date('2026-10-20T12:00:00.000Z'),
+    },
+  ] as const;
+  const startDate = new Date('2026-06-01T00:00:00.000Z');
+  const endDate = new Date('2026-11-30T00:00:00.000Z');
+  const demoStudents = students.filter((student) => student.status === AccountStatus.APPROVED);
+
+  for (const fixture of fixtures) {
+    const course = await database.course.upsert({
+      where: { organizationId_code: { organizationId: organization.id, code: fixture.code } },
+      create: {
+        organizationId: organization.id,
+        code: fixture.code,
+        title: fixture.title,
+        description: fixture.description,
+        thumbnailUrl: fixture.thumbnailUrl,
+        category: fixture.category,
+        plannedHours: fixture.plannedHours,
+        startDate,
+        endDate,
+        status: 'PUBLISHED',
+        createdById: admin.id,
+      },
+      update: {
+        title: fixture.title,
+        description: fixture.description,
+        thumbnailUrl: fixture.thumbnailUrl,
+        category: fixture.category,
+        plannedHours: fixture.plannedHours,
+        status: 'PUBLISHED',
+      },
+      select: { id: true },
+    });
+    await database.courseInstructor.createMany({
+      data: [{ organizationId: organization.id, courseId: course.id, instructorId: tutor.id }],
+      skipDuplicates: true,
+    });
+
+    for (const student of demoStudents) {
+      const completedAt = fixture.completedAt;
+      await database.enrollment.upsert({
+        where: {
+          organizationId_courseId_studentId: {
+            organizationId: organization.id,
+            courseId: course.id,
+            studentId: student.id,
+          },
+        },
+        create: {
+          organizationId: organization.id,
+          courseId: course.id,
+          studentId: student.id,
+          selectedTutorId: tutor.id,
+          status: EnrollmentStatus.COMPLETED,
+          enrolledAt: new Date(completedAt.getTime() - 30 * 24 * 60 * 60 * 1000),
+          completedAt,
+        },
+        update: {
+          selectedTutorId: tutor.id,
+          status: EnrollmentStatus.COMPLETED,
+          completedAt,
+        },
+      });
+
+      const existingSample = await database.certificate.findFirst({
+        where: { organizationId: organization.id, courseId: course.id, studentId: student.id, isSample: true },
+        select: { id: true },
+      });
+      if (!existingSample) {
+        await database.certificate.create({
+          data: {
+            organizationId: organization.id,
+            courseId: course.id,
+            studentId: student.id,
+            issuedStudentName: student.name,
+            certificateNo: `SAMPLE-${organization.code ?? organization.id}-${student.id}-${fixture.code}`,
+            verificationCode: randomUUID(),
+            isSample: true,
+            issuedAt: completedAt,
+          },
+        });
+      }
+    }
+  }
+  console.log(`${organization.code ?? organization.id}: seeded non-issuable completed-course samples`);
+}
+
 async function seedDemoPayments(database: PrismaClient, organization: { id: string; code: string }, students: User[]) {
   const profiles = await database.studentProfile.findMany({
     where: {
@@ -1219,6 +1333,10 @@ async function main() {
   await seedDemoPayments(prisma, { id: secondOrganization.id, code: secondOrganization.code }, secondSeed.students);
   await seedLibrarySamples(prisma, primaryOrganization, primarySeed.tutors);
   await seedLibrarySamples(prisma, secondOrganization, secondSeed.tutors);
+  if (process.env.NODE_ENV !== 'production') {
+    await seedCompletedCourseSamples(prisma, primaryOrganization, primarySeed.admin, primarySeed.tutors, primarySeed.students);
+    await seedCompletedCourseSamples(prisma, secondOrganization, secondSeed.admin, secondSeed.tutors, secondSeed.students);
+  }
 
   console.log('\n=== DEVELOPMENT-ONLY SEED CREDENTIALS ===');
   console.log(`Password for all seeded accounts: ${developmentPassword}`);

@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { app } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
@@ -6,9 +7,12 @@ import { startMediaWorker } from './modules/media/media.worker.js';
 import { startLearningWorker } from './modules/learning/learning.worker.js';
 import { startNotificationScheduler } from './modules/notifications/notifications.scheduler.js';
 import { assertPaymentProviderAllowed } from './modules/payments/payment.provider.js';
+import { attachLiveClassSignaling } from './modules/student-portal/live-class-signaling.js';
 
 assertPaymentProviderAllowed();
-const server = app.listen(env.PORT, () => logger.info({ port: env.PORT }, 'API server listening'));
+const server = createServer(app);
+const stopLiveClassSignaling = attachLiveClassSignaling(server);
+server.listen(env.PORT, () => logger.info({ port: env.PORT }, 'API server listening'));
 server.headersTimeout = 2 * 60 * 1000;
 server.requestTimeout = 60 * 60 * 1000;
 const stopMediaWorker = startMediaWorker();
@@ -20,6 +24,7 @@ async function shutdown(signal: string) {
   stopMediaWorker();
   stopLearningWorker();
   stopNotificationScheduler();
+  stopLiveClassSignaling();
   server.close(async () => {
     await prisma.$disconnect();
     process.exit(0);

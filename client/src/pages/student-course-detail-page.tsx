@@ -9,7 +9,8 @@ import { Button } from '../components/ui/button';
 import { ApiError, api, apiUrl } from '../lib/api';
 import { NotesPage } from './notes-page';
 import { StudentAssessmentsPage, StudentPracticePage } from './learning-pages';
-import { ExpertSessionsPage, LibraryPage } from './student-portal-pages';
+import { CourseCertificatePage, ExpertSessionsPage, LibraryPage } from './student-portal-pages';
+import { StudentReportsPage } from './student-reports-page';
 
 type Course = {
   id: string;
@@ -29,8 +30,9 @@ type Course = {
   notes: Array<{ id: string; title: string; subject: string; description: string; originalName: string | null; updatedAt: string }>;
   enrollments: Array<{
     id: string;
-    status: 'PENDING' | 'ACTIVE';
+    status: 'PENDING' | 'ACTIVE' | 'COMPLETED';
     enrolledAt: string;
+    completedAt: string | null;
     selectedTutorId: string | null;
     pendingTutorId: string | null;
     selectedTutor: { id: string; name: string } | null;
@@ -60,14 +62,22 @@ type PreferredTutor = {
 
 const courseTabs = [
   { key: 'overview', label: 'Overview' },
-  { key: 'media', label: 'Videos & Audios' },
-  { key: 'books', label: 'Books' },
-  { key: 'sessions', label: 'Experts Session' },
-  { key: 'materials', label: 'Study Materials' },
+  { key: 'materials', label: 'Study material' },
+  { key: 'youtube', label: 'Youtube links' },
+  { key: 'videos', label: 'Videos' },
+  { key: 'audios', label: 'Audios' },
+  { key: 'sessions', label: 'Expert session' },
   { key: 'practice', label: 'Practice Q/A' },
-  { key: 'assessments', label: 'Assessments' },
+  { key: 'assessment', label: 'Assessment' },
+  { key: 'reports', label: 'Evaluation reports' },
+  { key: 'certificate', label: 'My certificate' },
 ] as const;
 type CourseTab = typeof courseTabs[number]['key'];
+const legacyCourseTabs: Record<string, CourseTab> = {
+  media: 'videos',
+  books: 'materials',
+  assessments: 'assessment',
+};
 
 function safeReturnTo(value: string | null) {
   const allowed = ['/student/courses', '/student/course-catalog'];
@@ -91,7 +101,8 @@ export function StudentCourseDetailPage() {
   const queryClient = useQueryClient();
   const returnTo = safeReturnTo(searchParams.get('returnTo'));
   const isTab = courseTabs.some(({ key }) => key === routeTab);
-  const activeTab = isTab ? routeTab as CourseTab : 'overview';
+  const legacyTab = legacyCourseTabs[routeTab];
+  const activeTab = isTab ? routeTab as CourseTab : legacyTab ?? 'overview';
   const [confirmDrop, setConfirmDrop] = useState(false);
   const query = useQuery({
     queryKey: ['student-course', courseId],
@@ -121,18 +132,41 @@ export function StudentCourseDetailPage() {
   const enrollment = course?.enrollments[0];
   const summary = enrolled.data?.enrollments.find((item) => item.course.id === courseId);
   const activeEnrollment = enrollment?.status === 'ACTIVE';
+  const completedEnrollment = enrollment?.status === 'COMPLETED';
+  const hasCourseAccess = activeEnrollment || completedEnrollment;
   const selectedTutor = preferredTutor.data?.tutor ?? null;
   const media = useQuery({
     queryKey: ['student-course-media', courseId],
     queryFn: () => api<{ items: CourseMedia[] }>(`/student/media?courseId=${encodeURIComponent(courseId)}`),
-    enabled: Boolean(activeEnrollment && activeTab === 'media'),
+    enabled: Boolean(activeEnrollment && ['youtube', 'videos', 'audios'].includes(activeTab)),
   });
   useEffect(() => {
-    if (!isTab && courseId) navigate(`/student/courses/${encodeURIComponent(courseId)}/overview`, { replace: true });
-  }, [courseId, isTab, navigate]);
+    if (!isTab && courseId) navigate(`/student/courses/${encodeURIComponent(courseId)}/${legacyTab ?? 'overview'}`, { replace: true });
+  }, [courseId, isTab, legacyTab, navigate]);
+
+  const mediaContent = (title: string, items: CourseMedia[]) => <section className="course-section">
+    <div className="list-heading"><h2>{title}</h2></div>
+    {media.isLoading && <p className="loading">Loading {title.toLowerCase()}…</p>}
+    {media.isError && <p className="notice notice-error" role="alert">{errorText(media.error)}</p>}
+    {media.data && items.length === 0 && <div className="card empty-state"><h2>No {title.toLowerCase()} in this course</h2><p>Published course content will appear here.</p></div>}
+    <div className="course-media-grid">{items.map((item) => <article className="card course-media-card" key={item.id}>
+      {item.thumbnailUrl && !item.locked
+        ? <img className="library-media-thumbnail" src={`${apiUrl}${item.thumbnailUrl}`} alt={`${item.title} thumbnail`} />
+        : <div className="library-content-thumbnail library-media-placeholder" aria-hidden="true">{item.type}</div>}
+      <p className="eyebrow">{item.topic?.title ?? 'General lesson'} · {item.source === 'YOUTUBE' ? 'YouTube link' : item.type}</p>
+      <h3>{item.title}</h3>
+      <p className="muted">{item.completed ? 'Completed' : `${Math.round(item.progressPercent)}% complete`}{item.durationSeconds ? ` · ${Math.round(item.durationSeconds / 60)} min` : ''}</p>
+      <time className="library-content-date" dateTime={item.publishedAt ?? item.createdAt}>Published {new Date(item.publishedAt ?? item.createdAt).toLocaleDateString()}</time>
+      {item.locked ? <Link className="button" to="/student/payments">Pay My Fee</Link> : <StudentMediaEmbed media={item} />}
+      {!item.locked && <Link className="button button-secondary" to={`/student/courses/${encodeURIComponent(courseId)}/media/${encodeURIComponent(item.id)}`}>{item.completed ? 'Replay in full player' : 'Open full player'}</Link>}
+    </article>)}</div>
+  </section>;
 
   const tabContent = () => {
-    if (!activeEnrollment) return <div className="card empty-state"><h2>Enroll to access course materials</h2><p>Videos, books, expert sessions, progress, and saved study materials are available to active enrollees only.</p></div>;
+    if (!hasCourseAccess) return <div className="card empty-state"><h2>Enroll to access course materials</h2><p>Course materials and progress are available to active enrollees.</p></div>;
+    if (completedEnrollment && !['overview', 'reports', 'certificate'].includes(activeTab)) {
+      return <div className="card empty-state"><h2>Course completed</h2><p>Access to this course’s materials, practice, assessments, and sessions has ended.</p><Link className="button button-secondary" to={`/student/courses/${encodeURIComponent(courseId)}/certificate`}>View certificate</Link></div>;
+    }
     switch (activeTab) {
       case 'overview':
         return <div className="course-overview-content">
@@ -153,36 +187,27 @@ export function StudentCourseDetailPage() {
               </li>)}
             </ol>}
           </section>
-          {summary?.course.nextSession && <section className="card course-section"><h2>Next session</h2><p><strong>{summary.course.nextSession.title}</strong></p><p>{new Date(summary.course.nextSession.startsAt).toLocaleString()} · {summary.course.nextSession.durationMinutes} minutes</p><Link className="button button-secondary" to={`/student/courses/${courseId}/sessions`}>View sessions</Link></section>}
+          {completedEnrollment && <p className="notice notice-success">Course completed{enrollment?.completedAt ? ` on ${new Date(enrollment.completedAt).toLocaleDateString()}` : ''}.</p>}
+          {activeEnrollment && summary?.course.nextSession && <section className="card course-section"><h2>Next session</h2><p><strong>{summary.course.nextSession.title}</strong></p><p>{new Date(summary.course.nextSession.startsAt).toLocaleString()} · {summary.course.nextSession.durationMinutes} minutes</p><Link className="button button-secondary" to={`/student/courses/${courseId}/sessions`}>View sessions</Link></section>}
         </div>;
-      case 'media':
-        return <section className="course-section">
-          <div className="list-heading"><h2>Videos & Audios</h2></div>
-          {media.isLoading && <p className="loading">Loading videos and audios…</p>}
-          {media.isError && <p className="notice notice-error" role="alert">{errorText(media.error)}</p>}
-          {media.data?.items.length === 0 && <div className="card empty-state"><h2>No media in this course</h2><p>Published videos and audios linked to this course will appear here.</p></div>}
-          <div className="course-media-grid">{media.data?.items.map((item) => <article className="card course-media-card" key={item.id}>
-            {item.thumbnailUrl && !item.locked
-              ? <img className="library-media-thumbnail" src={`${apiUrl}${item.thumbnailUrl}`} alt={`${item.title} thumbnail`} />
-              : <div className="library-content-thumbnail library-media-placeholder" aria-hidden="true">{item.type === 'VIDEO' ? 'VIDEO' : 'AUDIO'}</div>}
-            <p className="eyebrow">{item.topic?.title ?? 'General lesson'} · {item.source === 'YOUTUBE' ? 'YouTube embed' : item.type}</p>
-            <h3>{item.title}</h3>
-            <p className="muted">{item.completed ? 'Completed' : `${Math.round(item.progressPercent)}% complete`}{item.durationSeconds ? ` · ${Math.round(item.durationSeconds / 60)} min` : ''}</p>
-            <time className="library-content-date" dateTime={item.publishedAt ?? item.createdAt}>Published {new Date(item.publishedAt ?? item.createdAt).toLocaleDateString()}</time>
-            {item.locked ? <Link className="button" to="/student/payments">Pay My Fee</Link> : <StudentMediaEmbed media={item} />}
-            {!item.locked && <Link className="button button-secondary" to={`/student/courses/${encodeURIComponent(courseId)}/media/${encodeURIComponent(item.id)}`}>{item.completed ? 'Replay in full player' : 'Open full player'}</Link>}
-          </article>)}</div>
-        </section>;
-      case 'books':
-        return <LibraryPage embeddedCourseId={courseId} />;
+      case 'youtube':
+        return mediaContent('Youtube links', media.data?.items.filter((item) => item.source === 'YOUTUBE') ?? []);
+      case 'videos':
+        return mediaContent('Videos', media.data?.items.filter((item) => item.type === 'VIDEO' && item.source !== 'YOUTUBE') ?? []);
+      case 'audios':
+        return mediaContent('Audios', media.data?.items.filter((item) => item.type === 'AUDIO') ?? []);
+      case 'materials':
+        return <><NotesPage embeddedCourseId={courseId} /><LibraryPage embeddedCourseId={courseId} /></>;
       case 'sessions':
         return <ExpertSessionsPage embeddedCourseId={courseId} />;
-      case 'materials':
-        return <NotesPage embeddedCourseId={courseId} />;
       case 'practice':
         return <StudentPracticePage embeddedCourseId={courseId} />;
-      case 'assessments':
+      case 'assessment':
         return <StudentAssessmentsPage embeddedCourseId={courseId} />;
+      case 'reports':
+        return <StudentReportsPage embeddedCourseId={courseId} />;
+      case 'certificate':
+        return <CourseCertificatePage courseId={courseId} />;
       default:
         return null;
     }
@@ -209,12 +234,13 @@ export function StudentCourseDetailPage() {
           <div className="course-actions">
             {activeEnrollment && <Link className="button button-secondary" to={`/student/tutors?courseId=${encodeURIComponent(course.id)}`}>{enrollment?.selectedTutorId ? 'Change tutor' : 'Choose your tutor'}</Link>}
             {activeEnrollment && <Link className="button" to={`/student/payments?courseId=${encodeURIComponent(course.id)}`}>Pay My Fee</Link>}
+            {enrollment?.status === 'COMPLETED' && <span className="status-pill status-published">COURSE COMPLETED</span>}
             {enrollment?.status === 'ACTIVE' && <Button variant="danger" onClick={() => setConfirmDrop(true)}>Drop course</Button>}
             {enrollment?.status === 'PENDING' && <span className="status-pill status-pending">ENROLLMENT PENDING</span>}
             {!enrollment && <Button disabled={mutation.isPending} onClick={() => mutation.mutate('enroll')}>{mutation.isPending ? 'Enrolling…' : 'Enroll in course'}</Button>}
           </div>
         </div>
-        {activeEnrollment && <nav className="media-tabs course-detail-tabs" role="tablist" aria-label="Course sections">
+        {hasCourseAccess && <nav className="media-tabs course-detail-tabs" role="tablist" aria-label="Course sections">
           {courseTabs.map(({ key, label }) => <NavLink key={key} role="tab" aria-selected={activeTab === key} className={({ isActive }) => `tab-button${isActive ? ' active' : ''}`} to={`/student/courses/${encodeURIComponent(courseId)}/${key}`}>{label}</NavLink>)}
         </nav>}
         {tabContent()}

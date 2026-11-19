@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 405" role="img" aria-labelledby="title">
+  <title id="title">Web development course thumbnail</title>
+  <rect width="720" height="405" fill="#14246B"/>
+  <path d="M0 300C150 220 270 390 420 300S620 230 720 275V405H0Z" fill="#9B1D80" opacity=".8"/>
+  <circle cx="590" cy="94" r="118" fill="#8DC63F" opacity=".88"/>
+  <rect x="136" y="94" width="370" height="220" rx="18" fill="#FFFFFF"/>
+  <rect x="136" y="94" width="370" height="42" rx="18" fill="#E8ECF4"/>
+  <circle cx="163" cy="115" r="6" fill="#9B1D80"/>
+  <circle cx="184" cy="115" r="6" fill="#8DC63F"/>
+  <circle cx="205" cy="115" r="6" fill="#14246B" opacity=".35"/>
+  <path d="m242 195-30 30 30 30m159-60 30 30-30 30m-54-77-38 94" fill="none" stroke="#14246B" stroke-linecap="round" stroke-linejoin="round" stroke-width="14"/>
+  <text x="321" y="349" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="21" font-weight="700" letter-spacing="2" text-anchor="middle">WEB DEVELOPMENT</text>
+</svg>

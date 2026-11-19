@@ -106,6 +106,18 @@ export const get: RequestHandler = async (req, res) => {
   });
 };
 
+export const resume: RequestHandler = async (req, res) => {
+  const file = await tutorService.getTutorResume(getOrganizationId(req), userId(req), req.auth!.userId);
+  res.set({
+    'Content-Type': file.mimeType,
+    'Content-Length': String(file.size),
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  file.stream.pipe(res);
+};
+
 export const create: RequestHandler = async (req, res) => {
   const result = await tutorService.createTutor(getOrganizationId(req), req.auth!.userId, req.body);
   res.status(201).json({ data: result });

@@ -171,8 +171,8 @@ describe('SP1 practice and assessment workflows', () => {
     expect(course.body.data.course.instructors).toEqual([{ instructor: { id: instructor.id, name: instructor.name } }]);
 
     const tutorDirectory = await request(app).get('/api/tutors?page=1&pageSize=100').set('Cookie', instructorCookie);
-    expect(tutorDirectory.status).toBe(200);
-    expect(tutorDirectory.body.data.tutors.map((item: { user: { id: string } }) => item.user.id)).toEqual([instructor.id]);
+    expect(tutorDirectory.status).toBe(403);
+    expect((await request(app).get(`/api/tutors/${instructor.id}`).set('Cookie', instructorCookie)).status).toBe(403);
     expect((await request(app).get(`/api/tutors/${secondInstructor.id}`).set('Cookie', instructorCookie)).status).toBe(403);
     expect((await request(app).get(`/api/tutors/${secondInstructor.id}/photo`).set('Cookie', instructorCookie)).status).toBe(403);
 

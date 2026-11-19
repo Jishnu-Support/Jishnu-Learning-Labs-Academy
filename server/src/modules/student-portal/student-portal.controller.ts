@@ -5,7 +5,7 @@ import { HttpError } from '../../utils/http-error.js';
 import * as service from './student-portal.service.js';
 import {
   attendanceMarkSchema, createLibraryItemSchema, createSessionSchema, gameRatingSchema,
-  libraryQuerySchema, sessionListQuerySchema, updateLibraryItemSchema, updateSessionSchema,
+  libraryQuerySchema, sessionListQuerySchema, studentReportsQuerySchema, updateLibraryItemSchema, updateSessionSchema,
 } from './student-portal.schemas.js';
 
 function actor(req: Request) {
@@ -114,6 +114,16 @@ export const studentCertificates: RequestHandler = async (req, res) => {
   res.json({ data: { certificates: await service.studentCertificates(actor(req)) } });
 };
 
+export const studentCompletedCourses: RequestHandler = async (req, res) => {
+  res.json({ data: await service.studentCompletedCourses(actor(req)) });
+};
+
+export const issueStudentCertificate: RequestHandler = async (req, res) => {
+  res.status(201).json({
+    data: { certificate: await service.issueStudentCertificate(actor(req), param(req, 'courseId')) },
+  });
+};
+
 export const publicCertificate: RequestHandler = async (req, res) => {
   res.json({ data: { certificate: await service.publicCertificate(param(req, 'verificationCode')) } });
 };
@@ -123,7 +133,8 @@ export const studentKnowledge: RequestHandler = async (req, res) => {
 };
 
 export const studentReports: RequestHandler = async (req, res) => {
-  res.json({ data: await service.studentReports(actor(req)) });
+  const query = studentReportsQuerySchema.parse(req.query);
+  res.json({ data: await service.studentReports(actor(req), query.courseId) });
 };
 
 export const rateKnowledgeGame: RequestHandler = async (req, res) => {

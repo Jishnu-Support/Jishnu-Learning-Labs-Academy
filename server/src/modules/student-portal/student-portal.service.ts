@@ -1,17 +1,16 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { basename, extname } from 'node:path';
 import type { Express } from 'express';
 import {
-  AssessmentAttemptStatus, AttendanceMark, EnrollmentStatus, ExpertSessionStatus, LibraryKind,
-  NotificationType, ResultReleaseMode, Role,
+  AssessmentAttemptStatus, AssessmentStatus, AttendanceMark, EnrollmentStatus, ExpertSessionStatus, LibraryKind,
+  MediaSource, MediaStatus, MediaType, MediaVisibility, NotificationType, ResultReleaseMode, Role,
 } from '@prisma/client';
 import { prisma } from '../../config/prisma.js';
 import { logger } from '../../config/logger.js';
 import { HttpError } from '../../utils/http-error.js';
 import { notifyAfterCommit, notifyCourseStudents } from '../notifications/notifications.service.js';
 import { localDiskStorage } from '../notes/storage.service.js';
-import { jitsiLiveClassProvider } from './live-class-provider.js';
-import { canAccessContent, requireContentAccess } from './content-access.service.js';
+import { assertActiveCourseEnrollment, canAccessContent, requireContentAccess } from './content-access.service.js';
 
 type Actor = { organizationId: string | null; userId: string; role: Role };
 const maxLibraryFileBytes = 20 * 1024 * 1024;
@@ -22,7 +21,9 @@ function tenantId(actor: Actor) {
 }
 
 function requireManager(role: Role) {
-  if (role !== Role.ORG_ADMIN && role !== Role.TUTOR) throw new HttpError(403, 'Tutor or Org Admin access is required');
+  if (role !== Role.ORG_ADMIN && role !== Role.TUTOR && role !== Role.SUPER_ADMIN) {
+    throw new HttpError(403, 'Tutor, Org Admin, or Super Admin access is required');
+  }
 }
 
 async function canManageCourse(actor: Actor, courseId: string) {
@@ -68,6 +69,9 @@ function sessionTabWhere(tab: 'LIVE' | 'UPCOMING' | 'PAST' | undefined, now: Dat
 
 export async function listSessions(actor: Actor, tab?: 'LIVE' | 'UPCOMING' | 'PAST', courseId?: string) {
   const organizationId = tenantId(actor);
+  if (actor.role === Role.STUDENT && courseId) {
+    await assertActiveCourseEnrollment(organizationId, actor.userId, courseId);
+  }
   const now = new Date();
   const where = {
     organizationId,
@@ -80,7 +84,7 @@ export async function listSessions(actor: Actor, tab?: 'LIVE' | 'UPCOMING' | 'PA
           where: { organizationId, studentId: actor.userId, status: EnrollmentStatus.ACTIVE },
           select: { courseId: true },
         })).map(({ courseId }) => courseId) } },
-        { batch: { students: { some: { studentId: actor.userId, organizationId } } } },
+        { courseId: null, batch: { students: { some: { studentId: actor.userId, organizationId } } } },
       ],
     } : actor.role === Role.TUTOR ? {
       course: { instructors: { some: { instructorId: actor.userId } } },
@@ -208,6 +212,61 @@ async function managedSession(actor: Actor, sessionId: string) {
   return session;
 }
 
+export async function authorizeLiveSessionConnection(actor: Actor, sessionId: string): Promise<void> {
+  const organizationId = tenantId(actor);
+  const now = Date.now();
+  if (actor.role === Role.TUTOR || actor.role === Role.ORG_ADMIN) {
+    const session = await managedSession(actor, sessionId);
+    if (session.status !== ExpertSessionStatus.LIVE ||
+      now < session.startsAt.getTime() - 10 * 60_000 ||
+      now > session.startsAt.getTime() + session.durationMinutes * 60_000) {
+      throw new HttpError(409, 'The live room is unavailable outside its scheduled time window');
+    }
+    return;
+  }
+  if (actor.role !== Role.STUDENT) throw new HttpError(403, 'You cannot join this live session');
+
+  const session = await prisma.expertSession.findFirst({
+    where: {
+      id: sessionId,
+      organizationId,
+      status: { in: [ExpertSessionStatus.SCHEDULED, ExpertSessionStatus.LIVE] },
+    },
+    select: { id: true, courseId: true, batchId: true, startsAt: true, durationMinutes: true, freePreview: true },
+  });
+  if (!session) throw new HttpError(404, 'Expert Session not found');
+  if (now < session.startsAt.getTime() - 10 * 60_000 ||
+    now > session.startsAt.getTime() + session.durationMinutes * 60_000) {
+    throw new HttpError(409, 'The live room is unavailable outside its scheduled time window');
+  }
+  if (session.courseId) {
+    await assertActiveCourseEnrollment(organizationId, actor.userId, session.courseId);
+    await requireContentAccess({
+      organizationId,
+      userId: actor.userId,
+      role: actor.role,
+      courseId: session.courseId,
+      published: true,
+      freePreview: session.freePreview,
+    });
+  } else if (!session.batchId || !await prisma.batchStudent.findFirst({
+    where: { organizationId, studentId: actor.userId, batchId: session.batchId },
+    select: { studentId: true },
+  })) {
+    throw new HttpError(404, 'Expert Session not found in your batch');
+  }
+  const attendance = await prisma.attendanceRecord.findFirst({
+    where: {
+      organizationId,
+      sessionId,
+      studentId: actor.userId,
+      status: { in: [AttendanceMark.PRESENT, AttendanceMark.LATE] },
+    },
+    select: { id: true },
+  });
+  if (!attendance) throw new HttpError(403, 'Join the session before connecting to its live room');
+}
+
 export async function updateSession(actor: Actor, sessionId: string, input: {
   courseId?: string; title?: string; description?: string; startsAt?: string; durationMinutes?: number; freePreview?: boolean;
 }) {
@@ -265,7 +324,7 @@ export async function joinSession(actor: Actor, sessionId: string) {
           where: { organizationId, studentId: actor.userId, status: EnrollmentStatus.ACTIVE },
           select: { courseId: true },
         })).map(({ courseId }) => courseId) } },
-        { batch: { students: { some: { studentId: actor.userId, organizationId } } } },
+        { courseId: null, batch: { students: { some: { studentId: actor.userId, organizationId } } } },
       ],
     },
   });
@@ -292,7 +351,8 @@ export async function joinSession(actor: Actor, sessionId: string) {
   await prisma.auditLog.create({
     data: { organizationId, actorId: actor.userId, action: 'EXPERT_SESSION_JOINED', targetType: 'ExpertSession', targetId: session.id, metadata: { attendanceId: attendance.id } },
   });
-  return { sessionId: session.id, roomName: session.roomName, roomUrl: jitsiLiveClassProvider.roomUrl(session.roomName) };
+  if (session.courseId) await tryIssueStudentCertificate(organizationId, actor.userId, session.courseId);
+  return { sessionId: session.id };
 }
 
 export async function hostSession(actor: Actor, sessionId: string) {
@@ -303,7 +363,7 @@ export async function hostSession(actor: Actor, sessionId: string) {
       now > session.startsAt.getTime() + session.durationMinutes * 60_000) {
     throw new HttpError(409, 'Hosting is available from 10 minutes before the class until it ends');
   }
-  return { sessionId: session.id, roomUrl: jitsiLiveClassProvider.roomUrl(session.roomName) };
+  return { sessionId: session.id };
 }
 
 export async function listSessionAttendees(actor: Actor, sessionId: string) {
@@ -358,12 +418,16 @@ export async function markAttendance(actor: Actor, sessionId: string, studentId:
   await prisma.auditLog.create({
     data: { organizationId: session.organizationId, actorId: actor.userId, action: 'ATTENDANCE_MARKED', targetType: 'AttendanceRecord', targetId: result.id, metadata: { sessionId, studentId, status } },
   });
+  if (session.courseId && (status === AttendanceMark.PRESENT || status === AttendanceMark.LATE)) {
+    await tryIssueStudentCertificate(session.organizationId, studentId, session.courseId);
+  }
   return result;
 }
 
 export async function studentAttendance(actor: Actor, courseId?: string) {
   if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Only students can view their attendance');
   const organizationId = tenantId(actor);
+  if (courseId) await assertActiveCourseEnrollment(organizationId, actor.userId, courseId);
   const enrollments = await prisma.enrollment.findMany({
     where: { organizationId, studentId: actor.userId, status: EnrollmentStatus.ACTIVE },
     select: { courseId: true, course: { select: { id: true, code: true, title: true, minimumAttendancePercent: true } } },
@@ -411,6 +475,9 @@ export async function listLibrary(actor: Actor, input: {
   search?: string; courseId?: string; category?: string; kind?: LibraryKind; saved?: 'true' | 'false';
 }) {
   const organizationId = tenantId(actor);
+  if (actor.role === Role.STUDENT && input.courseId) {
+    await assertActiveCourseEnrollment(organizationId, actor.userId, input.courseId);
+  }
   if (actor.role === Role.TUTOR && input.courseId) await canManageCourse(actor, input.courseId);
   const student = actor.role === Role.STUDENT;
   const courseIds = student
@@ -665,29 +732,253 @@ export async function saveLibraryItem(actor: Actor, itemId: string, saved: boole
   return { itemId, saved };
 }
 
+const certificateInclude = {
+  student: { select: { name: true, studentProfile: { select: { studentId: true } } } },
+  course: { select: { id: true, title: true, code: true } },
+  organization: { select: { name: true } },
+} as const;
+
+function certificateResponse<T extends { issuedStudentName: string | null; student: { name: string } }>(certificate: T) {
+  const { issuedStudentName, student, ...details } = certificate;
+  return { ...details, student: { ...student, name: issuedStudentName ?? student.name } };
+}
+
+export async function issueStudentCertificate(actor: Actor, courseId: string) {
+  if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Only students can issue certificates');
+  const organizationId = tenantId(actor);
+  const issuedAt = new Date();
+  const certificate = await prisma.$transaction(async (tx) => {
+    const existing = await tx.certificate.findFirst({
+      where: { organizationId, courseId, studentId: actor.userId, isSample: false },
+      include: certificateInclude,
+    });
+    if (existing) {
+      await tx.enrollment.updateMany({
+        where: { organizationId, courseId, studentId: actor.userId, status: { not: EnrollmentStatus.COMPLETED } },
+        data: { status: EnrollmentStatus.COMPLETED, completedAt: existing.issuedAt },
+      });
+      return existing;
+    }
+
+    const enrollment = await tx.enrollment.findFirst({
+      where: {
+        organizationId,
+        courseId,
+        studentId: actor.userId,
+        status: { in: [EnrollmentStatus.ACTIVE, EnrollmentStatus.COMPLETED] },
+      },
+      include: {
+        course: {
+          select: {
+            minimumAttendancePercent: true,
+            requiresAssessmentPass: true,
+            topics: { select: { covered: true } },
+          },
+        },
+        student: { select: { name: true } },
+      },
+    });
+    if (!enrollment) throw new HttpError(404, 'Course enrollment not found');
+    if (enrollment.course.topics.length === 0 || enrollment.course.topics.some((topic) => !topic.covered)) {
+      throw new HttpError(409, 'All course syllabus topics must be covered before a certificate can be issued');
+    }
+
+    const requiredMedia = await tx.mediaItem.findMany({
+      where: {
+        organizationId,
+        courseId,
+        deletedAt: null,
+        status: MediaStatus.READY,
+        visibility: MediaVisibility.PUBLISHED,
+        source: MediaSource.UPLOAD,
+        type: { in: [MediaType.VIDEO, MediaType.AUDIO] },
+      },
+      select: { id: true },
+    });
+    if (requiredMedia.length) {
+      const completedMedia = await tx.watchProgress.findMany({
+        where: {
+          organizationId,
+          studentId: actor.userId,
+          mediaId: { in: requiredMedia.map(({ id }) => id) },
+          completed: true,
+        },
+        select: { mediaId: true },
+      });
+      if (completedMedia.length !== requiredMedia.length) {
+        throw new HttpError(409, 'Watch every published course video and listen to each audio item before completing the course');
+      }
+    }
+
+    const sessions = await tx.expertSession.findMany({
+      where: {
+        organizationId,
+        courseId,
+        status: { not: ExpertSessionStatus.CANCELLED },
+        startsAt: { lte: issuedAt },
+      },
+      select: {
+        startsAt: true,
+        durationMinutes: true,
+        attendances: { where: { studentId: actor.userId }, select: { status: true } },
+      },
+    });
+    const finishedSessions = sessions.filter((session) =>
+      session.startsAt.getTime() + session.durationMinutes * 60_000 <= issuedAt.getTime());
+    const attendedSessions = finishedSessions.filter((session) =>
+      session.attendances[0]?.status === AttendanceMark.PRESENT ||
+      session.attendances[0]?.status === AttendanceMark.LATE).length;
+    const attendancePercent = finishedSessions.length === 0
+      ? 100
+      : Math.round((attendedSessions / finishedSessions.length) * 100);
+    if (attendancePercent < enrollment.course.minimumAttendancePercent) {
+      throw new HttpError(409, `Attendance must be at least ${enrollment.course.minimumAttendancePercent}% to issue a certificate`);
+    }
+
+    if (enrollment.course.requiresAssessmentPass) {
+      const assessments = await tx.assessment.findMany({
+        where: {
+          organizationId,
+          courseId,
+          status: { in: [AssessmentStatus.PUBLISHED, AssessmentStatus.CLOSED] },
+        },
+        select: { id: true },
+      });
+      if (!assessments.length) {
+        throw new HttpError(409, 'A published assessment is required before a certificate can be issued');
+      }
+      const passedAttempts = await tx.assessmentAttempt.findMany({
+        where: {
+          organizationId,
+          studentId: actor.userId,
+          assessmentId: { in: assessments.map(({ id }) => id) },
+          status: { in: [AssessmentAttemptStatus.SUBMITTED, AssessmentAttemptStatus.EXPIRED] },
+          passed: true,
+        },
+        select: { assessmentId: true },
+      });
+      const passedAssessmentIds = new Set(passedAttempts.map(({ assessmentId }) => assessmentId));
+      if (assessments.some(({ id }) => !passedAssessmentIds.has(id))) {
+        throw new HttpError(409, 'You must pass every published course assessment before a certificate can be issued');
+      }
+    }
+
+    const certificateNo = `JLL-${issuedAt.getUTCFullYear()}-${randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`;
+    const created = await tx.certificate.create({
+      data: {
+        organizationId,
+        courseId,
+        studentId: actor.userId,
+        issuedStudentName: enrollment.student.name,
+        issuedById: actor.userId,
+        certificateNo,
+        verificationCode: randomUUID(),
+        issuedAt,
+      },
+      include: certificateInclude,
+    });
+    await tx.enrollment.update({
+      where: { id: enrollment.id },
+      data: { status: EnrollmentStatus.COMPLETED, completedAt: issuedAt },
+    });
+    await tx.auditLog.create({
+      data: {
+        organizationId,
+        actorId: actor.userId,
+        action: 'CERTIFICATE_ISSUED',
+        targetType: 'Certificate',
+        targetId: created.id,
+        metadata: { courseId, certificateNo },
+      },
+    });
+    return created;
+  });
+  return certificateResponse(certificate);
+}
+
+export async function tryIssueStudentCertificate(organizationId: string, studentId: string, courseId: string) {
+  try {
+    return await issueStudentCertificate({ organizationId, userId: studentId, role: Role.STUDENT }, courseId);
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 409) return null;
+    throw error;
+  }
+}
+
 export async function studentCertificates(actor: Actor) {
   if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Only students can view certificates');
+  const organizationId = tenantId(actor);
+  const activeEnrollments = await prisma.enrollment.findMany({
+    where: { organizationId, studentId: actor.userId, status: EnrollmentStatus.ACTIVE },
+    select: { courseId: true },
+  });
+  for (const enrollment of activeEnrollments) {
+    await tryIssueStudentCertificate(organizationId, actor.userId, enrollment.courseId);
+  }
   const certificates = await prisma.certificate.findMany({
-    where: { organizationId: tenantId(actor), studentId: actor.userId },
+    where: { organizationId, studentId: actor.userId },
     select: {
-      id: true, certificateNo: true, verificationCode: true, issuedAt: true, issuedStudentName: true,
-      student: { select: { name: true, studentProfile: { select: { studentId: true } } } },
-      course: { select: { title: true, code: true } },
-      organization: { select: { name: true } },
+      id: true, certificateNo: true, verificationCode: true, issuedAt: true, issuedStudentName: true, isSample: true,
+      ...certificateInclude,
     },
     orderBy: { issuedAt: 'desc' },
   });
-  return certificates.map(({ issuedStudentName, student, ...certificate }) => ({
-    ...certificate,
-    student: { ...student, name: issuedStudentName ?? student.name },
-  }));
+  return certificates.map(certificateResponse);
+}
+
+export async function studentCompletedCourses(actor: Actor) {
+  if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Only students can view completed courses');
+  const certificates = await studentCertificates(actor);
+  const organizationId = tenantId(actor);
+  const enrollments = await prisma.enrollment.findMany({
+    where: { organizationId, studentId: actor.userId, status: EnrollmentStatus.COMPLETED },
+    select: {
+      id: true,
+      completedAt: true,
+      selectedTutor: { select: { id: true, name: true } },
+      course: {
+        select: {
+          id: true,
+          code: true,
+          title: true,
+          description: true,
+          thumbnailUrl: true,
+          plannedHours: true,
+          instructors: { select: { instructor: { select: { id: true, name: true } } }, orderBy: { assignedAt: 'asc' } },
+        },
+      },
+    },
+    orderBy: [{ completedAt: 'desc' }, { enrolledAt: 'desc' }],
+  });
+  const certificateByCourse = new Map<string, (typeof certificates)[number]>();
+  for (const certificate of certificates) {
+    const current = certificateByCourse.get(certificate.course.id);
+    if (!current || (current.isSample && !certificate.isSample)) {
+      certificateByCourse.set(certificate.course.id, certificate);
+    }
+  }
+  return {
+    courses: enrollments.flatMap((enrollment) => {
+      const certificate = certificateByCourse.get(enrollment.course.id);
+      if (!certificate) return [];
+      const { instructors, ...course } = enrollment.course;
+      return [{
+        enrollmentId: enrollment.id,
+        completedAt: enrollment.completedAt ?? certificate.issuedAt,
+        course,
+        progressPercent: 100,
+        tutor: enrollment.selectedTutor ?? instructors[0]?.instructor ?? null,
+        certificate,
+      }];
+    }),
+  };
 }
 
 export async function publicCertificate(verificationCode: string) {
-  const certificate = await prisma.certificate.findUnique({
-    where: { verificationCode },
+  const certificate = await prisma.certificate.findFirst({
+    where: { verificationCode, isSample: false },
     select: {
-      certificateNo: true, issuedAt: true, issuedStudentName: true,
+      certificateNo: true, issuedAt: true, issuedStudentName: true, isSample: true,
       student: { select: { name: true } },
       course: { select: { title: true, code: true } },
       organization: { select: { name: true } },
@@ -728,9 +1019,19 @@ export async function studentKnowledge(actor: Actor) {
   };
 }
 
-export async function studentReports(actor: Actor) {
+export async function studentReports(actor: Actor, courseId?: string) {
   if (actor.role !== Role.STUDENT) throw new HttpError(403, 'Only students can view their reports');
   const organizationId = tenantId(actor);
+  const enrollment = courseId ? await prisma.enrollment.findFirst({
+    where: {
+      organizationId,
+      studentId: actor.userId,
+      courseId,
+      status: { in: [EnrollmentStatus.ACTIVE, EnrollmentStatus.COMPLETED] },
+    },
+    select: { enrolledAt: true },
+  }) : null;
+  if (courseId && !enrollment) throw new HttpError(404, 'Course enrollment not found');
   const attempts = await prisma.assessmentAttempt.findMany({
     where: {
       organizationId,
@@ -739,6 +1040,7 @@ export async function studentReports(actor: Actor) {
       submittedAt: { not: null },
       score: { not: null },
       assessment: {
+        ...(courseId ? { courseId } : {}),
         OR: [
           { resultReleaseMode: ResultReleaseMode.IMMEDIATE },
           { resultsReleasedAt: { not: null } },
@@ -750,6 +1052,7 @@ export async function studentReports(actor: Actor) {
       submittedAt: true,
       assessment: {
         select: {
+          id: true,
           totalMarks: true,
           course: { select: { title: true } },
         },
@@ -767,6 +1070,9 @@ export async function studentReports(actor: Actor) {
         marks: attempt.score,
         totalMarks,
         percentage: totalMarks > 0 ? (attempt.score / totalMarks) * 100 : 0,
+        ...(enrollment ? {
+          week: Math.max(1, Math.floor((attempt.submittedAt.getTime() - enrollment.enrolledAt.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1),
+        } : {}),
       }];
     }),
   };
